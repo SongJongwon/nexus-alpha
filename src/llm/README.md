@@ -8,11 +8,12 @@ Nexus Alpha의 모든 에이전트/워크플로우는 Claude를 직접 호출하
 
 ```
 src/llm/
-├── __init__.py              # 외부 노출 API (get_llm_provider, BaseLLMProvider)
-├── base_provider.py         # 추상 클래스 — generate / stream / name
+├── __init__.py              # 외부 노출 API (get_llm_provider, BaseLLMProvider, NexusAlphaLLM)
+├── base_provider.py         # 추상 클래스 — generate / stream / name (Template Method)
 ├── agent_sdk_provider.py    # MAX 구독 Provider (claude-agent-sdk 사용)
 ├── api_key_provider.py      # API Key Provider (langchain-anthropic 사용)
-└── factory.py               # LLM_PROVIDER 환경변수 → Provider 인스턴스
+├── factory.py               # LLM_PROVIDER 환경변수 → Provider 인스턴스
+└── crewai_adapter.py        # CrewAI BaseLLM ↔ BaseLLMProvider 어댑터 (NexusAlphaLLM)
 ```
 
 ## 기본 사용법
@@ -62,11 +63,71 @@ LLM_PROVIDER=agent_sdk
 # ANTHROPIC_API_KEY=...  # 있어도 사용되지 않음
 ```
 
+## CrewAI 어댑터 (NexusAlphaLLM)
+
+CrewAI 1.x는 LLM 파라미터로 문자열 또는 `crewai.llms.base_llm.BaseLLM` 서브클래스를 요구합니다.
+`NexusAlphaLLM`은 `BaseLLM`을 상속하면서 내부에서 `BaseLLMProvider`를 위임 호출하는 얇은 어댑터로,
+기존 Provider 체계(MAX ↔ API Key 전환 + LangFuse 자동 기록)를 CrewAI 세계에 그대로 넘겨줍니다.
+
+### CrewAI Agent에 연결
+
+```python
+from crewai import Agent, Crew, Task
+from src.llm import NexusAlphaLLM
+
+llm = NexusAlphaLLM()  # factory.get_llm_provider() 자동 호출
+
+analyst = Agent(
+    role="데이터 분석가",
+    goal="매출 트렌드를 요약한다",
+    backstory="...",
+    llm=llm,
+    allow_delegation=False,
+)
+
+task = Task(description="최근 분기 매출 요약", expected_output="3문장", agent=analyst)
+crew = Crew(agents=[analyst], tasks=[task])
+result = crew.kickoff()
+```
+
+### 어댑터가 하는 일
+
+1. CrewAI의 메시지 포맷(`list[{"role": "...", "content": "..."}]` 또는 `str`)을
+   `(prompt, system)` 튜플로 변환.
+2. 동기 `call()`에서 비동기 `BaseLLMProvider.generate()`를 안전하게 실행
+   (이미 실행 중인 event loop가 있으면 별도 스레드로 회피).
+3. `acall()`을 통해 async 컨텍스트에서도 직접 호출 가능.
+4. `BaseLLMProvider.generate()`가 포함하는 LangFuse `log_generation` 호출을
+   그대로 상속.
+
+### 현재 지원 범위
+
+- ✅ 텍스트 프롬프트 ↔ 텍스트 응답
+- ✅ MAX ↔ API Key 전환 (`.env`)
+- ✅ LangFuse 자동 기록
+- ⬜ 툴 콜/function calling (tools / available_functions)
+- ⬜ 구조화 출력 (response_model)
+- ⬜ 콜백 (callbacks)
+
+지원하지 않는 인자는 받아 두고 조용히 무시합니다. 이후 Phase에서 점진적으로 채웁니다.
+
+### 직접 조회가 필요할 때
+
+```python
+llm = NexusAlphaLLM()
+llm.backend_provider.name     # 현재 위임 중인 Provider 이름
+llm.backend_provider          # BaseLLMProvider 인스턴스 (직접 generate 호출 가능)
+```
+
+> `provider` 라는 이름은 CrewAI `BaseLLM`이 이미 `provider: str = "openai"` 필드로 쓰고
+> 있어 충돌을 피하려 `backend_provider`로 노출합니다.
+
 ## 새 Provider 추가 방법
 
 1. `src/llm/my_provider.py` 생성, `BaseLLMProvider` 상속.
-2. `name` 프로퍼티와 `async def generate(...)`를 구현.
+2. `name` 프로퍼티와 `async def _generate_impl(...)`를 구현.
+   (추가로 `_model_identifier`, `_extra_log_metadata`를 오버라이드하면 LangFuse 기록이 풍부해진다.)
 3. `factory.py`의 `_SUPPORTED`에 식별자 추가 후 분기 조건 작성.
 4. `.env.example`에 새 식별자 설명 추가.
 
-기존 에이전트 코드는 일체 변경하지 않아도 된다는 점이 이 구조의 핵심 이점입니다.
+**어댑터(`NexusAlphaLLM`)와 에이전트 코드는 수정할 필요가 없습니다** — 이것이 이 구조의 핵심 이점입니다.

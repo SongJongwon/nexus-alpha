@@ -1,0 +1,159 @@
+# -*- coding: utf-8 -*-
+"""
+analyze_and_implement 워크플로우 엔드투엔드 smoke test.
+
+단일 사용자 요청을 입력해 CTO → Data Analyst → Python Engineer 체인이
+순차적으로 동작하고, 최종 산출물이 `outputs/workflow_<ts>/`에 저장되는지
+확인한다. LangFuse에는 `analyze_and_implement` trace 1건 아래에 3개의
+generation이 함께 기록된다.
+
+실행:
+    .venv\\Scripts\\python.exe src\\tests\\test_workflow_analyze_and_implement.py
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.panel import Panel
+from rich.rule import Rule
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+from src.monitoring import get_langfuse_client
+from src.workflows import run_analyze_and_implement
+
+
+console = Console()
+
+
+USER_REQUEST = (
+    "매장별 월간 매출 Excel 파일을 분석하여 핵심 KPI 대시보드와 "
+    "PDF 보고서를 자동으로 생성하는 Python 스크립트를 만들어줘. "
+    "매장 수는 10개 내외이고, 월별로 제품 카테고리별 매출·주문수·반품수가 "
+    "담긴 .xlsx가 매월 업데이트된다. "
+    "경영진이 한 눈에 실적 변화와 이상 신호를 파악할 수 있도록 해 줘."
+)
+
+
+def _preview(text: str, limit: int = 800) -> str:
+    """긴 결과물을 콘솔 패널용으로 축약한다."""
+    stripped = (text or "").strip()
+    if len(stripped) <= limit:
+        return stripped or "(비어 있음)"
+    return stripped[:limit] + "\n\n... (중략 — 전체는 outputs/에 저장됨) ..."
+
+
+def main() -> int:
+    """워크플로우 실행 후 각 에이전트의 결과 preview와 저장 경로를 출력한다."""
+    console.print(
+        Rule(
+            "[bold cyan]analyze_and_implement 엔드투엔드 smoke test[/bold cyan]"
+        )
+    )
+
+    monitor = get_langfuse_client()
+    console.print(
+        f"[bold]Monitoring:[/bold] "
+        f"{'[green]LangFuse 활성[/green]' if monitor.enabled else '[yellow]LangFuse 비활성 (키 누락)[/yellow]'}"
+    )
+    console.print(
+        Panel(
+            USER_REQUEST,
+            title="[cyan]사용자 요청[/cyan]",
+            border_style="cyan",
+        )
+    )
+    console.print(Rule())
+
+    try:
+        with console.status(
+            "[yellow]3명 에이전트 협업 중... (3단계 순차 실행, 몇 분 소요)[/yellow]",
+            spinner="dots",
+        ):
+            result = run_analyze_and_implement(
+                USER_REQUEST,
+                verbose=False,  # 콘솔 노이즈 억제 — 상세 로그는 LangFuse 참조
+            )
+    except Exception as exc:
+        console.print(
+            Panel(
+                f"[bold red]워크플로우 실행 실패:[/bold red] {exc}",
+                title="오류",
+                border_style="red",
+            )
+        )
+        return 1
+
+    # 각 에이전트의 산출물 preview
+    console.print(
+        Panel(
+            _preview(result.cto_strategy),
+            title="[green]① CTO 전략 문서 (preview)[/green]",
+            border_style="green",
+        )
+    )
+    console.print(
+        Panel(
+            _preview(result.analyst_brief),
+            title="[green]② Data Analyst 분석 지시서 (preview)[/green]",
+            border_style="green",
+        )
+    )
+    console.print(
+        Panel(
+            _preview(result.engineer_output),
+            title="[green]③ Python Engineer 구현 산출물 (preview)[/green]",
+            border_style="green",
+        )
+    )
+
+    # 저장 경로 요약
+    rel_saved = result.saved_dir.relative_to(PROJECT_ROOT)
+    file_list_lines = [f"[bold]저장 디렉터리:[/bold] [cyan]{rel_saved}[/cyan]"]
+    file_list_lines.append(
+        f"[bold]추출된 코드 파일:[/bold] {len(result.saved_code_files)}개"
+    )
+    for p in result.saved_code_files[:12]:
+        file_list_lines.append(f"  - [cyan]{p.relative_to(PROJECT_ROOT)}[/cyan]")
+    if len(result.saved_code_files) > 12:
+        file_list_lines.append(
+            f"  ... 외 {len(result.saved_code_files) - 12}개"
+        )
+
+    console.print(
+        Panel(
+            "\n".join(file_list_lines),
+            title="[green]산출물 저장[/green]",
+            border_style="green",
+        )
+    )
+
+    if monitor.enabled:
+        console.print(Rule())
+        console.print(
+            Panel(
+                f"LangFuse 대시보드: [cyan]{monitor.host}[/cyan]\n"
+                f"(trace: [bold]analyze_and_implement[/bold] — 아래에 3개 "
+                f"generation이 함께 기록됩니다.)",
+                title="[green]LangFuse[/green]",
+                border_style="green",
+            )
+        )
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
