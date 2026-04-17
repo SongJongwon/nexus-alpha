@@ -20,6 +20,9 @@ logs/
 .vscode/
 .idea/
 
+# Claude Code 로컬 설정 (환경별로 다름)
+.claude/
+
 # Windows 시스템 파일
 Thumbs.db
 desktop.ini
