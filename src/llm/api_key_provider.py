@@ -56,7 +56,14 @@ class APIKeyProvider(BaseLLMProvider):
     def name(self) -> str:
         return f"APIKeyProvider (model={self._model})"
 
-    async def generate(self, prompt: str, system: Optional[str] = None) -> str:
+    def _model_identifier(self) -> str:
+        """LangFuse 로깅용 모델 식별자."""
+        return self._model
+
+    def _extra_log_metadata(self) -> dict:
+        return {"transport": "langchain-anthropic"}
+
+    async def _generate_impl(self, prompt: str, system: Optional[str] = None) -> str:
         """Anthropic API를 비동기 호출해 단일 응답을 반환한다."""
         messages: list = []
         if system:

@@ -50,6 +50,17 @@ class AgentSDKProvider(BaseLLMProvider):
         model_suffix = f", model={self._model}" if self._model else ""
         return f"AgentSDKProvider (Claude Code MAX{model_suffix})"
 
+    def _model_identifier(self) -> str:
+        """LangFuse 로깅용 모델 식별자."""
+        return self._model or "claude-code-default"
+
+    def _extra_log_metadata(self) -> dict:
+        return {
+            "transport": "claude-agent-sdk",
+            "max_turns": self._max_turns,
+            "permission_mode": self._permission_mode,
+        }
+
     def _build_options(self, system: Optional[str]) -> ClaudeAgentOptions:
         """이번 호출에 사용할 ClaudeAgentOptions 를 구성한다."""
         kwargs: dict = {
@@ -62,7 +73,7 @@ class AgentSDKProvider(BaseLLMProvider):
             kwargs["model"] = self._model
         return ClaudeAgentOptions(**kwargs)
 
-    async def generate(self, prompt: str, system: Optional[str] = None) -> str:
+    async def _generate_impl(self, prompt: str, system: Optional[str] = None) -> str:
         """단발성 응답 전체를 문자열로 반환한다.
 
         AssistantMessage의 TextBlock들을 이어 붙이고, 아무 텍스트도

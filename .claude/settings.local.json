@@ -8,7 +8,11 @@
       "Bash(/c/projects/nexus-alpha/.venv/Scripts/pip.exe list *)",
       "Bash(.venv/Scripts/python.exe *)",
       "Bash(git config *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git remote *)",
+      "Bash(git branch *)",
+      "Bash(git push *)"
     ]
   }
 }
