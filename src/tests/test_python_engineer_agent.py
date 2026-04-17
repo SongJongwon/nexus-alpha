@@ -274,5 +274,27 @@ def main() -> int:
     return exit_code
 
 
+# ---------------------------------------------------------------------------
+# pytest 하네스 진입점 (네트워크 없이 FakeProvider 경유)
+# ---------------------------------------------------------------------------
+def test_python_engineer_agent_runs_through_crew_with_fake_provider() -> None:
+    """FakeProvider 응답으로 Engineer 에이전트가 CrewAI를 통과하는지 검증한다."""
+    engineer = create_python_engineer_agent(verbose=False)
+
+    assert engineer.llm.backend_provider.name == "fake"
+
+    task_description = f"{CTO_STRATEGY_SUMMARY}\n\n{ANALYST_BRIEF_SUMMARY}\n\n{TASK_REQUEST}"
+    task = Task(
+        description=task_description,
+        expected_output=TASK_EXPECTED_OUTPUT,
+        agent=engineer,
+    )
+    result = Crew(agents=[engineer], tasks=[task], verbose=False).kickoff()
+    output_text = getattr(result, "raw", None) or str(result)
+
+    assert output_text.strip(), "Engineer kickoff 결과가 비어 있으면 안 된다"
+    assert "FakeProvider가 반환한 고정 응답" in output_text
+
+
 if __name__ == "__main__":
     sys.exit(main())

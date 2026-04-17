@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-alpha"
+version = "0.2.0"
+description = "업무 자동화/RPA 전문 AI 가상 기업 시스템"
+requires-python = ">=3.13"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+exclude = ["outputs*", "logs*", ".venv*"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# NOTE: Windows 개발 환경에서는 `--disable-socket`을 기본에서 제외한다.
+#       Windows ProactorEventLoop가 내부 `socket.socketpair()`로 self-pipe를 만들어
+#       `NexusAlphaLLM.call()` 경로가 socket 생성 차단에 걸려 전원 실패하기 때문.
+#       네트워크 차단은 conftest의 FakeProvider monkeypatch로 달성하고, Linux CI에서
+#       추가 회귀 안전망이 필요할 때만 `pytest --disable-socket`으로 opt-in.
+addopts = ["-v", "--strict-markers"]
+pythonpath = ["."]
+markers = [
+    "integration: 실제 LLM/네트워크가 필요한 통합 테스트. 기본 실행에서 제외.",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",
+    "I",
+    "UP",
+    "B",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/tests/*" = ["E402"]

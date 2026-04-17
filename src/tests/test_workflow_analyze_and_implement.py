@@ -155,5 +155,38 @@ def main() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# pytest 하네스 진입점 (네트워크 없이 FakeProvider 경유)
+# ---------------------------------------------------------------------------
+def test_run_analyze_and_implement_produces_three_stage_artifacts(tmp_path) -> None:
+    """3명 체인 워크플로우가 FakeProvider로 완주하고 산출물 디렉터리가 생기는지 검증.
+
+    `tmp_path`로 `outputs_dir`을 격리해 저장소에 쓰레기 디렉터리가 남지 않도록 한다.
+    FakeProvider는 3번의 Task 각각에 동일한 "Final Answer: ..." 응답을 돌려주므로
+    3개 md 산출물(cto/analyst/engineer)이 동일한 표지 문자열을 포함해야 한다.
+    """
+    result = run_analyze_and_implement(
+        "pytest 하네스 smoke test용 더미 요청",
+        outputs_dir=tmp_path,
+        verbose=False,
+    )
+
+    assert result.saved_dir.exists() and result.saved_dir.is_dir()
+    assert result.saved_dir.parent == tmp_path
+
+    for filename in (
+        "00_user_request.txt",
+        "01_cto_strategy.md",
+        "02_analyst_brief.md",
+        "03_engineer_output.md",
+    ):
+        assert (result.saved_dir / filename).exists(), f"{filename} 가 저장되지 않았다"
+
+    marker = "FakeProvider가 반환한 고정 응답"
+    assert marker in result.cto_strategy
+    assert marker in result.analyst_brief
+    assert marker in result.engineer_output
+
+
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,8 +1,10 @@
 # 오케스트레이션 (핵심)
 # 멀티 에이전트 협업 프레임워크
-crewai>=0.80.0
+# NOTE: 1.14.1 에서 검증된 ReAct 파서(Final Answer: 포맷)에 FakeProvider가 의존하므로
+#       메이저/마이너 변경은 Phase 2 테스트 재검증과 함께 이뤄져야 함.
+crewai==1.14.1
 # CrewAI 기본 제공 도구 모음
-crewai-tools>=0.14.0
+crewai-tools==1.14.1
 # 상태 기반 에이전트 그래프 오케스트레이션
 langgraph>=0.2.0
 # LLM 애플리케이션 체인 구성 프레임워크
@@ -37,3 +39,13 @@ pydantic>=2.5.0
 pyyaml>=6.0.0
 # 컬러풀한 콘솔 출력 및 진행률 표시
 rich>=13.0.0
+
+# 개발/테스트 (Phase 2 — pytest 하네스)
+# 단위·통합 테스트 러너
+pytest>=8.0.0
+# monkeypatch 확장 및 MockerFixture 제공
+pytest-mock>=3.12.0
+# 네트워크 차단 플러그인.
+# NOTE: Windows ProactorEventLoop의 내부 socketpair 호출까지 막아버려 autouse로는
+#       사용 불가. Linux CI에서 `pytest --disable-socket` 플래그로 opt-in 적용 전제.
+pytest-socket>=0.7.0
