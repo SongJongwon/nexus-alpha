@@ -141,5 +141,35 @@ def main() -> int:
     return exit_code
 
 
+# ---------------------------------------------------------------------------
+# pytest 하네스 진입점 (네트워크 없이 FakeProvider 경유)
+# ---------------------------------------------------------------------------
+def test_adapter_uses_backend_provider_from_factory(_patch_llm_factory) -> None:
+    """`NexusAlphaLLM()`이 factory로부터 FakeProvider를 받아 장착하는지 검증한다."""
+    from src.tests.conftest import FakeProvider
+
+    llm = NexusAlphaLLM()
+
+    assert isinstance(llm.backend_provider, FakeProvider)
+    assert llm.backend_provider.name == "fake"
+
+
+def test_adapter_call_returns_fake_response(_patch_llm_factory) -> None:
+    """동기 `call()`이 Provider 응답을 CrewAI 없이 그대로 반환하는지 검증한다."""
+    llm = NexusAlphaLLM()
+    messages = [
+        {"role": "system", "content": "테스트용 시스템 프롬프트"},
+        {"role": "user", "content": "테스트용 유저 프롬프트"},
+    ]
+
+    response = llm.call(messages)
+
+    assert "Final Answer:" in response
+    assert llm.backend_provider.calls, "FakeProvider가 한 번 이상 호출되어야 한다"
+    prompt_arg, system_arg = llm.backend_provider.calls[-1]
+    assert "테스트용 유저 프롬프트" in prompt_arg
+    assert system_arg is not None and "테스트용 시스템 프롬프트" in system_arg
+
+
 if __name__ == "__main__":
     sys.exit(main())

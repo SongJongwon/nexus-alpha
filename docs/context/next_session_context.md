@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-04-17** (Phase 1 MVP 완료 시점)
+> 마지막 업데이트: **2026-04-17** (Phase 2 우선순위 1 — pytest 하네스 완료 시점)
 
 ---
 
@@ -11,29 +11,45 @@
 | 항목 | 값 |
 |---|---|
 | 프로젝트명 | Nexus Alpha — 업무 자동화/RPA 전문 AI 가상 기업 시스템 |
-| 현재 단계 | **Phase 1 MVP 완료**, Phase 2 착수 대기 |
+| 현재 단계 | **Phase 2 우선순위 1 완료** (pytest 하네스 정식화), 우선순위 2(QA 에이전트) 착수 대기 |
 | 작업 루트 | `C:\projects\nexus-alpha` |
 | 주 언어 | Python 3.13.13 (가상환경 `.venv/`) |
-| 오케스트레이션 | CrewAI 1.14.1 (Process.sequential) |
+| 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** — `requirements.txt`에 `==` 명시 |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key로 전환 가능 |
 | 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
-| GitHub | https://github.com/SongJongwon/nexus-alpha (main 브랜치) |
-| 최신 커밋 | `160947c 🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우 성공` |
-| 마지막 엔드투엔드 산출물 | `outputs/workflow_20260417_160617/` (Git 추적 제외) |
+| 테스트 하네스 | pytest 9.0.3 + pytest-mock 3.15.1 + pytest-socket 0.7.0 (opt-in) |
+| GitHub | https://github.com/SongJongwon/nexus-alpha (`phase2/pytest-harness` 브랜치) |
+| 최신 커밋 | `Phase 2 우선순위 1: pytest 하네스 정식화` (로컬) |
+| 마지막 엔드투엔드 산출물 | `outputs/workflow_20260417_164414/` (Git 추적 제외) |
 
-**한 문장 요약**: LLM Provider 추상화 → CrewAI 어댑터 → 3명 에이전트(CTO/Data Analyst/Python Engineer) → 순차 협업 워크플로우까지 완비되었고, 단일 사용자 요청 하나로 실행 가능한 Python 패키지가 자동 생성되는 상태입니다.
+**한 문장 요약**: Phase 1 MVP(3명 에이전트 협업) 위에 pytest 하네스를 얹어, `.venv/Scripts/pytest.exe` **한 명령으로 네트워크 없이 6개 테스트가 7초 내 통과**하는 회귀 방어선이 구축된 상태입니다.
 
 ---
 
 ## 2. 완료된 작업 목록 (커밋 단위)
 
 ```
+(미커밋)  🧪 Phase 2 우선순위 1: pytest 하네스 정식화             ← 본 세션
+354ccfb  📌 다음 세션 컨텍스트 파일 추가
 160947c  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우 성공    ← 완료 보고서
 70af92b  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우         ← 구현 + E2E 검증
 52d8e3c  🧹 .claude 로컬 설정 파일 정리
 079451d  ✨ LangFuse 모니터링 통합 완료
 a6f0911  🎉 Phase 0 완료: Nexus Alpha 기반 구축
 ```
+
+### Phase 2 우선순위 1 — pytest 하네스 정식화 (2026-04-17)
+- `pyproject.toml` 신규 — `[tool.pytest.ini_options]`, `[tool.ruff]` (line-length 100, py313)
+- `requirements.txt` — pytest/pytest-mock/pytest-socket 추가, **crewai/crewai-tools `==1.14.1` 버전 고정** (ReAct 파서 포맷이 FakeProvider에 결합)
+- `src/tests/conftest.py` 신규:
+  - `FakeProvider`(BaseLLMProvider 상속) + `fake_provider` / `fake_provider_factory` fixture
+  - autouse `_patch_llm_factory` — `src.llm.factory.get_llm_provider` **와** `src.llm.crewai_adapter.get_llm_provider` 두 네임스페이스를 동시 monkeypatch
+  - autouse `_silence_langfuse` — LangFuseClient 로깅 메서드 전부 no-op
+  - (제외) `pytest-socket` autouse — Windows ProactorEventLoop의 내부 socketpair까지 막아 부작용. Linux CI에서만 opt-in 예정
+- 5개 smoke test에 pytest 진입점 추가 (기존 `if __name__ == "__main__"` 경로는 **수정 없이 보존**)
+- FakeProvider 기본 응답: `Thought: ...\nFinal Answer: 이것은 FakeProvider가 반환한 고정 응답입니다.` — CrewAI 1.14.1 `crewai/agents/parser.py`의 `FINAL_ANSWER_ACTION = "Final Answer:"` 와 1:1 정합
+- 실행 결과: **6 passed in 7.72s** (네트워크 호출 0건)
+- 보고서: `docs/progress/phase2_priority1_complete.md`
 
 ### Phase 0 (기반)
 - Python 3.13 가상환경 (`.venv/`) 구축 — 이전 3.14 venv는 crewai 비호환으로 폐기·재생성
@@ -72,14 +88,16 @@ a6f0911  🎉 Phase 0 완료: Nexus Alpha 기반 구축
 ```
 nexus-alpha/
 ├── README.md
-├── requirements.txt
+├── requirements.txt          # pytest-* / crewai==1.14.1 (고정)
+├── pyproject.toml            # pytest + ruff 설정 (Phase 2-P1)
 ├── .env                      # Git 제외 — LLM_PROVIDER, LANGFUSE_* 등
 ├── .gitignore
 ├── docs/
 │   ├── context/
 │   │   └── next_session_context.md   # ← 본 문서
 │   └── progress/
-│       └── phase1_complete.md
+│       ├── phase1_complete.md
+│       └── phase2_priority1_complete.md
 └── src/
     ├── __init__.py
     ├── README.md
@@ -117,13 +135,14 @@ nexus-alpha/
     ├── config/              (__init__.py + README만)
     ├── tests/
     │   ├── __init__.py
+    │   ├── conftest.py                 # Phase 2-P1 — FakeProvider + autouse fixtures
     │   ├── hello_agent.py              # Provider + LangFuse smoke (CrewAI 미사용)
     │   ├── hello_agent_old.py.bak      # 초기(CrewAI LLM 버전) 백업
-    │   ├── test_crewai_adapter.py      # NexusAlphaLLM 직접 호출
-    │   ├── test_cto_agent.py
-    │   ├── test_data_analyst_agent.py
-    │   ├── test_python_engineer_agent.py
-    │   ├── test_workflow_analyze_and_implement.py   # E2E 3-agent
+    │   ├── test_crewai_adapter.py      # NexusAlphaLLM 직접 호출 + pytest 2건
+    │   ├── test_cto_agent.py           # + pytest 1건 (FakeProvider)
+    │   ├── test_data_analyst_agent.py  # + pytest 1건
+    │   ├── test_python_engineer_agent.py # + pytest 1건
+    │   ├── test_workflow_analyze_and_implement.py   # E2E 3-agent + pytest 1건 (tmp_path)
     │   └── README.md
     └── workflows/
         ├── __init__.py                 # exports: run_analyze_and_implement, WorkflowResult
@@ -181,7 +200,13 @@ nexus-alpha/
 - `src.llm`, `src.agents.*` 같은 절대 경로 import는 CWD가 프로젝트 루트여야 동작.
 - 모든 테스트 스크립트 상단에 `PROJECT_ROOT = Path(__file__).resolve().parents[2]` + `sys.path.insert(0, str(PROJECT_ROOT))`.
 
-### 4-9. 코드 생성 결과 저장 규약
+### 4-9. pytest 하네스는 FakeProvider로 CrewAI 경로 완주 (Phase 2-P1)
+- `conftest.py`의 autouse fixture가 `get_llm_provider`를 **두 네임스페이스**(`src.llm.factory` + `src.llm.crewai_adapter`)에서 동시 monkeypatch.
+- FakeProvider 기본 응답은 `"Thought: ...\nFinal Answer: ..."` — CrewAI 1.14.1 `crewai/agents/parser.py`의 `FINAL_ANSWER_ACTION = "Final Answer:"` 계약에 정합해 단일 호출로 AgentFinish 수렴.
+- 에이전트/워크플로우 코드는 pytest를 위해 **절대 수정하지 않음** (최소 침습). 기존 `if __name__ == "__main__"` 경로는 그대로 실제 LLM을 호출.
+- Windows에서는 pytest-socket autouse를 쓰지 않음 — ProactorEventLoop의 내부 socketpair까지 차단하는 부작용. Linux CI에서 `pytest --disable-socket` opt-in 예정.
+
+### 4-10. 코드 생성 결과 저장 규약
 - 에이전트의 Python 코드 응답은 마크다운 내부 `python ... ` 블록 형태.
 - 자동 추출을 위해 엔지니어 에이전트에게 **첫 줄에 `# file: <상대경로>` 헤더를 넣도록** 백스토리에서 강제.
 - 워크플로우 저장 디렉터리 구조:
@@ -259,26 +284,26 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 
 ## 6. Phase 2 다음 할 일 (우선순위 순)
 
-> 근거: `docs/progress/phase1_complete.md` 4절.
+> 근거: `docs/progress/phase1_complete.md` 4절 + `docs/progress/phase2_priority1_complete.md` 6절.
 
-| # | 항목 | 핵심 작업 | 수용 기준 (Definition of Done) |
+| # | 항목 | 핵심 작업 | 상태 |
 |---|---|---|---|
-| 1 | **pytest 하네스 정식화** | `pyproject.toml`에 `[tool.pytest.ini_options]` + `tests/conftest.py`(LangFuse 자동 비활성 fixture, Provider mock fixture) | `pytest` 한 명령으로 smoke 스크립트 대체. 네트워크 없이 CI에서 통과. |
-| 2 | **QA 에이전트** (`src/agents/qa/code_reviewer.py`) | Engineer 산출 코드에 대해 타입 힌트·docstring·pytest 실행 여부 정적 점검. 4-agent 워크플로우로 확장. | `analyze_and_implement` 체인 끝에 QA 추가 시 리뷰 코멘트 생성, 실패 항목 표시. |
-| 3 | **Knowledge 에이전트** (`src/agents/knowledge/*`) | `outputs/workflow_*` 적재·요약·검색. 재실행 시 과거 전략을 참고할 수 있는 RAG 경로. | "비슷한 요구를 이전에 처리한 적 있나?" 질의에 관련 산출물 링크 반환. |
-| 4 | **Operations 에이전트** (`src/agents/operations/*`) | 생성된 코드의 스케줄 실행·로그 수집·실패 알림. | `workflow_<ts>/code/`를 실제로 실행하고 결과/에러를 LangFuse·파일에 기록. |
-| 5 | **요청 라우팅 + UI** | Gradio/Streamlit 기반 단일 엔트리. 자연어 요청 → 적절한 워크플로우 자동 선택. | 브라우저에서 요청 투입 → 3~4명 체인 실행 → 산출 다운로드까지 엔드투엔드. |
+| 1 | **pytest 하네스 정식화** | `pyproject.toml` + `src/tests/conftest.py`(FakeProvider autouse, LangFuse no-op), 5개 smoke test 전환 | ✅ **완료 (2026-04-17)** |
+| 1-B | **Linux CI (GitHub Actions)** | `pytest --disable-socket` opt-in, `pytest -m integration` 러너, cache, matrix. Phase 2-P1에서 의도적으로 분리됨 | 🟡 대기 |
+| 2 | **QA 에이전트** (`src/agents/qa/code_reviewer.py`) | Engineer 산출 코드에 대해 타입 힌트·docstring·pytest 실행 여부 정적 점검. 4-agent 워크플로우로 확장. | 🟡 다음 작업 |
+| 3 | **Knowledge 에이전트** (`src/agents/knowledge/*`) | `outputs/workflow_*` 적재·요약·검색. 재실행 시 과거 전략을 참고할 수 있는 RAG 경로. | 🟡 대기 |
+| 4 | **Operations 에이전트** (`src/agents/operations/*`) | 생성된 코드의 스케줄 실행·로그 수집·실패 알림. | 🟡 대기 |
+| 5 | **요청 라우팅 + UI** | Gradio/Streamlit 기반 단일 엔트리. 자연어 요청 → 적절한 워크플로우 자동 선택. | 🟡 대기 |
 
-**권장 진입 순서**: `1` → `2` → (`3` 또는 `4` 병렬) → `5`.
-우선순위 1 없이는 나머지 작업이 회귀에 취약해집니다.
+**권장 진입 순서**: ~~`1`~~ → **`2`** → (`3` 또는 `4` 병렬) → `1-B` → `5`.
 
-### Phase 2 작업을 시작할 때 제일 먼저 할 일
+### 다음 작업을 시작할 때 제일 먼저 할 일 — 우선순위 2 (QA 에이전트)
 
-1. 새 브랜치 생성: `git checkout -b phase2/pytest-harness`
-2. `pyproject.toml` 신규 작성 (pytest + ruff 설정 포함 권장)
-3. `tests/conftest.py` — LangFuse 자동 no-op fixture(autouse, monkeypatch) + fake Provider fixture
-4. 기존 smoke `src/tests/test_*.py`를 `pytest`로 실행되도록 최소 수정 (assertion 1~2개 추가)
-5. GitHub Actions 워크플로우(옵션) 초안
+1. 새 브랜치 생성: `git checkout -b phase2/qa-agent`
+2. `src/agents/qa/code_reviewer.py` — `create_qa_reviewer_agent()` 팩토리. backstory에 "타입 힌트·docstring·pytest 실행 가능성" 점검 역할 명시.
+3. `src/workflows/analyze_and_implement.py`에 4번째 Task 추가 — Engineer의 `engineer_output` 마크다운 + 추출된 코드 경로를 QA에게 context로 주입.
+4. `src/tests/test_qa_reviewer_agent.py` — 본 세션에서 만든 FakeProvider 패턴을 그대로 재사용.
+5. 전체 `pytest` 통과 확인 — 회귀 방어선이 이미 깔려 있어 즉시 검증 가능.
 
 ---
 
@@ -312,7 +337,15 @@ Phase 1까지의 설계 결정을 파악해 주세요.
 (여기에 구체 작업 내용, 예: "Phase 2 우선순위 1 — pytest 하네스 정식화 시작")
 ```
 
-### 7-3. 동작 확인용 스모크 명령
+### 7-3. 동작 확인용 명령
+
+**(pytest 하네스 — 네트워크 없이, 7초 내 전체 통과)**
+```bash
+.venv/Scripts/pytest.exe                 # 전체 6개 테스트
+.venv/Scripts/pytest.exe src/tests/test_workflow_analyze_and_implement.py -v
+```
+
+**(기존 직접 실행 — 실제 LLM 호출, 수 분 소요, LangFuse 기록 포함)**
 ```bash
 # (A) Provider 단독 — 가장 빠름 (~5초)
 .venv/Scripts/python.exe src/tests/hello_agent.py
@@ -360,3 +393,5 @@ git checkout -b phase2/<주제>
 3. **async→sync 브리지의 한계**. CrewAI가 자체 async 경로를 더 공격적으로 쓰기 시작하면 `NexusAlphaLLM.call()`의 ThreadPoolExecutor 경로가 빈번히 돌 수 있습니다. 필요 시 `asyncio.Runner`로 재작성 검토.
 4. **LangFuse v4는 OTel API**. v2 문법(`langfuse.trace(...)`)은 동작하지 않습니다. `start_observation(as_type=...)` 패턴을 그대로 유지하세요.
 5. **`outputs/`는 `.gitignore`에 포함**. 산출물이 저장되어도 Git에 푸시되지 않습니다. 공유가 필요하면 압축해 첨부하거나 별도 Gist로 올리세요.
+6. **pytest-socket은 Windows에서 autouse 불가**. `ProactorEventLoop`의 내부 `socket.socketpair()`까지 차단해 `anyio.run()` 경로가 전부 실패합니다. 네트워크 차단은 FakeProvider monkeypatch로 이미 달성되어 있고, pytest-socket은 Linux CI에서 `pytest --disable-socket` opt-in으로만 씁니다. 자세한 기록은 `docs/progress/phase2_priority1_complete.md` §3-1.
+7. **CrewAI 버전은 `==1.14.1`로 고정됨**. FakeProvider 응답이 `crewai/agents/parser.py`의 `FINAL_ANSWER_ACTION` 상수에 결합되어 있어 메이저/마이너 업그레이드 시 테스트 재검증 필요.
