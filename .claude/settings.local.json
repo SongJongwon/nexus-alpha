@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/projects/nexus-alpha/.venv/Scripts/pip.exe install *)",
+      "Bash(/c/projects/nexus-alpha/.venv/Scripts/python.exe *)",
+      "Bash(winget install *)",
+      "Bash(py *)",
+      "Bash(/c/projects/nexus-alpha/.venv/Scripts/pip.exe list *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(git config *)",
+      "Bash(git add *)"
+    ]
+  }
+}

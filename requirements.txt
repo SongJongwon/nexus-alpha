@@ -1,0 +1,35 @@
+# 오케스트레이션 (핵심)
+# 멀티 에이전트 협업 프레임워크
+crewai>=0.80.0
+# CrewAI 기본 제공 도구 모음
+crewai-tools>=0.14.0
+# 상태 기반 에이전트 그래프 오케스트레이션
+langgraph>=0.2.0
+# LLM 애플리케이션 체인 구성 프레임워크
+langchain>=0.3.0
+# LangChain용 Anthropic Claude 연동 어댑터
+langchain-anthropic>=0.2.0
+
+# LLM Provider 시스템
+# Claude Code MAX 구독을 경유해 Claude를 호출하는 Anthropic 공식 SDK
+claude-agent-sdk>=0.1.60
+# 비동기 런타임 추상화(asyncio/trio 공통 API)
+anyio>=4.0.0
+
+# 환경변수
+# .env 파일에서 환경 변수 로드
+python-dotenv>=1.0.0
+
+# 데이터 처리
+# 표 형식 데이터 분석 및 조작
+pandas>=2.0.0
+# Excel(.xlsx) 파일 읽기/쓰기
+openpyxl>=3.1.0
+# 데이터 모델 검증 및 스키마 정의
+pydantic>=2.5.0
+
+# 유틸리티
+# YAML 설정 파일 파싱
+pyyaml>=6.0.0
+# 컬러풀한 콘솔 출력 및 진행률 표시
+rich>=13.0.0

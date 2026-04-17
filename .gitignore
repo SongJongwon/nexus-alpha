@@ -1,0 +1,29 @@
+# 환경변수 (API Key 절대 업로드 금지)
+.env
+
+# 가상환경
+.venv/
+venv/
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 산출물 및 로그
+outputs/
+logs/
+*.log
+
+# IDE 설정
+.vscode/
+.idea/
+
+# Windows 시스템 파일
+Thumbs.db
+desktop.ini
+
+# 임시 파일
+*.tmp
+*.temp

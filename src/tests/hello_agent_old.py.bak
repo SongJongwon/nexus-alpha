@@ -1,0 +1,193 @@
+# -*- coding: utf-8 -*-
+"""
+Hello Agent 테스트 스크립트
+============================
+
+목적:
+    CrewAI와 Claude(langchain-anthropic) 연동을 가장 단순한 형태로 검증한다.
+    단일 에이전트(HelloAgent)가 한국어로 인사·자기소개를 수행한다.
+
+모드:
+    USE_API_KEY 환경변수로 인증 방식을 전환한다.
+      - false(기본): Claude Code의 MAX 구독 자격증명을 사용
+                     (Anthropic SDK의 기본 자격증명 탐색 경로에 위임)
+      - true       : 프로젝트 루트 .env 파일에 정의된 ANTHROPIC_API_KEY를 사용
+
+실행 방법:
+    1) 가상환경 활성화
+         bash    : source .venv/Scripts/activate
+         Windows : .venv\\Scripts\\activate
+    2) (API 모드일 때만) 프로젝트 루트 .env 편집
+         ANTHROPIC_API_KEY=sk-ant-xxx
+         USE_API_KEY=true
+    3) 테스트 실행 (프로젝트 루트에서)
+         python -m src.tests.hello_agent
+         # 또는
+         python src/tests/hello_agent.py
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# Windows 기본 콘솔 코드페이지(cp949 등)에서도 한글/유니코드를 안전하게 출력하기 위한 가드.
+# Python 3.7+의 TextIOWrapper.reconfigure를 이용한다.
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.panel import Panel
+from rich.rule import Rule
+
+from crewai import LLM, Agent, Crew, Task
+
+
+# src/tests/hello_agent.py 기준 3단계 상위가 프로젝트 루트
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+CONFIG: dict = {
+    # LLM 설정 (LiteLLM 포맷: provider/model)
+    "model": "anthropic/claude-sonnet-4-6",
+    "temperature": 0.7,
+    "max_tokens": 1024,
+
+    # 에이전트 정의
+    "agent_name": "HelloAgent",
+    "agent_role": "인사하는 AI 비서",
+    "agent_goal": "사용자에게 한국어로 따뜻하게 인사하고 자신을 소개한다.",
+    "agent_backstory": (
+        "당신은 Nexus Alpha RPA 프로젝트의 첫 번째 에이전트로서, "
+        "따뜻하고 정중한 한국어 커뮤니케이션을 담당합니다."
+    ),
+
+    # 태스크 정의
+    "task_description": (
+        "사용자에게 한국어로 따뜻하게 인사하고, 당신이 누구인지 자기소개를 해주세요. "
+        "어조는 친근하지만 정중해야 합니다. 분량은 3~5 문장 사이로 유지하세요."
+    ),
+    "task_expected_output": "3~5문장의 한국어 인사 및 자기소개 메시지",
+}
+
+
+console = Console()
+
+
+def resolve_auth_mode() -> bool:
+    """USE_API_KEY 환경변수를 읽어 API 키 사용 여부(Bool)를 반환한다.
+
+    Returns:
+        True면 .env의 ANTHROPIC_API_KEY를 명시적으로 사용하는 API 모드,
+        False면 Claude Code MAX 구독 자격증명에 위임하는 MAX 모드.
+    """
+    raw = os.getenv("USE_API_KEY", "false").strip().lower()
+    return raw in {"true", "1", "yes", "y"}
+
+
+def build_llm(use_api_key: bool) -> LLM:
+    """인증 모드에 맞춰 CrewAI LLM 인스턴스를 생성한다.
+
+    CrewAI 1.x는 내부적으로 LiteLLM을 통해 Anthropic API를 호출한다.
+    (langchain-anthropic과 동일한 엔드포인트를 사용하지만 어댑터가 다름)
+
+    Args:
+        use_api_key: True면 .env의 ANTHROPIC_API_KEY를 주입하고,
+            False면 LiteLLM/Anthropic SDK 기본 자격증명 탐색 로직에 위임한다
+            (예: Claude Code가 세팅해 둔 환경 변수).
+
+    Raises:
+        RuntimeError: API 키 모드인데 ANTHROPIC_API_KEY가 비어 있을 때.
+    """
+    kwargs: dict = {
+        "model": CONFIG["model"],
+        "temperature": CONFIG["temperature"],
+        "max_tokens": CONFIG["max_tokens"],
+    }
+
+    if use_api_key:
+        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError(
+                "USE_API_KEY=true 인데 .env에 ANTHROPIC_API_KEY가 설정되지 않았습니다."
+            )
+        kwargs["api_key"] = api_key
+
+    return LLM(**kwargs)
+
+
+def build_crew(llm: LLM) -> Crew:
+    """HelloAgent 단일 에이전트 + 단일 태스크로 구성된 Crew를 반환한다.
+
+    Args:
+        llm: CrewAI 에이전트가 사용할 Claude LLM 인스턴스.
+    """
+    agent = Agent(
+        name=CONFIG["agent_name"],
+        role=CONFIG["agent_role"],
+        goal=CONFIG["agent_goal"],
+        backstory=CONFIG["agent_backstory"],
+        llm=llm,
+        allow_delegation=False,
+        verbose=False,
+    )
+    task = Task(
+        description=CONFIG["task_description"],
+        expected_output=CONFIG["task_expected_output"],
+        agent=agent,
+    )
+    return Crew(agents=[agent], tasks=[task], verbose=False)
+
+
+def main() -> int:
+    """스크립트 진입점. 성공 시 0, 실패 시 1을 반환한다."""
+    use_api_key = resolve_auth_mode()
+    mode_label = (
+        "API 키 모드 (.env ANTHROPIC_API_KEY)"
+        if use_api_key
+        else "MAX 구독 모드 (Claude Code 자격증명)"
+    )
+
+    console.print(Rule("[bold cyan]Hello Agent Test[/bold cyan]"))
+    console.print(f"[bold]인증 모드:[/bold] {mode_label}")
+    console.print(f"[bold]모델     :[/bold] {CONFIG['model']}")
+    console.print(
+        f"[bold]에이전트 :[/bold] {CONFIG['agent_name']} — {CONFIG['agent_role']}"
+    )
+    console.print(Rule())
+
+    try:
+        llm = build_llm(use_api_key)
+        crew = build_crew(llm)
+        with console.status(
+            "[yellow]HelloAgent 응답 생성 중...[/yellow]", spinner="dots"
+        ):
+            result = crew.kickoff()
+    except Exception as exc:
+        console.print(
+            Panel(
+                f"[bold red]실패:[/bold red] {exc}",
+                title="오류",
+                border_style="red",
+            )
+        )
+        return 1
+
+    # CrewAI 버전에 따라 kickoff()가 CrewOutput 혹은 str을 반환할 수 있다.
+    output_text = getattr(result, "raw", None) or str(result)
+    console.print(
+        Panel(
+            output_text,
+            title=f"[green]{CONFIG['agent_name']} 응답[/green]",
+            border_style="green",
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
