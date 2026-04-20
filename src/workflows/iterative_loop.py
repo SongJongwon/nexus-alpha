@@ -81,6 +81,7 @@ from src.agents.operations import (
     SandboxResult,
     format_sandbox_result_for_task,
     run_python_in_sandbox,
+    run_python_package_in_sandbox,
 )
 from src.monitoring import get_langfuse_client
 from src.workflows.analyze_and_implement import (
@@ -230,6 +231,12 @@ _PREFERRED_ENTRY_NAMES: tuple[str, ...] = (
 def _pick_entry_file(code_files: list[Path]) -> Optional[Path]:
     """추출된 .py 파일 목록에서 sandbox 실행에 가장 적합한 1개를 반환.
 
+    NOTE (Phase 3 보강): 본 함수는 단일 파일 entry 만 다루는 초기 휴리스틱이며,
+    `_node_run_sandbox` 는 더 이상 이를 직접 호출하지 않는다 (멀티파일 패키지를
+    제대로 다루는 `run_python_package_in_sandbox` 로 교체됨). 다만 회귀 테스트
+    호환을 위해 모듈에 보존하며, 외부에서 단순 entry 후보를 묻는 용도로는
+    여전히 유효.
+
     Args:
         code_files: `WorkflowResult.saved_code_files` (저장된 .py Path 목록).
 
@@ -358,12 +365,20 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
 def _node_run_sandbox(state: _LoopState) -> dict[str, Any]:
     """Phase 3 — Engineer 산출 코드를 별도 프로세스에서 실행.
 
+    Phase 3 보강 (2026-04-20):
+        단일 파일 entry 만 다루던 초기 버전을 폐기하고, 멀티파일 패키지를
+        디렉터리 트리째 재구성·실행하는 `run_python_package_in_sandbox` 로 위임.
+        `# file: <relpath>` 헤더 기반 트리 재구성 → `__main__.py`/`cli.py` 등
+        entry 자동 탐지 → `python -m <pkg>` 실행. 단일 파일도 동일 함수가 root
+        에 배치하고 스크립트로 실행해 backward compat 유지.
+
     동작 요약:
-        1. enable_sandbox=False 면 즉시 None 반환 (skip)
-        2. saved_code_files 가 비어 있으면 None (FakeProvider 시나리오 등)
-        3. _pick_entry_file 로 entry 1개 선정. 못 찾으면 None.
-        4. entry 의 텍스트를 읽어 `run_python_in_sandbox` 호출.
-        5. 어떤 예외가 나도 None fallback — 루프 자체는 멈추지 않는다.
+        1. `enable_sandbox=False` → 즉시 None 반환 (skip)
+        2. `saved_code_files` 비었음 → None (FakeProvider 시나리오 등)
+        3. `run_python_package_in_sandbox` 호출:
+             - 트리 재구성 + entry 탐지 + 실행
+             - entry 미탐지 시 함수가 None 반환 → 그대로 전달
+        4. 잘못된 입력 (TypeError/ValueError) → None fallback (루프 안전성 우선)
 
     Returns:
         {"execution_result": SandboxResult | None}
@@ -375,22 +390,12 @@ def _node_run_sandbox(state: _LoopState) -> dict[str, Any]:
     if not chain or not chain.saved_code_files:
         return {"execution_result": None}
 
-    entry = _pick_entry_file(chain.saved_code_files)
-    if entry is None:
-        return {"execution_result": None}
-
     try:
-        code = entry.read_text(encoding="utf-8")
-    except OSError:
-        return {"execution_result": None}
-
-    try:
-        result = run_python_in_sandbox(
-            code,
+        result = run_python_package_in_sandbox(
+            chain.saved_code_files,
             timeout_sec=state.get("sandbox_timeout_sec", DEFAULT_SANDBOX_TIMEOUT_SEC),
         )
     except (TypeError, ValueError):
-        # 잘못된 입력은 None — 루프 안전성 우선
         return {"execution_result": None}
 
     return {"execution_result": result}

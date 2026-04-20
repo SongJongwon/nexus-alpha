@@ -27,6 +27,7 @@ from .sandbox_runner import (
     create_sandbox_runner_agent,
     format_sandbox_result_for_task,
     run_python_in_sandbox,
+    run_python_package_in_sandbox,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "create_sandbox_runner_agent",
     "format_sandbox_result_for_task",
     "run_python_in_sandbox",
+    "run_python_package_in_sandbox",
 ]
