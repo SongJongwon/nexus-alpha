@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Nexus Alpha 자율 반복 루프 (Phase 2.5 / v3 PR-C).
+Nexus Alpha 자율 반복 루프 (Phase 2.5 / v3 + Phase 3 Sandbox 통합).
 
 `run_iterative_loop(user_request)` — 자기 진화 엔진의 공개 진입점.
 
-LangGraph `StateGraph` 기반으로 다음 흐름을 구현한다:
+LangGraph `StateGraph` 기반으로 다음 흐름을 구현한다 (Phase 3 신규 노드 ★):
 
     expand_requirements (Requirement Expander)
             │
@@ -12,7 +12,10 @@ LangGraph `StateGraph` 기반으로 다음 흐름을 구현한다:
         run_chain (analyze_and_implement: CTO→Analyst→Engineer→QA)
             │
             ▼
-       analyze_gap (Gap Analyst)
+       run_sandbox ★ (run_python_in_sandbox — Engineer 산출 코드 동적 실행)
+            │
+            ▼
+       analyze_gap (Gap Analyst — SandboxResult 를 입력으로 함께 받음)
             │
             ▼
     judge_convergence (결정표, LLM 무관)
@@ -34,6 +37,21 @@ LangGraph `StateGraph` 기반으로 다음 흐름을 구현한다:
       를 프록시로 사용. 2회 연속 비증가 → stagnation=True.
     - **Budget gate (coarse)**: iteration 당 5000 token 추정치 차감. LangFuse
       usage 정밀 집계는 Phase 3 이후. NO_BUDGET_GATE 면 검사 생략.
+
+Phase 3 (Sandbox 통합) 추가 메모:
+    - **Single-file 한계**: `run_python_in_sandbox` 가 코드를 임시 디렉터리의
+      `_sandbox_main.py` 단일 파일로만 기록·실행. Engineer 산출이 멀티파일
+      패키지면 상대 import 가 실패해 SandboxResult.verdict=FAIL 로 떨어진다.
+      Gap Analyst 가 이 신호를 받아 "실행 가능한 단일 파일로 재구성" 을 다음
+      iteration 보정 지시로 만들 수 있다. 디렉터리 통째 복사·실행은 Phase 3
+      후속 작업.
+    - **Entry 선정 휴리스틱**: 단일 파일 / `__main__.py` / `cli.py` / `main.py`
+      / `if __name__ == "__main__"` 보유 파일 순. 못 찾으면 실행 skip,
+      execution_result=None 으로 Gap Analyst 에게 "(없음)" 안내.
+    - **실패 격리**: 어떤 이유로든 sandbox 실행이 실패해도 루프 자체는 계속.
+      execution_result=None 또는 verdict=FAIL/TIMEOUT 으로 다음 단계에 정보만 전달.
+    - **enable_sandbox=False 토글**: 노드는 항상 그래프에 존재하되, flag 가
+      False 면 노드가 즉시 None 반환 (그래프 분기 단순화).
 """
 
 from __future__ import annotations
@@ -59,6 +77,11 @@ from src.agents.c_level import (
     judge_convergence,
     parse_gap_report_from_yaml,
 )
+from src.agents.operations import (
+    SandboxResult,
+    format_sandbox_result_for_task,
+    run_python_in_sandbox,
+)
 from src.monitoring import get_langfuse_client
 from src.workflows.analyze_and_implement import (
     WorkflowResult,
@@ -71,6 +94,11 @@ DEFAULT_OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 
 # iteration 당 차감할 추정 토큰 — LangFuse 정밀 집계 도입 전 임시 프록시.
 DEFAULT_TOKENS_PER_ITERATION: int = 5000
+
+# Phase 3 — Sandbox 실행 기본 타임아웃(초). Engineer 산출 코드가 입력 대기·
+# 무한 루프인 경우를 빠르게 끊는다. 더 긴 빌드·테스트가 필요하면 호출 측에서
+# `run_iterative_loop(..., sandbox_timeout_sec=...)` 로 조정.
+DEFAULT_SANDBOX_TIMEOUT_SEC: int = 30
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +115,9 @@ class LoopOutcome:
         iterations_run: 실제 실행된 iteration 횟수.
         spec_markdown: Requirement Expander 산출 (한 번만 실행됨).
         final_chain_result: 마지막 iteration 의 4-agent 체인 산출.
+        final_execution_result: 마지막 iteration 의 Sandbox 실행 결과.
+            None 은 (a) enable_sandbox=False, (b) 실행 가능한 entry 부재,
+            (c) 실행 자체 예외 중 하나. verdict 검사로 PASS/FAIL/TIMEOUT 구분.
         final_gap_report_raw: 마지막 iteration 의 Gap Analyst 마크다운.
         final_gap_report: 마지막 iteration 의 정규화 GapReport.
         final_decision: 마지막 결정표 산출.
@@ -101,6 +132,7 @@ class LoopOutcome:
     iterations_run: int
     spec_markdown: str
     final_chain_result: Optional[WorkflowResult]
+    final_execution_result: Optional[SandboxResult]
     final_gap_report_raw: str
     final_gap_report: Optional[GapReport]
     final_decision: Optional[JudgmentDecision]
@@ -122,6 +154,8 @@ class _LoopState(TypedDict, total=False):
     max_iterations: int
     budget_tokens_remaining: int
     outputs_dir: str  # Path.as_posix() — TypedDict serialization friendly
+    enable_sandbox: bool  # Phase 3 — False 면 sandbox 노드가 즉시 None 반환
+    sandbox_timeout_sec: int  # Phase 3
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -130,6 +164,7 @@ class _LoopState(TypedDict, total=False):
     iteration: int
     feedback: str  # 다음 iteration CTO 에게 줄 보정 지시 (첫 iter 는 빈 문자열)
     chain_result: Any  # WorkflowResult — TypedDict 라 Any 로 둠
+    execution_result: Any  # SandboxResult | None — Phase 3 sandbox 산출
     gap_report_raw: str
     gap_report: Any  # GapReport
     decision: Any  # JudgmentDecision
@@ -148,20 +183,80 @@ def _format_gap_analyst_input(
     chain_result: WorkflowResult,
     prev_gap_raw: str,
     iteration: int,
+    execution_result: Optional[SandboxResult] = None,
 ) -> str:
     """Gap Analyst 백스토리가 가정하는 5블록 형식으로 입력을 직렬화.
 
     호출 측 워크플로우에서 task description 본문에 그대로 사용한다.
+
+    Phase 3 (2026-04-20): execution_result 파라미터 추가. None 이면 기존처럼
+    "(없음)" 안내, SandboxResult 면 `format_sandbox_result_for_task` 로 직렬화한
+    verdict/exit_code/elapsed/stdout/stderr 블록을 [EXECUTION_RESULT] 에 주입.
     """
     prev_block = prev_gap_raw if prev_gap_raw else "(없음 — 첫 iteration)"
+    if execution_result is None:
+        exec_block = "(없음 — Sandbox 비활성 또는 실행 가능 entry 미발견)"
+    else:
+        exec_block = format_sandbox_result_for_task(execution_result, max_lines=20)
     return (
         f"본 iteration 번호: {iteration}\n\n"
         f"[REQUIREMENT_SPEC]\n{spec_markdown}\n\n"
         f"[ENGINEER_OUTPUT]\n{chain_result.engineer_output}\n\n"
         f"[QA_REVIEW]\n{chain_result.qa_review}\n\n"
-        f"[EXECUTION_RESULT]\n(없음 — Sandbox Runner 미적용)\n\n"
+        f"[EXECUTION_RESULT]\n{exec_block}\n\n"
         f"[PREVIOUS_GAP_REPORT]\n{prev_block}\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# Helper — Engineer 산출 코드 파일에서 실행 가능한 entry 1개를 휴리스틱으로 선정
+# ---------------------------------------------------------------------------
+# Phase 3 한계: `run_python_in_sandbox` 가 단일 파일만 지원하므로, 멀티파일
+# 패키지 산출은 entry 파일을 1개 골라 그것만 실행한다. 상대 import 가 있는 패키지
+# 는 ImportError 로 FAIL 처리되며, 이는 Gap Analyst 가 다음 iteration 의 보정
+# 지시("실행 가능한 단일 파일로 재구성")로 변환하도록 의도된 신호다.
+
+# 우선순위: 단일 파일 → __main__.py → cli.py / main.py / app.py / run.py →
+# `if __name__ == "__main__"` 블록 보유 파일.
+_PREFERRED_ENTRY_NAMES: tuple[str, ...] = (
+    "__main__.py",
+    "cli.py",
+    "main.py",
+    "app.py",
+    "run.py",
+)
+
+
+def _pick_entry_file(code_files: list[Path]) -> Optional[Path]:
+    """추출된 .py 파일 목록에서 sandbox 실행에 가장 적합한 1개를 반환.
+
+    Args:
+        code_files: `WorkflowResult.saved_code_files` (저장된 .py Path 목록).
+
+    Returns:
+        선정된 Path, 또는 None (목록 비어 있거나 후보 부재).
+    """
+    if not code_files:
+        return None
+    if len(code_files) == 1:
+        return code_files[0]
+
+    # `code_extract` 디렉터리 추출 시 파일명이 `src__pkg__cli.py` 같은 평탄화 형식.
+    # 단순 endswith 매칭으로 처리.
+    for preferred in _PREFERRED_ENTRY_NAMES:
+        for p in code_files:
+            if p.name.endswith(preferred):
+                return p
+
+    for p in code_files:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if 'if __name__ == "__main__"' in text or "if __name__ == '__main__'" in text:
+            return p
+
+    return None  # 모든 휴리스틱 실패 — 실행 skip
 
 
 def _format_feedback_for_next_iteration(gap: GapReport, decision: JudgmentDecision) -> str:
@@ -255,7 +350,50 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
         "iteration": next_iter,
         "chain_result": chain_result,
         "iteration_artifacts": artifacts,
+        # 새 iteration 시작 — 이전 iter 의 sandbox 산출은 무효
+        "execution_result": None,
     }
+
+
+def _node_run_sandbox(state: _LoopState) -> dict[str, Any]:
+    """Phase 3 — Engineer 산출 코드를 별도 프로세스에서 실행.
+
+    동작 요약:
+        1. enable_sandbox=False 면 즉시 None 반환 (skip)
+        2. saved_code_files 가 비어 있으면 None (FakeProvider 시나리오 등)
+        3. _pick_entry_file 로 entry 1개 선정. 못 찾으면 None.
+        4. entry 의 텍스트를 읽어 `run_python_in_sandbox` 호출.
+        5. 어떤 예외가 나도 None fallback — 루프 자체는 멈추지 않는다.
+
+    Returns:
+        {"execution_result": SandboxResult | None}
+    """
+    if not state.get("enable_sandbox", True):
+        return {"execution_result": None}
+
+    chain: WorkflowResult = state["chain_result"]
+    if not chain or not chain.saved_code_files:
+        return {"execution_result": None}
+
+    entry = _pick_entry_file(chain.saved_code_files)
+    if entry is None:
+        return {"execution_result": None}
+
+    try:
+        code = entry.read_text(encoding="utf-8")
+    except OSError:
+        return {"execution_result": None}
+
+    try:
+        result = run_python_in_sandbox(
+            code,
+            timeout_sec=state.get("sandbox_timeout_sec", DEFAULT_SANDBOX_TIMEOUT_SEC),
+        )
+    except (TypeError, ValueError):
+        # 잘못된 입력은 None — 루프 안전성 우선
+        return {"execution_result": None}
+
+    return {"execution_result": result}
 
 
 def _node_analyze_gap(state: _LoopState) -> dict[str, Any]:
@@ -270,6 +408,7 @@ def _node_analyze_gap(state: _LoopState) -> dict[str, Any]:
         chain_result=chain_result,
         prev_gap_raw=prev_raw,
         iteration=state["iteration"],
+        execution_result=state.get("execution_result"),
     )
 
     analyst = create_gap_analyst_agent(verbose=False)
@@ -381,6 +520,7 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     g = StateGraph(_LoopState)
     g.add_node("expand_requirements", _node_expand_requirements)
     g.add_node("run_chain", _node_run_chain)
+    g.add_node("run_sandbox", _node_run_sandbox)  # Phase 3 신규
     g.add_node("analyze_gap", _node_analyze_gap)
     g.add_node("judge_convergence", _node_judge_convergence)
     g.add_node("prepare_feedback", _node_prepare_feedback)
@@ -389,7 +529,8 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
 
     g.set_entry_point("expand_requirements")
     g.add_edge("expand_requirements", "run_chain")
-    g.add_edge("run_chain", "analyze_gap")
+    g.add_edge("run_chain", "run_sandbox")        # Phase 3
+    g.add_edge("run_sandbox", "analyze_gap")      # Phase 3
     g.add_edge("analyze_gap", "judge_convergence")
     g.add_conditional_edges(
         "judge_convergence",
@@ -416,6 +557,8 @@ def run_iterative_loop(
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     budget_tokens_remaining: int = NO_BUDGET_GATE,
     outputs_dir: Optional[Path] = None,
+    enable_sandbox: bool = True,
+    sandbox_timeout_sec: int = DEFAULT_SANDBOX_TIMEOUT_SEC,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -425,18 +568,29 @@ def run_iterative_loop(
         budget_tokens_remaining: 토큰 예산. NO_BUDGET_GATE(-1) 면 검사 생략.
         outputs_dir: 각 iteration 의 산출물 디렉터리 부모. 기본 `outputs/`.
             테스트에서 `tmp_path` 주입 가능.
+        enable_sandbox: Phase 3 — Engineer 산출 코드 자동 실행 여부. 기본 True.
+            False 면 sandbox 노드가 즉시 None 반환하고 Gap Analyst 입력에는
+            "(없음)" 안내. 호환성·디버깅 목적의 우회 스위치.
+        sandbox_timeout_sec: 자식 프로세스 강제 종료 임계 (초). 기본 30.
 
     Returns:
-        LoopOutcome — 최종 verdict + 마지막 chain 결과 + 모든 iteration 의 산출 경로.
+        LoopOutcome — verdict + 4-agent chain 결과 + sandbox 실행 결과 + 산출 경로.
 
     Raises:
-        RecursionError: LangGraph 가 안전 한도(기본 25) 초과 시. 일반적으로
-            max_iterations<=5 이면 노드 사이클이 ~30 이라 안전 — 그래도 노드
-            recursion_limit 을 명시적으로 max_iterations*6 으로 설정.
+        RecursionError: LangGraph 안전 한도 초과 시. recursion_limit 은
+            max_iterations*7 + 안전 여유 10 으로 자동 설정 (Phase 3 에서 한 iter 가
+            7 노드: chain→sandbox→gap→judge→prepare_feedback→chain→sandbox 등).
 
     Note:
-        Iteration Controller 자체는 LLM 을 호출하지 않는다. 4 agent (Expander +
-        Engineer/QA 체인 4명 + Gap Analyst + (선택) Judge narration) 만 LLM 호출.
+        Iteration Controller 자체는 LLM 을 호출하지 않는다. LLM 호출 주체는:
+        - Requirement Expander (1회)
+        - 4-agent chain (CTO/Analyst/Engineer/QA) — iteration 마다
+        - Gap Analyst — iteration 마다
+        - (선택) Convergence Judge narration — 본 함수에서는 결정표만 호출,
+          narration 은 별도 호출 측 책임.
+
+        Sandbox 실행은 LLM 호출 아닌 subprocess — 보안 한계는 Phase 2-P4 모듈
+        docstring 참조 (호스트 격리 없음, 신뢰할 수 없는 코드 실행 금지).
     """
     target_outputs = outputs_dir if outputs_dir is not None else DEFAULT_OUTPUTS_DIR
     target_outputs.mkdir(parents=True, exist_ok=True)
@@ -446,11 +600,12 @@ def run_iterative_loop(
         name="iterative_loop",
         user_id="local-dev",
         metadata={
-            "phase": "phase_2_5_v3",
+            "phase": "phase_3_sandbox_integration",
             "workflow": "iterative_loop",
             "user_request_preview": user_request[:160],
             "max_iterations": max_iterations,
             "budget_initial": budget_tokens_remaining,
+            "enable_sandbox": enable_sandbox,
         },
     )
 
@@ -461,11 +616,12 @@ def run_iterative_loop(
             "max_iterations": max_iterations,
             "budget_tokens_remaining": budget_tokens_remaining,
             "outputs_dir": target_outputs.as_posix(),
+            "enable_sandbox": enable_sandbox,
+            "sandbox_timeout_sec": sandbox_timeout_sec,
         }
-        # recursion_limit: 노드 방문 횟수 한도. iteration 한 번에 6 노드 (run_chain →
-        # analyze_gap → judge → prepare_feedback → run_chain ...) 이므로 max_iter*6
-        # + 안전 여유 10.
-        recursion_limit = max(50, max_iterations * 6 + 10)
+        # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
+        # max_iter*7 + 안전 여유 10.
+        recursion_limit = max(50, max_iterations * 7 + 10)
         final_state = compiled.invoke(initial_state, config={"recursion_limit": recursion_limit})
 
         decision: JudgmentDecision = final_state["decision"]
@@ -478,6 +634,7 @@ def run_iterative_loop(
             iterations_run=final_state.get("iteration", 0),
             spec_markdown=final_state.get("spec_markdown", ""),
             final_chain_result=final_state.get("chain_result"),
+            final_execution_result=final_state.get("execution_result"),
             final_gap_report_raw=final_state.get("gap_report_raw", ""),
             final_gap_report=gap,
             final_decision=decision,

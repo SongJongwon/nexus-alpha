@@ -43,6 +43,7 @@ from src.agents.c_level import (
     JudgmentDecision,
     Verdict,
 )
+from src.agents.operations import SandboxResult
 from src.workflows import (
     LoopOutcome,
     build_iterative_loop_graph,
@@ -52,6 +53,8 @@ from src.workflows.iterative_loop import (
     _detect_stagnation,
     _format_feedback_for_next_iteration,
     _format_gap_analyst_input,
+    _node_run_sandbox,
+    _pick_entry_file,
     _route_after_judge,
 )
 
@@ -178,6 +181,7 @@ def test_build_iterative_loop_graph_compiles() -> None:
         "__end__",
         "expand_requirements",
         "run_chain",
+        "run_sandbox",  # Phase 3
         "analyze_gap",
         "judge_convergence",
         "prepare_feedback",
@@ -188,7 +192,177 @@ def test_build_iterative_loop_graph_compiles() -> None:
 
 
 # =============================================================================
-# 3. E2E — FakeProvider 로 루프 1회 완주 (COMPLETE 경로)
+# 3. Phase 3 — Sandbox 통합 (entry picker + sandbox node)
+# =============================================================================
+def test_pick_entry_file_returns_none_for_empty_list() -> None:
+    assert _pick_entry_file([]) is None
+
+
+def test_pick_entry_file_returns_only_file_when_single(tmp_path: Path) -> None:
+    p = tmp_path / "calculator.py"
+    p.write_text("print('hi')")
+    assert _pick_entry_file([p]) == p
+
+
+def test_pick_entry_file_prefers_dunder_main(tmp_path: Path) -> None:
+    """평탄화 파일명도 endswith 매칭 (`src__pkg____main__.py` 같은 형식 대응)."""
+    a = tmp_path / "src__pkg__cli.py"
+    a.write_text("# cli")
+    b = tmp_path / "src__pkg____main__.py"
+    b.write_text("# main")
+    c = tmp_path / "src__pkg__util.py"
+    c.write_text("# util")
+    assert _pick_entry_file([a, b, c]) == b  # __main__.py 가 최우선
+
+
+def test_pick_entry_file_falls_back_to_cli_then_main_then_app(tmp_path: Path) -> None:
+    util = tmp_path / "util.py"
+    util.write_text("# util")
+    cli = tmp_path / "cli.py"
+    cli.write_text("# cli")
+    # __main__.py 없으면 cli.py 가 다음 우선
+    assert _pick_entry_file([util, cli]) == cli
+
+
+def test_pick_entry_file_uses_main_block_heuristic(tmp_path: Path) -> None:
+    """선호 이름이 없을 때 `if __name__ == "__main__"` 블록 보유 파일 선정."""
+    a = tmp_path / "helper.py"
+    a.write_text("def f(): pass\n")
+    b = tmp_path / "runme.py"  # 선호 이름 아님
+    b.write_text('def g(): pass\n\nif __name__ == "__main__":\n    g()\n')
+    assert _pick_entry_file([a, b]) == b
+
+
+def test_pick_entry_file_returns_none_when_no_heuristic_matches(tmp_path: Path) -> None:
+    a = tmp_path / "alpha.py"
+    a.write_text("def a(): pass")
+    b = tmp_path / "bravo.py"
+    b.write_text("def b(): pass")
+    assert _pick_entry_file([a, b]) is None
+
+
+# -- _node_run_sandbox -------------------------------------------------------
+class _StubChain:
+    """WorkflowResult mocking용 — saved_code_files 만 필요."""
+
+    def __init__(self, code_files: list[Path]) -> None:
+        self.saved_code_files = code_files
+
+
+def test_node_run_sandbox_skips_when_disabled() -> None:
+    state = {
+        "enable_sandbox": False,
+        "chain_result": _StubChain([Path("nonexistent.py")]),
+        "sandbox_timeout_sec": 30,
+    }
+    out = _node_run_sandbox(state)  # type: ignore[arg-type]
+    assert out == {"execution_result": None}
+
+
+def test_node_run_sandbox_skips_when_no_code_files() -> None:
+    state = {
+        "enable_sandbox": True,
+        "chain_result": _StubChain([]),
+        "sandbox_timeout_sec": 30,
+    }
+    out = _node_run_sandbox(state)  # type: ignore[arg-type]
+    assert out == {"execution_result": None}
+
+
+def test_node_run_sandbox_skips_when_no_runnable_entry(tmp_path: Path) -> None:
+    """선호 이름도 없고 __main__ 블록도 없는 헬퍼 파일들만 → skip."""
+    a = tmp_path / "alpha.py"
+    a.write_text("def a(): pass")
+    b = tmp_path / "bravo.py"
+    b.write_text("def b(): pass")
+    state = {
+        "enable_sandbox": True,
+        "chain_result": _StubChain([a, b]),
+        "sandbox_timeout_sec": 30,
+    }
+    out = _node_run_sandbox(state)  # type: ignore[arg-type]
+    assert out == {"execution_result": None}
+
+
+def test_node_run_sandbox_runs_real_code_pass(tmp_path: Path) -> None:
+    """실제 subprocess — print 만 하는 단순 코드는 PASS 로 종료해야 한다."""
+    p = tmp_path / "calc.py"
+    p.write_text("print('phase 3 sandbox ok')\n")
+    state = {
+        "enable_sandbox": True,
+        "chain_result": _StubChain([p]),
+        "sandbox_timeout_sec": 10,
+    }
+    out = _node_run_sandbox(state)  # type: ignore[arg-type]
+
+    result = out["execution_result"]
+    assert isinstance(result, SandboxResult)
+    assert result.verdict == "PASS"
+    assert "phase 3 sandbox ok" in result.stdout
+
+
+def test_node_run_sandbox_runs_real_code_fail(tmp_path: Path) -> None:
+    """실제 subprocess — 의도적 예외는 FAIL + stderr 에 traceback."""
+    p = tmp_path / "calc.py"
+    p.write_text("raise RuntimeError('boom')\n")
+    state = {
+        "enable_sandbox": True,
+        "chain_result": _StubChain([p]),
+        "sandbox_timeout_sec": 10,
+    }
+    out = _node_run_sandbox(state)  # type: ignore[arg-type]
+
+    result = out["execution_result"]
+    assert isinstance(result, SandboxResult)
+    assert result.verdict == "FAIL"
+    assert "RuntimeError" in result.stderr
+
+
+# -- _format_gap_analyst_input with execution_result -------------------------
+def test_format_gap_analyst_input_renders_execution_result() -> None:
+    """SandboxResult 가 주입되면 [EXECUTION_RESULT] 블록에 verdict/stdout 인용."""
+    fake_chain = _StubChain([])
+    fake_chain.engineer_output = "engineer text"  # type: ignore[attr-defined]
+    fake_chain.qa_review = "qa text"  # type: ignore[attr-defined]
+    sandbox = SandboxResult(
+        exit_code=0,
+        stdout="hello from sandbox\n",
+        stderr="",
+        elapsed_sec=0.123,
+        timed_out=False,
+        timeout_sec=30,
+    )
+    text = _format_gap_analyst_input(
+        spec_markdown="SPEC",
+        chain_result=fake_chain,  # type: ignore[arg-type]
+        prev_gap_raw="",
+        iteration=1,
+        execution_result=sandbox,
+    )
+    assert "[EXECUTION_RESULT]" in text
+    assert "verdict: PASS" in text
+    assert "hello from sandbox" in text
+
+
+def test_format_gap_analyst_input_skips_execution_when_none() -> None:
+    """execution_result=None 이면 (없음) 안내만."""
+    fake_chain = _StubChain([])
+    fake_chain.engineer_output = "x"  # type: ignore[attr-defined]
+    fake_chain.qa_review = "y"  # type: ignore[attr-defined]
+    text = _format_gap_analyst_input(
+        spec_markdown="SPEC",
+        chain_result=fake_chain,  # type: ignore[arg-type]
+        prev_gap_raw="",
+        iteration=1,
+        execution_result=None,
+    )
+    assert "[EXECUTION_RESULT]" in text
+    assert "(없음" in text
+    assert "verdict:" not in text  # 직렬화된 SandboxResult 흔적 없음
+
+
+# =============================================================================
+# 4. E2E — FakeProvider 로 루프 1회 완주 (COMPLETE 경로)
 # =============================================================================
 def test_run_iterative_loop_completes_with_fake_provider(tmp_path: Path) -> None:
     """FakeProvider 응답에는 YAML 갭 정보가 없어 빈 GapReport 로 fallback →
@@ -220,7 +394,7 @@ def test_run_iterative_loop_completes_with_fake_provider(tmp_path: Path) -> None
 
 
 def test_run_iterative_loop_outcome_dataclass_fields(tmp_path: Path) -> None:
-    """LoopOutcome 의 모든 핵심 필드가 채워지는지."""
+    """LoopOutcome 의 모든 핵심 필드가 채워지는지 — Phase 3 신규 필드 포함."""
     outcome = run_iterative_loop(
         "단순 검증 요청 — 필드 채움 확인",
         outputs_dir=tmp_path,
@@ -233,6 +407,21 @@ def test_run_iterative_loop_outcome_dataclass_fields(tmp_path: Path) -> None:
     assert outcome.final_chain_result is not None
     assert outcome.final_decision is not None
     assert isinstance(outcome.final_gap_report, GapReport)
+    # Phase 3 신규 필드 — FakeProvider 시나리오에서는 코드 추출 0 → None
+    assert outcome.final_execution_result is None or isinstance(
+        outcome.final_execution_result, SandboxResult
+    )
+
+
+def test_run_iterative_loop_with_sandbox_disabled_completes(tmp_path: Path) -> None:
+    """enable_sandbox=False 면 sandbox 노드는 그대로 실행되지만 즉시 None 반환 → 루프 정상 종료."""
+    outcome = run_iterative_loop(
+        "sandbox 비활성 검증 요청",
+        outputs_dir=tmp_path,
+        enable_sandbox=False,
+    )
+    assert outcome.verdict == Verdict.COMPLETE
+    assert outcome.final_execution_result is None  # 비활성 + entry 미발견 모두 None
 
 
 # =============================================================================
