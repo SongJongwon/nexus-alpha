@@ -283,6 +283,56 @@ def test_run_with_build_branch_enabled_appends_build_artifacts(tmp_path) -> None
         assert (result.saved_dir / name).exists(), f"{name} 가 저장되지 않았다"
 
 
+def test_run_with_release_branch_enabled_appends_release_artifacts(tmp_path) -> None:
+    """`enable_release_branch=True` (기본 GUI/Build 비활성) → 메인 4-agent 후
+    릴리스 4단 사슬만 추가 실행 → WorkflowResult 의 release 필드 4종 +
+    산출 파일 30~33 채워짐.
+
+    검증:
+        - 기존 4단 산출(00~04) 보존 (backward compat)
+        - 새 4 필드(release_decision/changelog_entry/update_module_spec/
+          distribution_spec) 모두 marker 포함
+        - 산출 파일 30_~33_ prefix 4개 디스크 존재
+        - 빌드 필드(20~24)는 enable_build_branch=False 라 비어 있음
+    """
+    result = run_analyze_and_implement(
+        "Phase 5 릴리스 통합 검증 — FakeProvider",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_release_branch=True,
+        previous_version="0.2.0",
+        repo_url="https://github.com/SongJongwon/nexus-alpha",
+        signing_available=False,
+        privacy_level="public",
+    )
+
+    marker = "FakeProvider가 반환한 고정 응답"
+    # 기존 4-agent 산출 보존
+    assert marker in result.cto_strategy
+    assert marker in result.engineer_output
+    assert marker in result.qa_review
+    # Phase 5 신규 4 필드
+    assert marker in result.release_decision
+    assert marker in result.changelog_entry
+    assert marker in result.update_module_spec
+    assert marker in result.distribution_spec
+    # Phase 4.5 빌드 필드는 비활성이므로 빈 문자열
+    assert result.dependency_report == ""
+    assert result.build_spec == ""
+    # 산출 파일 — 기존 + Phase 5 신규
+    assert (result.saved_dir / "01_cto_strategy.md").exists()
+    assert (result.saved_dir / "04_qa_review.md").exists()
+    for name in (
+        "30_release_decision.md",
+        "31_changelog_entry.md",
+        "32_update_module_spec.md",
+        "33_distribution_spec.md",
+    ):
+        assert (result.saved_dir / name).exists(), f"{name} 가 저장되지 않았다"
+    # 빌드 파일은 미생성
+    assert not (result.saved_dir / "20_dependency_report.md").exists()
+
+
 def test_run_with_gui_branch_enabled_falls_back_to_cli(tmp_path) -> None:
     """`enable_gui_branch=True` + FakeProvider 응답에 need_gui 마커 없음
     → 파서가 cli 로 안전 fallback → Engineer 가 그대로 실행되되 UI/UX 컨텍스트

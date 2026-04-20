@@ -18,12 +18,14 @@ from .iterative_loop import (
     build_iterative_loop_graph,
     run_iterative_loop,
 )
+from .release_workflow import ReleaseWorkflowResult, run_release_workflow
 from .router import Intent, RoutingDecision, route_request
 
 __all__ = [
     "BuildWorkflowResult",
     "Intent",
     "LoopOutcome",
+    "ReleaseWorkflowResult",
     "RoutingDecision",
     "WorkflowResult",
     "build_iterative_loop_graph",
@@ -31,4 +33,5 @@ __all__ = [
     "run_analyze_and_implement",
     "run_build_workflow",
     "run_iterative_loop",
+    "run_release_workflow",
 ]
