@@ -12,12 +12,20 @@ Nexus Alpha 워크플로우 패키지.
 """
 
 from .analyze_and_implement import WorkflowResult, run_analyze_and_implement
+from .iterative_loop import (
+    LoopOutcome,
+    build_iterative_loop_graph,
+    run_iterative_loop,
+)
 from .router import Intent, RoutingDecision, route_request
 
 __all__ = [
     "Intent",
+    "LoopOutcome",
     "RoutingDecision",
     "WorkflowResult",
+    "build_iterative_loop_graph",
     "route_request",
     "run_analyze_and_implement",
+    "run_iterative_loop",
 ]
