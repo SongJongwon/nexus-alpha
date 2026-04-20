@@ -16,19 +16,34 @@
         - Update Checker
         - Distribution Agent
 
-본 PR (`phase4.5/build-engineer`): Build Engineer + Dependency Analyzer 2명만.
-나머지 7명은 후속 PR로 점진 추가.
+진행 상황:
+    - phase4.5/build-engineer (#15): Build Engineer + Dependency Analyzer
+    - phase4.5/asset-installer (본 PR): Asset Manager + Installer Creator
+    - 후속: Platform Tester (1명) — Phase 4.5 완성
 
 사용 예:
     from src.agents.build_release import (
+        create_asset_manager_agent,
         create_build_engineer_agent,
         create_dependency_analyzer_agent,
+        create_installer_creator_agent,
     )
 
-    analyzer = create_dependency_analyzer_agent()  # 먼저 의존성 감사
-    builder = create_build_engineer_agent()         # 그 결과로 빌드 사양 결정
+    # 빌드 4단계 (Phase 4.5 마지막 1단계 Platform Tester 까지 도달 시):
+    deps = create_dependency_analyzer_agent()       # 1. 의존성 감사
+    builder = create_build_engineer_agent()          # 2. 빌드 사양
+    assets = create_asset_manager_agent()            # 3. 자원 매니페스트
+    installer = create_installer_creator_agent()     # 4. 인스톨러 사양
+    # tester = create_platform_tester_agent()        # 5. 산출물 검증 (다음 PR)
 """
 
+from .asset_manager import (
+    ASSET_MANAGER_BACKSTORY,
+    ASSET_MANAGER_GOAL,
+    ASSET_MANAGER_NAME,
+    ASSET_MANAGER_ROLE,
+    create_asset_manager_agent,
+)
 from .build_engineer import (
     BUILD_ENGINEER_BACKSTORY,
     BUILD_ENGINEER_GOAL,
@@ -43,8 +58,19 @@ from .dependency_analyzer import (
     DEPENDENCY_ANALYZER_ROLE,
     create_dependency_analyzer_agent,
 )
+from .installer_creator import (
+    INSTALLER_CREATOR_BACKSTORY,
+    INSTALLER_CREATOR_GOAL,
+    INSTALLER_CREATOR_NAME,
+    INSTALLER_CREATOR_ROLE,
+    create_installer_creator_agent,
+)
 
 __all__ = [
+    "ASSET_MANAGER_BACKSTORY",
+    "ASSET_MANAGER_GOAL",
+    "ASSET_MANAGER_NAME",
+    "ASSET_MANAGER_ROLE",
     "BUILD_ENGINEER_BACKSTORY",
     "BUILD_ENGINEER_GOAL",
     "BUILD_ENGINEER_NAME",
@@ -53,6 +79,12 @@ __all__ = [
     "DEPENDENCY_ANALYZER_GOAL",
     "DEPENDENCY_ANALYZER_NAME",
     "DEPENDENCY_ANALYZER_ROLE",
+    "INSTALLER_CREATOR_BACKSTORY",
+    "INSTALLER_CREATOR_GOAL",
+    "INSTALLER_CREATOR_NAME",
+    "INSTALLER_CREATOR_ROLE",
+    "create_asset_manager_agent",
     "create_build_engineer_agent",
     "create_dependency_analyzer_agent",
+    "create_installer_creator_agent",
 ]
