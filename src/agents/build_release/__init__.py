@@ -19,7 +19,9 @@
 진행 상황:
     - phase4.5/build-engineer (#15): Build Engineer + Dependency Analyzer
     - phase4.5/asset-installer (#16): Asset Manager + Installer Creator
-    - phase4.5/platform-tester (본 PR): Platform Tester ← Phase 4.5 마지막 5/5
+    - phase4.5/platform-tester (#17): Platform Tester ← Phase 4.5 5/5 완성
+    - phase5/release-changelog (본 PR): Release Manager + Changelog Generator
+    - 후속: Update Checker + Distribution Agent (Phase 5 마지막 2명)
 
 사용 예 (Phase 4.5 빌드 5단계 사슬 완성):
     from src.agents.build_release import (
@@ -55,6 +57,13 @@ from .build_engineer import (
     BUILD_ENGINEER_ROLE,
     create_build_engineer_agent,
 )
+from .changelog_generator import (
+    CHANGELOG_GENERATOR_BACKSTORY,
+    CHANGELOG_GENERATOR_GOAL,
+    CHANGELOG_GENERATOR_NAME,
+    CHANGELOG_GENERATOR_ROLE,
+    create_changelog_generator_agent,
+)
 from .dependency_analyzer import (
     DEPENDENCY_ANALYZER_BACKSTORY,
     DEPENDENCY_ANALYZER_GOAL,
@@ -79,6 +88,13 @@ from .platform_tester import (
     format_platform_test_result_for_task,
     test_executable_in_sandbox,
 )
+from .release_manager import (
+    RELEASE_MANAGER_BACKSTORY,
+    RELEASE_MANAGER_GOAL,
+    RELEASE_MANAGER_NAME,
+    RELEASE_MANAGER_ROLE,
+    create_release_manager_agent,
+)
 
 __all__ = [
     "ASSET_MANAGER_BACKSTORY",
@@ -89,6 +105,10 @@ __all__ = [
     "BUILD_ENGINEER_GOAL",
     "BUILD_ENGINEER_NAME",
     "BUILD_ENGINEER_ROLE",
+    "CHANGELOG_GENERATOR_BACKSTORY",
+    "CHANGELOG_GENERATOR_GOAL",
+    "CHANGELOG_GENERATOR_NAME",
+    "CHANGELOG_GENERATOR_ROLE",
     "DEPENDENCY_ANALYZER_BACKSTORY",
     "DEPENDENCY_ANALYZER_GOAL",
     "DEPENDENCY_ANALYZER_NAME",
@@ -102,11 +122,17 @@ __all__ = [
     "PLATFORM_TESTER_NAME",
     "PLATFORM_TESTER_ROLE",
     "PlatformTestResult",
+    "RELEASE_MANAGER_BACKSTORY",
+    "RELEASE_MANAGER_GOAL",
+    "RELEASE_MANAGER_NAME",
+    "RELEASE_MANAGER_ROLE",
     "create_asset_manager_agent",
     "create_build_engineer_agent",
+    "create_changelog_generator_agent",
     "create_dependency_analyzer_agent",
     "create_installer_creator_agent",
     "create_platform_tester_agent",
+    "create_release_manager_agent",
     "format_platform_test_result_for_task",
     "test_executable_in_sandbox",
 ]
