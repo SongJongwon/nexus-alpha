@@ -242,6 +242,47 @@ def test_parse_ui_ux_path_fallback_to_cli_when_unknown() -> None:
 # ---------------------------------------------------------------------------
 # Phase 4 — enable_gui_branch=True E2E (FakeProvider → CLI 경로 fallback)
 # ---------------------------------------------------------------------------
+def test_run_with_build_branch_enabled_appends_build_artifacts(tmp_path) -> None:
+    """`enable_build_branch=True` (기본 GUI 비활성) → 메인 4-agent 후 빌드 5단 사슬
+    실행 → WorkflowResult 의 build 필드 5종 + 산출 파일 20~24 채워짐.
+
+    검증:
+        - 기존 4단 산출(00~04)도 그대로 존재 (backward compat)
+        - 새 5필드(dependency_report/build_spec/asset_manifest/installer_spec/
+          platform_test_report) 모두 marker 포함
+        - 산출 파일 20_~24_ prefix 5개 디스크에 존재
+    """
+    result = run_analyze_and_implement(
+        "Phase 4.5 빌드 통합 검증 — FakeProvider",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_build_branch=True,
+    )
+
+    marker = "FakeProvider가 반환한 고정 응답"
+    # 기존 4-agent 산출 보존
+    assert marker in result.cto_strategy
+    assert marker in result.engineer_output
+    assert marker in result.qa_review
+    # Phase 4.5 신규 5 필드
+    assert marker in result.dependency_report
+    assert marker in result.build_spec
+    assert marker in result.asset_manifest
+    assert marker in result.installer_spec
+    assert marker in result.platform_test_report
+    # 산출 파일 — 기존 + 신규
+    assert (result.saved_dir / "01_cto_strategy.md").exists()
+    assert (result.saved_dir / "04_qa_review.md").exists()
+    for name in (
+        "20_dependency_report.md",
+        "21_build_spec.md",
+        "22_asset_manifest.md",
+        "23_installer_spec.md",
+        "24_platform_test_report.md",
+    ):
+        assert (result.saved_dir / name).exists(), f"{name} 가 저장되지 않았다"
+
+
 def test_run_with_gui_branch_enabled_falls_back_to_cli(tmp_path) -> None:
     """`enable_gui_branch=True` + FakeProvider 응답에 need_gui 마커 없음
     → 파서가 cli 로 안전 fallback → Engineer 가 그대로 실행되되 UI/UX 컨텍스트
