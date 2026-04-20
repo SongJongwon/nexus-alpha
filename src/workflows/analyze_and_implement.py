@@ -71,6 +71,13 @@ class WorkflowResult:
         gui_design: GUI Designer 산출 (와이어프레임 + 위젯 트리). GUI 경로만.
         design_tokens: Theme Designer 산출 (디자인 토큰 JSON). GUI 경로만.
         gui_code_output: GUI Code Generator 산출. GUI 경로만.
+
+    Phase 4.5 추가 필드 (모두 기본값 — backward compat):
+        dependency_report: Dependency Analyzer YAML 보고서.
+        build_spec: Build Engineer 빌드 사양 (도구 선택 + spec/명령).
+        asset_manifest: Asset Manager 자원 매니페스트.
+        installer_spec: Installer Creator 인스톨러 스크립트.
+        platform_test_report: Platform Tester narration 보고서.
     """
 
     user_request: str
@@ -86,6 +93,12 @@ class WorkflowResult:
     gui_design: str = ""
     design_tokens: str = ""
     gui_code_output: str = ""
+    # Phase 4.5 — backward-compat 기본값
+    dependency_report: str = ""
+    build_spec: str = ""
+    asset_manifest: str = ""
+    installer_spec: str = ""
+    platform_test_report: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -363,8 +376,10 @@ def run_analyze_and_implement(
     outputs_dir: Optional[Path] = None,
     verbose: bool = True,
     enable_gui_branch: bool = False,
+    enable_build_branch: bool = False,
+    target_platform: str = "windows",
 ) -> WorkflowResult:
-    """사용자 요청을 받아 4-agent 협업 워크플로우 (또는 Phase 4 GUI 분기 버전)를 실행.
+    """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
     Args:
         user_request: 사용자의 자연어 요구사항.
@@ -375,14 +390,26 @@ def run_analyze_and_implement(
             GUI 경로면 디자인 본부 3명 (GUI Designer / Theme / Code Generator)
             이 Engineer 자리를 대체. CLI 경로면 기존 Engineer 그대로 + UI/UX
             컨텍스트만 CTO 에 추가.
+        enable_build_branch: Phase 4.5 토글. **기본 False — backward compat 보장**.
+            True 면 메인 체인(CTO→Analyst→Engineer/GUI→QA) 종료 후 빌드 5단 사슬
+            (Dep Analyzer → Build Engineer → Asset Manager → Installer Creator →
+            Platform Tester) 가 추가 실행되어 결과를 WorkflowResult 의 신규 필드
+            (dependency_report / build_spec / asset_manifest / installer_spec /
+            platform_test_report) 에 채운다. 산출 파일 20~24 가 추가됨.
+        target_platform: Phase 4.5 빌드 사슬의 대상 플랫폼. windows / macos /
+            linux / cross-platform. enable_build_branch=False 면 무시됨.
 
     Returns:
-        `WorkflowResult` — 신규 Phase 4 필드(chosen_path/ui_spec/gui_*)는 토글
-        비활성 시 빈 문자열 (기본값). 기존 호출 코드와 100% 호환.
+        `WorkflowResult` — 신규 Phase 4/4.5 필드는 각 토글 비활성 시 빈 문자열.
 
     Raises:
         RuntimeError: Provider 초기화 등 체인 중간 장애가 발생했을 때 호출 측에서
             명확히 포착할 수 있도록 원본 예외를 그대로 전파한다.
+
+    Phase 4.5 한계 (build branch):
+        실제 PyInstaller 호출·setup.exe 빌드는 외부 도구 의존이라 통합하지 않음.
+        본 토글은 *사양 산출만* (LLM 5건). Platform Tester 는 Phase 3 sandbox 의
+        `run_python_package_in_sandbox` 결과를 narration 입력으로 활용.
     """
     target_outputs_dir = outputs_dir if outputs_dir is not None else DEFAULT_OUTPUTS_DIR
     target_outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -392,10 +419,12 @@ def run_analyze_and_implement(
         name="analyze_and_implement",
         user_id="local-dev",
         metadata={
-            "phase": "phase_4" if enable_gui_branch else "phase_1",
+            "phase": "phase_4_5" if enable_build_branch else ("phase_4" if enable_gui_branch else "phase_1"),
             "workflow": "analyze_and_implement",
             "user_request_preview": user_request[:160],
             "enable_gui_branch": enable_gui_branch,
+            "enable_build_branch": enable_build_branch,
+            "target_platform": target_platform if enable_build_branch else None,
         },
     )
 
@@ -407,39 +436,63 @@ def run_analyze_and_implement(
 
         # ─── 분기 0: Phase 4 비활성 — 기존 4-agent 그대로 ──────────────────────
         if not enable_gui_branch:
-            return _run_classic_chain(user_request, workflow_dir, verbose=verbose)
+            result = _run_classic_chain(user_request, workflow_dir, verbose=verbose)
+        else:
+            # ─── 분기 1: Phase 4 활성 — UI/UX 먼저 실행 ────────────────────────
+            ui_ux = create_uiux_analyst_agent(verbose=verbose)
+            uiux_task = _build_uiux_task(user_request, ui_ux)
+            Crew(
+                agents=[ui_ux],
+                tasks=[uiux_task],
+                process=Process.sequential,
+                verbose=verbose,
+            ).kickoff()
+            ui_spec = _task_output_text(uiux_task)
 
-        # ─── 분기 1: Phase 4 활성 — UI/UX 먼저 실행 ────────────────────────────
-        ui_ux = create_uiux_analyst_agent(verbose=verbose)
-        uiux_task = _build_uiux_task(user_request, ui_ux)
-        Crew(
-            agents=[ui_ux],
-            tasks=[uiux_task],
-            process=Process.sequential,
-            verbose=verbose,
-        ).kickoff()
-        ui_spec = _task_output_text(uiux_task)
+            chosen_path = _parse_ui_ux_path(ui_spec)
 
-        chosen_path = _parse_ui_ux_path(ui_spec)
+            # ─── 분기 2-A: GUI 경로 ─────────────────────────────────────────────
+            if chosen_path == "gui":
+                result = _run_gui_branch_chain(
+                    user_request=user_request,
+                    workflow_dir=workflow_dir,
+                    ui_spec=ui_spec,
+                    uiux_task=uiux_task,
+                    verbose=verbose,
+                )
+            # ─── 분기 2-B: CLI 경로 ─────────────────────────────────────────────
+            else:
+                result = _run_cli_branch_chain_with_ui_context(
+                    user_request=user_request,
+                    workflow_dir=workflow_dir,
+                    ui_spec=ui_spec,
+                    uiux_task=uiux_task,
+                    verbose=verbose,
+                )
 
-        # ─── 분기 2-A: GUI 경로 (Designer → Theme → Code Generator) ────────────
-        if chosen_path == "gui":
-            return _run_gui_branch_chain(
+        # ─── Phase 4.5 — Build 사슬 (옵션) ──────────────────────────────────────
+        if enable_build_branch:
+            # 지연 import — 순환 import 회피 (build_workflow 가 다른 모듈 의존)
+            from src.workflows.build_workflow import run_build_workflow
+
+            build_result = run_build_workflow(
+                code_files=result.saved_code_files,
                 user_request=user_request,
-                workflow_dir=workflow_dir,
-                ui_spec=ui_spec,
-                uiux_task=uiux_task,
+                target_platform=target_platform,
+                ui_spec=result.ui_spec,
+                design_tokens=result.design_tokens,
+                workflow_dir=result.saved_dir,
+                enable_platform_test=True,
                 verbose=verbose,
             )
+            # Build 결과를 메인 WorkflowResult 에 merge
+            result.dependency_report = build_result.dependency_report
+            result.build_spec = build_result.build_spec
+            result.asset_manifest = build_result.asset_manifest
+            result.installer_spec = build_result.installer_spec
+            result.platform_test_report = build_result.platform_test_report
 
-        # ─── 분기 2-B: CLI 경로 (UI/UX context 만 추가, Engineer 그대로) ───────
-        return _run_cli_branch_chain_with_ui_context(
-            user_request=user_request,
-            workflow_dir=workflow_dir,
-            ui_spec=ui_spec,
-            uiux_task=uiux_task,
-            verbose=verbose,
-        )
+        return result
 
     finally:
         monitor.end_trace()

@@ -158,6 +158,8 @@ class _LoopState(TypedDict, total=False):
     enable_sandbox: bool  # Phase 3 — False 면 sandbox 노드가 즉시 None 반환
     sandbox_timeout_sec: int  # Phase 3
     enable_gui_branch: bool  # Phase 4 — analyze_and_implement 의 GUI 분기 토글
+    enable_build_branch: bool  # Phase 4.5 — analyze_and_implement 의 빌드 사슬 토글
+    target_platform: str  # Phase 4.5 — windows/macos/linux/cross-platform
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -350,6 +352,8 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
         outputs_dir=outputs_dir,
         verbose=False,
         enable_gui_branch=state.get("enable_gui_branch", False),
+        enable_build_branch=state.get("enable_build_branch", False),
+        target_platform=state.get("target_platform", "windows"),
     )
 
     artifacts = list(state.get("iteration_artifacts", []))
@@ -567,6 +571,8 @@ def run_iterative_loop(
     enable_sandbox: bool = True,
     sandbox_timeout_sec: int = DEFAULT_SANDBOX_TIMEOUT_SEC,
     enable_gui_branch: bool = False,
+    enable_build_branch: bool = False,
+    target_platform: str = "windows",
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -584,6 +590,12 @@ def run_iterative_loop(
             `run_analyze_and_implement` 호출에 동일 토글이 propagate 되어,
             UI/UX Analyst → (GUI 면) 디자인 본부 3명 / (CLI 면) Engineer 분기
             가 발동된다. 기본 False — backward compat.
+        enable_build_branch: Phase 4.5 토글. True 면 매 iteration 의 메인 체인
+            종료 후 빌드 5단 사슬(Dep Analyzer → Build Engineer → Asset Manager →
+            Installer Creator → Platform Tester)이 추가 실행된다. 기본 False —
+            backward compat.
+        target_platform: Phase 4.5 빌드 사슬 대상 플랫폼. windows/macos/linux/
+            cross-platform. enable_build_branch=False 면 무시.
 
     Returns:
         LoopOutcome — verdict + 4-agent chain 결과 + sandbox 실행 결과 + 산출 경로.
@@ -632,6 +644,8 @@ def run_iterative_loop(
             "enable_sandbox": enable_sandbox,
             "sandbox_timeout_sec": sandbox_timeout_sec,
             "enable_gui_branch": enable_gui_branch,
+            "enable_build_branch": enable_build_branch,
+            "target_platform": target_platform,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.
