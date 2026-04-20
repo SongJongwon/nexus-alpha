@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-04-17** (Phase 2 우선순위 2 — QA 에이전트 추가 + 4-agent 워크플로우 완료)
+> 마지막 업데이트: **2026-04-17** (Phase 2-P2 QA 에이전트 완료 + v3/v4 설계 문서 반영)
 
 ---
 
@@ -11,27 +11,32 @@
 | 항목 | 값 |
 |---|---|
 | 프로젝트명 | Nexus Alpha — 업무 자동화/RPA 전문 AI 가상 기업 시스템 |
-| 현재 단계 | **Phase 2 우선순위 2 완료** (QA 에이전트 + 4-agent 워크플로우), 우선순위 3(Knowledge) 또는 1-B(Linux CI) 착수 대기 |
+| 최종 비전 (v4) | **"계산기 만들어줘" 한 마디 → .exe 완성품**까지 자동 도달 |
+| 현재 단계 | **Phase 2 우선순위 2 완료** (QA 에이전트 + 4-agent 워크플로우) + **v3/v4 설계 확정**. 우선순위 3(Knowledge) 또는 1-B(Linux CI) 착수 대기 |
 | 작업 루트 | `C:\projects\nexus-alpha` |
 | 주 언어 | Python 3.13.13 (가상환경 `.venv/`) |
-| 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** — `requirements.txt`에 `==` 명시 |
+| 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph (v3 루프 도입 예정) |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key로 전환 가능 |
 | 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) — 워크플로우 단일 trace 아래 4 generation |
 | 테스트 하네스 | pytest 9.0.3 + pytest-mock 3.15.1 + pytest-socket 0.7.0 (opt-in) |
 | 워크플로우 | CTO → Data Analyst → Python Engineer → **Code Reviewer** (4-agent sequential) |
-| GitHub | https://github.com/SongJongwon/nexus-alpha (`phase2/qa-agent` 브랜치) |
-| 최신 커밋 | `Phase 2 우선순위 2: QA 에이전트(Code Reviewer) 추가` (로컬, push 예정) |
+| 조직도 | C-Level 3 + 8 본부 = **46명 풀 조직** (현재 4명 구현, ~8.7%) |
+| GitHub | https://github.com/SongJongwon/nexus-alpha (`main` + 작업 브랜치) |
+| 최신 main 커밋 | `b9c178c Merge pull request #2 from SongJongwon/phase2/qa-agent` |
 | 마지막 엔드투엔드 산출물 | `outputs/workflow_20260417_164414/` (Git 추적 제외) |
 
-**한 문장 요약**: Phase 2-P1 pytest 하네스 위에 Code Reviewer를 4번째 에이전트로 추가하고 워크플로우를 4-agent로 확장해, `.venv/Scripts/pytest.exe` **한 명령으로 네트워크 없이 7개 테스트가 ~11초 내 통과**하는 상태입니다.
+**한 문장 요약**: Phase 2-P1 pytest 하네스 위에 Code Reviewer(4-agent 워크플로우)까지 main에 안착했고, **자기 진화 엔진(v3)** + **완전 자율 빌드(v4)** 설계가 `docs/architecture/`에 확정 기록되어 다음 단계 진입 준비 완료된 상태입니다.
 
 ---
 
 ## 2. 완료된 작업 목록 (커밋 단위)
 
 ```
-(미커밋)  🧪 Phase 2 우선순위 2: QA 에이전트(Code Reviewer) 추가  ← 본 세션 (커밋 예정)
-c2c2a85  Merge pull request #1 from SongJongwon/phase2/pytest-harness  ← Phase 2-P1 main merge
+(작업브랜치) 📝 docs: 2026-04-17 세션 작업 로그 추가                 ← docs/architecture-v3-v4
+(작업브랜치) 📐 docs: v3/v4 설계 문서 및 조직도 반영                 ← docs/architecture-v3-v4
+b9c178c  Merge pull request #2 from SongJongwon/phase2/qa-agent       ← Phase 2-P2 main merge
+c30f794  🧪 Phase 2 우선순위 2: QA 에이전트(Code Reviewer) 추가
+c2c2a85  Merge pull request #1 from SongJongwon/phase2/pytest-harness ← Phase 2-P1 main merge
 29e1ce1  🧪 Phase 2 우선순위 1: pytest 하네스 정식화
 354ccfb  📌 다음 세션 컨텍스트 파일 추가
 160947c  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우 성공
@@ -41,7 +46,7 @@ c2c2a85  Merge pull request #1 from SongJongwon/phase2/pytest-harness  ← Phase
 a6f0911  🎉 Phase 0 완료: Nexus Alpha 기반 구축
 ```
 
-### Phase 2 우선순위 2 — QA 에이전트(Code Reviewer) + 4-agent 워크플로우 (2026-04-17, 본 세션)
+### Phase 2 우선순위 2 — QA 에이전트(Code Reviewer) + 4-agent 워크플로우 (2026-04-17)
 - **신규 에이전트**: `src/agents/qa/code_reviewer.py` → `create_code_reviewer_agent()`. `CODE_REVIEWER_*` 4 상수 + 팩토리 시그니처는 기존 3개 에이전트와 동일.
 - **백스토리 5대 점검 항목**: 타입 힌트 / docstring / pytest 실행 가능성 / 경계 예외 처리 / 모듈 분리. *읽기만 한다, 실행하지 않는다* 원칙 — 실행은 후속 Sandbox Runner(2-P4) 책임.
 - **출력 규약**: 5단 한국어 마크다운 + 마지막 줄 `Final Answer:` 종합 판정(APPROVED/NEEDS_REVISION).
@@ -52,9 +57,27 @@ a6f0911  🎉 Phase 0 완료: Nexus Alpha 기반 구축
   - `Crew(agents=[..., reviewer], tasks=[..., qa_review_task])` 4-agent 등록
   - `outputs/workflow_<ts>/04_qa_review.md` 자동 저장
 - **워크플로우 E2E 테스트 갱신**: pytest 함수명 `_three_stage_` → `_four_stage_artifacts`, `04_qa_review.md` 검증 + `result.qa_review` marker 검증, 직접 실행 경로에 ④ Code Reviewer preview 패널 추가.
-- **회귀 검증**: `.venv/Scripts/pytest.exe` → **7 passed in 11.46s** (Phase 2-P1 6건 + Code Reviewer 1건, 네트워크 호출 0건).
+- **회귀 검증**: `.venv/Scripts/pytest.exe` → **7 passed in ~11s** (Phase 2-P1 6건 + Code Reviewer 1건, 네트워크 호출 0건).
 - **Code Reviewer 명명 결정**: `next_session_context.md`의 잠정 명명 `create_qa_reviewer_agent()` 대신 어근 일관성을 우선해 `create_code_reviewer_agent()` 채택. 기존 3개 에이전트와 동일한 *역할-기반 이름* 패턴 유지.
 - **보고서**: `docs/progress/phase2_priority2_complete.md`
+
+### v3 / v4 설계 문서 확정 (2026-04-17)
+- `docs/architecture/` 폴더 신설 — 모든 아키텍처 설계서의 단일 출처.
+- **`nexus_alpha_v3.md`** — 자기 진화 엔진 (Phase 2.5):
+  - 신규 에이전트 4종 — Requirement Expander / Gap Analyst / Convergence Judge / Iteration Controller
+  - LangGraph StateGraph로 루프 제어 (entry → expand → chain → gap → judge → {finalize|feedback→chain|escalate})
+  - 종료 조건 3종: COMPLETE / IMPROVE_NEEDED / BLOCKED (stagnation·budget·iteration cap)
+  - 안전장치: max_iterations=5, budget gate, stagnation detection (2회 연속 0개 해소 시 BLOCKED)
+- **`nexus_alpha_v4.md`** — 완전 자율 빌드 (Phase 4 / 4.5 / 5):
+  - 비전: "계산기 만들어줘" → 다운로드 가능한 setup.exe
+  - 신규 에이전트 13종 (Phase 4: 4명 / Phase 4.5: 5명 / Phase 5: 4명)
+  - 빌드 도구 우선순위: PyInstaller → Nuitka → cx_Freeze
+  - 배포 채널 우선순위: GitHub Releases → 사내 서버 → S3 presigned → 로컬
+- **`nexus_alpha_org_v4.md`** — 확정 조직도:
+  - C-Level 3 + 8 본부 = 9개 조직 단위, **총 46명**
+  - 본부 8개: 업무 분석(5) / 기획·설계(4) / 개발(9) / 품질 검증(6) / 지식 관리(3) / 운영 지원(4) / 🆕 디자인(3) / 🆕 빌드 & 배포(9)
+  - 신설 디렉터리: `src/agents/design/` (Phase 4), `src/agents/build_release/` (Phase 4.5)
+  - **UI/UX Analyst는 디자인 본부가 아닌 기획·설계 본부 소속** (관심사 분리: 분석 vs 시각 디자인 생산)
 
 ### Phase 2 우선순위 1 — pytest 하네스 정식화 (2026-04-17)
 - `pyproject.toml` 신규 — `[tool.pytest.ini_options]`, `[tool.ruff]` (line-length 100, py313)
@@ -111,6 +134,10 @@ nexus-alpha/
 ├── .env                      # Git 제외 — LLM_PROVIDER, LANGFUSE_* 등
 ├── .gitignore
 ├── docs/
+│   ├── architecture/                  # 설계 문서 (단일 출처) — 본 세션 신설
+│   │   ├── nexus_alpha_v3.md          #   자율 반복 루프 (Phase 2.5)
+│   │   ├── nexus_alpha_v4.md          #   완전 자율 빌드 (Phase 4/4.5/5)
+│   │   └── nexus_alpha_org_v4.md      #   확정 조직도 (46명, 8 본부)
 │   ├── context/
 │   │   └── next_session_context.md   # ← 본 문서
 │   └── progress/
@@ -306,20 +333,27 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 
 ---
 
-## 6. Phase 2 다음 할 일 (우선순위 순)
+## 6. 로드맵 (v4까지의 풀 스코프)
 
-> 근거: `docs/progress/phase1_complete.md` 4절 + `docs/progress/phase2_priority1_complete.md` 6절 + `docs/progress/phase2_priority2_complete.md` 5절.
+> 근거: `docs/progress/phase{1,2_priority1,2_priority2}_complete.md` + `docs/architecture/nexus_alpha_v3.md`, `nexus_alpha_v4.md`, `nexus_alpha_org_v4.md`.
 
-| # | 항목 | 핵심 작업 | 상태 |
-|---|---|---|---|
-| 1 | **pytest 하네스 정식화** | `pyproject.toml` + `src/tests/conftest.py`(FakeProvider autouse, LangFuse no-op), 5개 smoke test 전환 | ✅ **완료 (2026-04-17)** |
-| 2 | **QA 에이전트(Code Reviewer)** | `src/agents/qa/code_reviewer.py` + 4-agent 워크플로우 확장 + pytest | ✅ **완료 (2026-04-17)** |
-| 1-B | **Linux CI (GitHub Actions)** | `pytest --disable-socket` opt-in, `pytest -m integration` 러너, cache, matrix. Phase 2-P1/2-P2에서 의도적으로 분리됨 | 🟡 **다음 후보 ①** |
-| 3 | **Knowledge 에이전트** (`src/agents/knowledge/{knowledge_curator,rag_searcher}.py`) | `outputs/workflow_*` 적재·요약·검색. 재실행 시 과거 전략을 참고할 수 있는 RAG 경로. | 🟡 **다음 후보 ②** |
-| 4 | **Operations 에이전트** (`src/agents/operations/sandbox_runner.py`) | 생성된 코드의 스케줄 실행·로그 수집·실패 알림. Code Reviewer가 "정적 점검"이라면 이 에이전트는 "동적 검증". | 🟡 대기 |
-| 5 | **요청 라우팅 + UI** | Gradio/Streamlit 기반 단일 엔트리. 자연어 요청 → 적절한 워크플로우 자동 선택. | 🟡 대기 |
+| Phase | 항목 | 상태 |
+|---|---|---|
+| 0 | 기반 구축 (venv, Provider, LangFuse) | ✅ 완료 |
+| 1 | MVP 3명 에이전트 협업 (CTO/Analyst/Engineer) | ✅ 완료 |
+| 2-P1 | pytest 하네스 정식화 | ✅ **완료 + main merge** |
+| **2-P2** | **QA 에이전트 (Code Reviewer) + 4-agent 워크플로우** | ✅ **완료 + main merge (2026-04-17)** |
+| 2-P1B | Linux GitHub Actions CI (`--disable-socket` opt-in) | 🟡 **다음 후보 ①** |
+| 2-P3 | Knowledge 에이전트 (Curator + RAG Searcher) | 🟡 **다음 후보 ②** |
+| 2-P4 | Operations 에이전트 (Sandbox Runner) — Code Reviewer의 "동적 검증" 짝 | 🟡 대기 |
+| 2-P5 | 요청 라우팅 + 하이브리드 UI | 🟡 대기 |
+| **2.5 (v3)** | **자기 진화 엔진** — Requirement Expander / Gap Analyst / Convergence Judge / Iteration Controller | 📐 설계 확정 |
+| 3 | 실행 엔진 통합 (Sandbox 빌드·실행) | 🟡 대기 |
+| **4 (v4)** | **GUI 자동 생성** — UI/UX Analyst + 디자인 본부 3명 | 📐 설계 확정 |
+| **4.5 (v4)** | **빌드 & 패키징** — Build/Dependency/Asset/Installer/Platform Tester (5명) | 📐 설계 확정 |
+| **5 (v4)** | **배포 자동화** — Release/Changelog/Update/Distribution (4명) | 📐 설계 확정 |
 
-**권장 진입 순서**: ~~`1`~~ → ~~`2`~~ → **`1-B`** (작고 즉시 효과 큼) → **`3`** (Knowledge) → `4` → `5`.
+**권장 진입 순서**: ~~`2-P1`~~ → ~~`2-P2`~~ → **`2-P1B`** (작고 즉시 효과 큼) → **`2-P3` (Knowledge)** → `2-P4` → `2-P5` → `2.5 (v3 루프)` → `3` → `4` → `4.5` → `5`.
 
 ### 다음 작업을 시작할 때 제일 먼저 할 일
 
@@ -396,7 +430,8 @@ Phase 1까지의 설계 결정을 파악해 주세요.
 ### 7-4. 주요 확인 지점
 - **LangFuse 대시보드**: https://cloud.langfuse.com → Tracing → Traces
 - **산출물**: `outputs/workflow_<timestamp>/code/`
-- **진행 보고서**: `docs/progress/phase1_complete.md`
+- **진행 보고서**: `docs/progress/phase1_complete.md`, `docs/progress/phase2_priority1_complete.md`
+- **설계 문서**: `docs/architecture/nexus_alpha_v3.md`, `nexus_alpha_v4.md`, `nexus_alpha_org_v4.md`
 - **본 컨텍스트 파일**: `docs/context/next_session_context.md`
 
 ### 7-5. 자주 쓰는 단축 명령

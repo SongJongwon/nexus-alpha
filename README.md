@@ -1,19 +1,47 @@
 # 🏢 Nexus Alpha
 
-업무 자동화/RPA 전문 AI 가상 기업 시스템
+자기 진화형 소프트웨어 공장 — *"한 마디 요청 → .exe 완성품"*
+
+## 🎯 최종 비전
+
+> 사용자가 **"계산기 만들어줘"** 라고 말하면, Nexus Alpha가 알아서
+> GUI를 디자인하고, 코드를 작성하고, `.exe`로 빌드하고, 설치 관리자로 패키징하고,
+> 다운로드 가능한 형태로 **배포까지 자동 완료**한다.
+
+자세한 v4 설계: [docs/architecture/nexus_alpha_v4.md](docs/architecture/nexus_alpha_v4.md)
 
 ## 📖 프로젝트 개요
 
-Nexus Alpha는 사용자의 반복 업무를 분석하여 자동화 스크립트·봇·워크플로우를
-생성하는 **AI 컨설팅 & 개발 기업 시스템**입니다. 여러 역할(C-Level, 분석, 기획,
-엔지니어링, QA, 지식, 운영)의 에이전트가 협업하여 업무 요구를 자동화 산출물로
-변환합니다.
+Nexus Alpha는 사용자의 반복 업무 또는 소프트웨어 요구를 분석하여 자동화 스크립트·앱·
+배포 가능한 실행 파일을 생성하는 **AI 가상 기업 시스템**입니다.
+
+### 조직 구조 (v4 확정안)
+
+**C-Level 3명 + 8개 본부 = 9개 조직 단위, 총 46명 에이전트**
+
+| 본부 | 인원 | 역할 |
+|---|---:|---|
+| C-Level | 3 | CEO · CTO · Convergence Judge |
+| 업무 분석 | 5 | Data Analyst, Requirement Expander, Gap Analyst 등 |
+| 기획 및 설계 | 4 | System Architect, UI/UX Analyst 등 |
+| 개발 | 9 | Python · Backend · Frontend · Automation Engineer 등 |
+| 품질 검증 | 6 | Code Reviewer, Test Engineer, Security Auditor 등 |
+| 지식 관리 | 3 | Knowledge Curator, RAG Searcher, Decision Recorder |
+| 운영 지원 | 4 | Sandbox Runner, Scheduler, Log Analyzer 등 |
+| 🆕 디자인 (Phase 4) | 3 | GUI Designer, GUI Code Generator, Theme Designer |
+| 🆕 빌드 & 배포 (Phase 4.5/5) | 9 | Build Engineer, Installer Creator, Distribution Agent 등 |
+
+자세한 조직도: [docs/architecture/nexus_alpha_org_v4.md](docs/architecture/nexus_alpha_org_v4.md)
+
+자율 반복 루프(자기 진화 엔진) 설계: [docs/architecture/nexus_alpha_v3.md](docs/architecture/nexus_alpha_v3.md)
 
 ## 🛠️ 기술 스택
 
 - **언어**: Python 3.13
-- **오케스트레이션**: CrewAI + LangGraph
+- **오케스트레이션**: CrewAI 1.14.1 (Process.sequential, 버전 고정) + LangGraph (v3 도입 예정)
 - **LLM 연동**: Claude Agent SDK (MAX 구독) / Anthropic API Key
+- **모니터링**: LangFuse Cloud v4 (OpenTelemetry 기반)
+- **테스트**: pytest 9 + pytest-mock + pytest-socket (Linux opt-in)
 - **데이터 처리**: Pandas, OpenPyXL
 - **검증**: Pydantic
 - **유틸**: Rich (콘솔 UI), PyYAML, python-dotenv
@@ -124,11 +152,28 @@ nexus-alpha/
 ## 📊 진행 현황
 
 - ✅ **Phase 0**: 기반 구축 완료 (2026-04-17)
-- ⬜ Phase 1: MVP 3개 부서 (진행 예정)
-- ⬜ Phase 2: 전체 조직 확장
-- ⬜ Phase 3: 실행 엔진 통합
-- ⬜ Phase 4: 하이브리드 UI
-- ⬜ Phase 5: 파일럿 프로젝트
+- ✅ **Phase 1**: MVP 3명 에이전트 협업 워크플로우 완료 (CTO → Analyst → Engineer)
+  - 보고서: [docs/progress/phase1_complete.md](docs/progress/phase1_complete.md)
+- ✅ **Phase 2 우선순위 1**: pytest 하네스 정식화 완료 (`.venv/Scripts/pytest.exe` 한 명령으로 6 passed in ~8s, 네트워크 호출 0건)
+  - 보고서: [docs/progress/phase2_priority1_complete.md](docs/progress/phase2_priority1_complete.md)
+- 🟡 **Phase 2 우선순위 2** (다음): QA 에이전트 (Code Reviewer)
+- 📐 **Phase 2.5 (v3)**: 자기 진화 엔진 — 설계 확정, 구현 대기
+- ⬜ Phase 3: 실행 엔진 통합 (Sandbox 빌드·실행)
+- 📐 **Phase 4 (v4)**: GUI 자동 생성 — 설계 확정
+- 📐 **Phase 4.5 (v4)**: 빌드 & 패키징 — 설계 확정
+- 📐 **Phase 5 (v4)**: 배포 자동화 — 설계 확정
+
+진행률: **46명 풀 조직 중 4명 구현 완료 (~6.5%)**
+
+## 🧪 테스트 실행
+
+```bash
+# (네트워크 없이) pytest 전체 — ~8초
+.venv/Scripts/pytest.exe
+
+# (실제 LLM 호출) 엔드투엔드 워크플로우 — 수 분
+.venv/Scripts/python.exe src/tests/test_workflow_analyze_and_implement.py
+```
 
 ## 📝 라이선스
 
