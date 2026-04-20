@@ -160,6 +160,11 @@ class _LoopState(TypedDict, total=False):
     enable_gui_branch: bool  # Phase 4 — analyze_and_implement 의 GUI 분기 토글
     enable_build_branch: bool  # Phase 4.5 — analyze_and_implement 의 빌드 사슬 토글
     target_platform: str  # Phase 4.5 — windows/macos/linux/cross-platform
+    enable_release_branch: bool  # Phase 5 — analyze_and_implement 의 릴리스 사슬 토글
+    previous_version: str  # Phase 5 — Release Manager 입력
+    repo_url: str  # Phase 5 — Distribution Agent 입력
+    signing_available: bool  # Phase 5 — Update Checker / Distribution Agent 입력
+    privacy_level: str  # Phase 5 — Distribution Agent 입력
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -354,6 +359,11 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
         enable_gui_branch=state.get("enable_gui_branch", False),
         enable_build_branch=state.get("enable_build_branch", False),
         target_platform=state.get("target_platform", "windows"),
+        enable_release_branch=state.get("enable_release_branch", False),
+        previous_version=state.get("previous_version", ""),
+        repo_url=state.get("repo_url", ""),
+        signing_available=state.get("signing_available", False),
+        privacy_level=state.get("privacy_level", "public"),
     )
 
     artifacts = list(state.get("iteration_artifacts", []))
@@ -573,6 +583,11 @@ def run_iterative_loop(
     enable_gui_branch: bool = False,
     enable_build_branch: bool = False,
     target_platform: str = "windows",
+    enable_release_branch: bool = False,
+    previous_version: str = "",
+    repo_url: str = "",
+    signing_available: bool = False,
+    privacy_level: str = "public",
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -596,6 +611,14 @@ def run_iterative_loop(
             backward compat.
         target_platform: Phase 4.5 빌드 사슬 대상 플랫폼. windows/macos/linux/
             cross-platform. enable_build_branch=False 면 무시.
+        enable_release_branch: Phase 5 토글. True 면 매 iteration 의 메인 + 빌드
+            사슬 종료 후 릴리스 4단 사슬(Release/Changelog/Update/Distribution)
+            추가 실행. 매 iteration 마다 release 호출은 부적절할 수 있어 호출
+            측이 신중히 사용. 기본 False.
+        previous_version: Phase 5 입력 — 이전 릴리스 버전 (없으면 첫 릴리스).
+        repo_url: Phase 5 입력 — GitHub repo URL.
+        signing_available: Phase 5 입력 — 코드 서명 보유.
+        privacy_level: Phase 5 입력 — public/corporate-internal/one-time-share.
 
     Returns:
         LoopOutcome — verdict + 4-agent chain 결과 + sandbox 실행 결과 + 산출 경로.
@@ -646,6 +669,11 @@ def run_iterative_loop(
             "enable_gui_branch": enable_gui_branch,
             "enable_build_branch": enable_build_branch,
             "target_platform": target_platform,
+            "enable_release_branch": enable_release_branch,
+            "previous_version": previous_version,
+            "repo_url": repo_url,
+            "signing_available": signing_available,
+            "privacy_level": privacy_level,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.

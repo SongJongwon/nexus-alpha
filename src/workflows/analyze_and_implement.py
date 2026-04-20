@@ -78,6 +78,12 @@ class WorkflowResult:
         asset_manifest: Asset Manager 자원 매니페스트.
         installer_spec: Installer Creator 인스톨러 스크립트.
         platform_test_report: Platform Tester narration 보고서.
+
+    Phase 5 추가 필드 (모두 기본값 — backward compat):
+        release_decision: Release Manager SemVer 결정 + RELEASE.md 초안.
+        changelog_entry: Changelog Generator Keep a Changelog 항목.
+        update_module_spec: Update Checker 자동 업데이트 모듈 사양.
+        distribution_spec: Distribution Agent 배포 사양 (채널/URL/SHA256).
     """
 
     user_request: str
@@ -99,6 +105,11 @@ class WorkflowResult:
     asset_manifest: str = ""
     installer_spec: str = ""
     platform_test_report: str = ""
+    # Phase 5 — backward-compat 기본값
+    release_decision: str = ""
+    changelog_entry: str = ""
+    update_module_spec: str = ""
+    distribution_spec: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +389,11 @@ def run_analyze_and_implement(
     enable_gui_branch: bool = False,
     enable_build_branch: bool = False,
     target_platform: str = "windows",
+    enable_release_branch: bool = False,
+    previous_version: str = "",
+    repo_url: str = "",
+    signing_available: bool = False,
+    privacy_level: str = "public",
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -398,6 +414,17 @@ def run_analyze_and_implement(
             platform_test_report) 에 채운다. 산출 파일 20~24 가 추가됨.
         target_platform: Phase 4.5 빌드 사슬의 대상 플랫폼. windows / macos /
             linux / cross-platform. enable_build_branch=False 면 무시됨.
+        enable_release_branch: Phase 5 토글. **기본 False — backward compat**.
+            True 면 빌드 사슬 종료 후 릴리스 4단 사슬 (Release Manager →
+            Changelog Generator → Update Checker → Distribution Agent) 가 추가
+            실행되어 결과를 WorkflowResult 의 신규 4 필드 (release_decision /
+            changelog_entry / update_module_spec / distribution_spec) 에 채운다.
+            산출 파일 30~33 가 추가됨.
+        previous_version: Phase 5 입력 — 이전 릴리스 버전 (없으면 첫 릴리스).
+            enable_release_branch=False 면 무시됨.
+        repo_url: Phase 5 입력 — GitHub repo URL (Update endpoint 자동 추출용).
+        signing_available: Phase 5 입력 — 코드 서명 EV 인증서 보유 여부.
+        privacy_level: Phase 5 입력 — public | corporate-internal | one-time-share.
 
     Returns:
         `WorkflowResult` — 신규 Phase 4/4.5 필드는 각 토글 비활성 시 빈 문자열.
@@ -410,21 +437,39 @@ def run_analyze_and_implement(
         실제 PyInstaller 호출·setup.exe 빌드는 외부 도구 의존이라 통합하지 않음.
         본 토글은 *사양 산출만* (LLM 5건). Platform Tester 는 Phase 3 sandbox 의
         `run_python_package_in_sandbox` 결과를 narration 입력으로 활용.
+
+    Phase 5 한계 (release branch):
+        실제 Git 태그 생성·gh release create 호출·파일 업로드·SHA256 산출은 외부
+        자동화 스크립트 또는 CI 가 본 사양 보고 수행해야 함. 본 토글은 *사양 산출만*
+        (LLM 4건). Update Checker 의 `updater.py` 는 *참조 구현* — 실제 통합은
+        Engineer 단계의 별도 작업.
     """
     target_outputs_dir = outputs_dir if outputs_dir is not None else DEFAULT_OUTPUTS_DIR
     target_outputs_dir.mkdir(parents=True, exist_ok=True)
 
     monitor = get_langfuse_client()
+    # Phase 라벨 — 가장 깊은 활성화 단계로
+    if enable_release_branch:
+        phase_label = "phase_5"
+    elif enable_build_branch:
+        phase_label = "phase_4_5"
+    elif enable_gui_branch:
+        phase_label = "phase_4"
+    else:
+        phase_label = "phase_1"
+
     monitor.log_trace(
         name="analyze_and_implement",
         user_id="local-dev",
         metadata={
-            "phase": "phase_4_5" if enable_build_branch else ("phase_4" if enable_gui_branch else "phase_1"),
+            "phase": phase_label,
             "workflow": "analyze_and_implement",
             "user_request_preview": user_request[:160],
             "enable_gui_branch": enable_gui_branch,
             "enable_build_branch": enable_build_branch,
+            "enable_release_branch": enable_release_branch,
             "target_platform": target_platform if enable_build_branch else None,
+            "previous_version": previous_version if enable_release_branch else None,
         },
     )
 
@@ -491,6 +536,57 @@ def run_analyze_and_implement(
             result.asset_manifest = build_result.asset_manifest
             result.installer_spec = build_result.installer_spec
             result.platform_test_report = build_result.platform_test_report
+
+        # ─── Phase 5 — Release 사슬 (옵션) ──────────────────────────────────────
+        if enable_release_branch:
+            from src.workflows.release_workflow import run_release_workflow
+
+            # Release Manager 입력으로 메인 체인 + (있으면) 빌드 산출 요약
+            change_summary_parts = [f"사용자 요청: {user_request}"]
+            if result.engineer_output:
+                change_summary_parts.append(
+                    "Engineer 산출 (요약): " + result.engineer_output[:300] + "..."
+                )
+            if result.gui_code_output:
+                change_summary_parts.append(
+                    "GUI Code Generator 산출 (요약): " + result.gui_code_output[:300] + "..."
+                )
+            change_summary = "\n".join(change_summary_parts)
+
+            build_summary_parts = []
+            if result.build_spec:
+                build_summary_parts.append("Build Engineer: " + result.build_spec[:300] + "...")
+            if result.installer_spec:
+                build_summary_parts.append(
+                    "Installer Creator: " + result.installer_spec[:300] + "..."
+                )
+            build_summary = "\n".join(build_summary_parts) if build_summary_parts else ""
+
+            # app_short_name 휴리스틱 — UI/UX assumptions 또는 기본값
+            app_short_name = "NexusApp"
+
+            release_result = run_release_workflow(
+                previous_version=previous_version,
+                change_summary=change_summary,
+                change_sources=change_summary,  # 단일 패스라 history 부재 — summary 재사용
+                breaking_flags="none",
+                build_summary=build_summary,
+                artifact_summary=(
+                    f"Phase 4.5 빌드 사양 산출 — 실제 .exe 미생성 (외부 자동화 위임)"
+                ),
+                target_platform=target_platform,
+                repo_url=repo_url,
+                app_short_name=app_short_name,
+                signing_available=signing_available,
+                privacy_level=privacy_level,
+                workflow_dir=result.saved_dir,
+                verbose=verbose,
+            )
+            # Release 결과 merge
+            result.release_decision = release_result.release_decision
+            result.changelog_entry = release_result.changelog_entry
+            result.update_module_spec = release_result.update_module_spec
+            result.distribution_spec = release_result.distribution_spec
 
         return result
 
