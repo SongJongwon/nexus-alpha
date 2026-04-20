@@ -20,8 +20,9 @@
     - phase4.5/build-engineer (#15): Build Engineer + Dependency Analyzer
     - phase4.5/asset-installer (#16): Asset Manager + Installer Creator
     - phase4.5/platform-tester (#17): Platform Tester ← Phase 4.5 5/5 완성
-    - phase5/release-changelog (본 PR): Release Manager + Changelog Generator
-    - 후속: Update Checker + Distribution Agent (Phase 5 마지막 2명)
+    - phase5/release-changelog (#19): Release Manager + Changelog Generator
+    - phase5/update-distribution (본 PR): Update Checker + Distribution Agent
+        ← Phase 5 4/4 완성 + 본부 정원 9/9 완성 ✅
 
 사용 예 (Phase 4.5 빌드 5단계 사슬 완성):
     from src.agents.build_release import (
@@ -71,6 +72,13 @@ from .dependency_analyzer import (
     DEPENDENCY_ANALYZER_ROLE,
     create_dependency_analyzer_agent,
 )
+from .distribution_agent import (
+    DISTRIBUTION_AGENT_BACKSTORY,
+    DISTRIBUTION_AGENT_GOAL,
+    DISTRIBUTION_AGENT_NAME,
+    DISTRIBUTION_AGENT_ROLE,
+    create_distribution_agent_agent,
+)
 from .installer_creator import (
     INSTALLER_CREATOR_BACKSTORY,
     INSTALLER_CREATOR_GOAL,
@@ -95,6 +103,13 @@ from .release_manager import (
     RELEASE_MANAGER_ROLE,
     create_release_manager_agent,
 )
+from .update_checker import (
+    UPDATE_CHECKER_BACKSTORY,
+    UPDATE_CHECKER_GOAL,
+    UPDATE_CHECKER_NAME,
+    UPDATE_CHECKER_ROLE,
+    create_update_checker_agent,
+)
 
 __all__ = [
     "ASSET_MANAGER_BACKSTORY",
@@ -113,6 +128,10 @@ __all__ = [
     "DEPENDENCY_ANALYZER_GOAL",
     "DEPENDENCY_ANALYZER_NAME",
     "DEPENDENCY_ANALYZER_ROLE",
+    "DISTRIBUTION_AGENT_BACKSTORY",
+    "DISTRIBUTION_AGENT_GOAL",
+    "DISTRIBUTION_AGENT_NAME",
+    "DISTRIBUTION_AGENT_ROLE",
     "INSTALLER_CREATOR_BACKSTORY",
     "INSTALLER_CREATOR_GOAL",
     "INSTALLER_CREATOR_NAME",
@@ -126,13 +145,19 @@ __all__ = [
     "RELEASE_MANAGER_GOAL",
     "RELEASE_MANAGER_NAME",
     "RELEASE_MANAGER_ROLE",
+    "UPDATE_CHECKER_BACKSTORY",
+    "UPDATE_CHECKER_GOAL",
+    "UPDATE_CHECKER_NAME",
+    "UPDATE_CHECKER_ROLE",
     "create_asset_manager_agent",
     "create_build_engineer_agent",
     "create_changelog_generator_agent",
     "create_dependency_analyzer_agent",
+    "create_distribution_agent_agent",
     "create_installer_creator_agent",
     "create_platform_tester_agent",
     "create_release_manager_agent",
+    "create_update_checker_agent",
     "format_platform_test_result_for_task",
     "test_executable_in_sandbox",
 ]
