@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-CTO → Data Analyst → Python Engineer 순차 협업 워크플로우.
+CTO → Data Analyst → Python Engineer → Code Reviewer 4-agent 협업 워크플로우.
 
-사용자의 자연어 요구사항 하나를 입력받아, 3명의 에이전트가 순차적으로
-협업하며 **전략 문서 → 분석 지시서 → 실행 가능한 Python 구현**까지
-자동 산출하는 CrewAI 기반 워크플로우를 제공한다.
+사용자의 자연어 요구사항 하나를 입력받아, 4명의 에이전트가 순차적으로
+협업하며 **전략 문서 → 분석 지시서 → 실행 가능한 Python 구현 → 정적 리뷰
+보고서**까지 자동 산출하는 CrewAI 기반 워크플로우를 제공한다.
+
+Phase 2-P2 변경: Code Reviewer 추가로 3-agent → 4-agent 확장.
+    Engineer 산출 코드에 대한 정적 점검(타입 힌트·docstring·pytest 가능성·
+    경계 처리·모듈 분리)을 자동화하고, 종합 판정(APPROVED/NEEDS_REVISION)을
+    `WorkflowResult.qa_review`에 기록한다.
 
 LangFuse 통합:
-    단일 trace(`analyze_and_implement`) 아래에 3개 generation이 기록되도록,
+    단일 trace(`analyze_and_implement`) 아래에 4개 generation이 기록되도록,
     kickoff 전에 `log_trace`를 호출하고 종료 후 `end_trace + flush`를 수행한다.
     `BaseLLMProvider.generate()`가 `_current_trace`를 부모로 하여
     generation을 붙이므로 별도 계측 코드가 필요 없다.
@@ -26,6 +31,7 @@ from crewai import Crew, Process, Task
 from src.agents.analysis import create_data_analyst_agent
 from src.agents.c_level import create_cto_agent
 from src.agents.engineering import create_python_engineer_agent
+from src.agents.qa import create_code_reviewer_agent
 from src.monitoring import get_langfuse_client
 
 
@@ -35,13 +41,16 @@ DEFAULT_OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 
 @dataclass
 class WorkflowResult:
-    """3명 협업 워크플로우의 최종 산출물.
+    """4명 협업 워크플로우의 최종 산출물.
 
     Attributes:
         user_request: 사용자가 제출한 원본 자연어 요구사항.
         cto_strategy: CTO가 산출한 기술 전략 문서(마크다운).
         analyst_brief: Data Analyst가 산출한 분석 지시서(마크다운).
         engineer_output: Python Engineer가 산출한 전체 응답(마크다운).
+        qa_review: Code Reviewer가 산출한 정적 리뷰 보고서(마크다운). 마지막
+            줄에 `Final Answer:` 로 시작하는 종합 판정(APPROVED/NEEDS_REVISION)
+            이 포함된다.
         saved_dir: 산출물이 저장된 디렉터리 경로.
         saved_code_files: engineer_output에서 추출되어 저장된 `.py` 경로들.
     """
@@ -50,6 +59,7 @@ class WorkflowResult:
     cto_strategy: str
     analyst_brief: str
     engineer_output: str
+    qa_review: str
     saved_dir: Path
     saved_code_files: list[Path] = field(default_factory=list)
 
@@ -130,6 +140,7 @@ def run_analyze_and_implement(
         cto = create_cto_agent(verbose=verbose)
         analyst = create_data_analyst_agent(verbose=verbose)
         engineer = create_python_engineer_agent(verbose=verbose)
+        reviewer = create_code_reviewer_agent(verbose=verbose)
 
         # 2) Task 체인 구성 — context 인자로 이전 Task 산출물 주입
         cto_task = Task(
@@ -191,10 +202,31 @@ def run_analyze_and_implement(
             context=[cto_task, analyst_task],
         )
 
+        qa_review_task = Task(
+            description=(
+                "Python Engineer의 산출물(이전 컨텍스트)을 백스토리에 명시된 "
+                "다섯 가지 정적 점검 항목 — 타입 힌트 / docstring / pytest 실행 "
+                "가능성 / 경계 예외 처리 / 모듈 분리 — 으로 점검하고, **5단 구조"
+                "(종합 판정 / 항목별 결과표 / 발견된 이슈 / 권장 보정 / 미검토 "
+                "영역)** 의 한국어 마크다운 리뷰 보고서를 작성하세요.\n\n"
+                "유의 사항:\n"
+                "  - 코드를 실행하지 않습니다(정적 점검 전담).\n"
+                "  - 발견 사항은 (파일:라인 — 인용 — 원칙 — 보정안) 형식으로 적습니다.\n"
+                "  - 마지막 줄은 반드시 `Final Answer:` 로 시작하는 한 줄 종합 "
+                "    판정(APPROVED / NEEDS_REVISION)이어야 합니다."
+            ),
+            expected_output=(
+                "5단 구조의 한국어 리뷰 보고서. 마지막 줄에 `Final Answer:`로 "
+                "시작하는 종합 판정(APPROVED 또는 NEEDS_REVISION) 포함."
+            ),
+            agent=reviewer,
+            context=[engineer_task],
+        )
+
         # 3) Crew 실행 (순차 프로세스)
         crew = Crew(
-            agents=[cto, analyst, engineer],
-            tasks=[cto_task, analyst_task, engineer_task],
+            agents=[cto, analyst, engineer, reviewer],
+            tasks=[cto_task, analyst_task, engineer_task, qa_review_task],
             process=Process.sequential,
             verbose=verbose,
         )
@@ -203,7 +235,8 @@ def run_analyze_and_implement(
         # 4) 각 Task의 개별 산출물 수집
         cto_strategy = _task_output_text(cto_task)
         analyst_brief = _task_output_text(analyst_task)
-        engineer_output = _task_output_text(engineer_task) or (
+        engineer_output = _task_output_text(engineer_task)
+        qa_review = _task_output_text(qa_review_task) or (
             getattr(crew_result, "raw", None) or str(crew_result)
         )
 
@@ -224,6 +257,9 @@ def run_analyze_and_implement(
         (workflow_dir / "03_engineer_output.md").write_text(
             engineer_output, encoding="utf-8"
         )
+        (workflow_dir / "04_qa_review.md").write_text(
+            qa_review, encoding="utf-8"
+        )
         code_paths = _extract_code_blocks(
             engineer_output, workflow_dir / "code"
         )
@@ -233,6 +269,7 @@ def run_analyze_and_implement(
             cto_strategy=cto_strategy,
             analyst_brief=analyst_brief,
             engineer_output=engineer_output,
+            qa_review=qa_review,
             saved_dir=workflow_dir,
             saved_code_files=code_paths,
         )
