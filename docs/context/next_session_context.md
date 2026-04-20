@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-04-17** (Phase 2 우선순위 1 — pytest 하네스 완료 시점)
+> 마지막 업데이트: **2026-04-17** (Phase 2 우선순위 2 — QA 에이전트 추가 + 4-agent 워크플로우 완료)
 
 ---
 
@@ -11,32 +11,50 @@
 | 항목 | 값 |
 |---|---|
 | 프로젝트명 | Nexus Alpha — 업무 자동화/RPA 전문 AI 가상 기업 시스템 |
-| 현재 단계 | **Phase 2 우선순위 1 완료** (pytest 하네스 정식화), 우선순위 2(QA 에이전트) 착수 대기 |
+| 현재 단계 | **Phase 2 우선순위 2 완료** (QA 에이전트 + 4-agent 워크플로우), 우선순위 3(Knowledge) 또는 1-B(Linux CI) 착수 대기 |
 | 작업 루트 | `C:\projects\nexus-alpha` |
 | 주 언어 | Python 3.13.13 (가상환경 `.venv/`) |
 | 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** — `requirements.txt`에 `==` 명시 |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key로 전환 가능 |
-| 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
+| 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) — 워크플로우 단일 trace 아래 4 generation |
 | 테스트 하네스 | pytest 9.0.3 + pytest-mock 3.15.1 + pytest-socket 0.7.0 (opt-in) |
-| GitHub | https://github.com/SongJongwon/nexus-alpha (`phase2/pytest-harness` 브랜치) |
-| 최신 커밋 | `Phase 2 우선순위 1: pytest 하네스 정식화` (로컬) |
+| 워크플로우 | CTO → Data Analyst → Python Engineer → **Code Reviewer** (4-agent sequential) |
+| GitHub | https://github.com/SongJongwon/nexus-alpha (`phase2/qa-agent` 브랜치) |
+| 최신 커밋 | `Phase 2 우선순위 2: QA 에이전트(Code Reviewer) 추가` (로컬, push 예정) |
 | 마지막 엔드투엔드 산출물 | `outputs/workflow_20260417_164414/` (Git 추적 제외) |
 
-**한 문장 요약**: Phase 1 MVP(3명 에이전트 협업) 위에 pytest 하네스를 얹어, `.venv/Scripts/pytest.exe` **한 명령으로 네트워크 없이 6개 테스트가 7초 내 통과**하는 회귀 방어선이 구축된 상태입니다.
+**한 문장 요약**: Phase 2-P1 pytest 하네스 위에 Code Reviewer를 4번째 에이전트로 추가하고 워크플로우를 4-agent로 확장해, `.venv/Scripts/pytest.exe` **한 명령으로 네트워크 없이 7개 테스트가 ~11초 내 통과**하는 상태입니다.
 
 ---
 
 ## 2. 완료된 작업 목록 (커밋 단위)
 
 ```
-(미커밋)  🧪 Phase 2 우선순위 1: pytest 하네스 정식화             ← 본 세션
+(미커밋)  🧪 Phase 2 우선순위 2: QA 에이전트(Code Reviewer) 추가  ← 본 세션 (커밋 예정)
+c2c2a85  Merge pull request #1 from SongJongwon/phase2/pytest-harness  ← Phase 2-P1 main merge
+29e1ce1  🧪 Phase 2 우선순위 1: pytest 하네스 정식화
 354ccfb  📌 다음 세션 컨텍스트 파일 추가
-160947c  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우 성공    ← 완료 보고서
-70af92b  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우         ← 구현 + E2E 검증
+160947c  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우 성공
+70af92b  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우
 52d8e3c  🧹 .claude 로컬 설정 파일 정리
 079451d  ✨ LangFuse 모니터링 통합 완료
 a6f0911  🎉 Phase 0 완료: Nexus Alpha 기반 구축
 ```
+
+### Phase 2 우선순위 2 — QA 에이전트(Code Reviewer) + 4-agent 워크플로우 (2026-04-17, 본 세션)
+- **신규 에이전트**: `src/agents/qa/code_reviewer.py` → `create_code_reviewer_agent()`. `CODE_REVIEWER_*` 4 상수 + 팩토리 시그니처는 기존 3개 에이전트와 동일.
+- **백스토리 5대 점검 항목**: 타입 힌트 / docstring / pytest 실행 가능성 / 경계 예외 처리 / 모듈 분리. *읽기만 한다, 실행하지 않는다* 원칙 — 실행은 후속 Sandbox Runner(2-P4) 책임.
+- **출력 규약**: 5단 한국어 마크다운 + 마지막 줄 `Final Answer:` 종합 판정(APPROVED/NEEDS_REVISION).
+- **smoke test**: `src/tests/test_code_reviewer_agent.py` — 의도적 결함 4종(타입힌트/docstring/pytest/광범위 except) sample 포함. FakeProvider 패턴 그대로 적용.
+- **워크플로우 확장**: `src/workflows/analyze_and_implement.py`
+  - `WorkflowResult.qa_review: str` 필드 추가
+  - `qa_review_task` Task 추가 — `context=[engineer_task]` (Engineer 산출만 컨텍스트로, 비용·관심사 분리)
+  - `Crew(agents=[..., reviewer], tasks=[..., qa_review_task])` 4-agent 등록
+  - `outputs/workflow_<ts>/04_qa_review.md` 자동 저장
+- **워크플로우 E2E 테스트 갱신**: pytest 함수명 `_three_stage_` → `_four_stage_artifacts`, `04_qa_review.md` 검증 + `result.qa_review` marker 검증, 직접 실행 경로에 ④ Code Reviewer preview 패널 추가.
+- **회귀 검증**: `.venv/Scripts/pytest.exe` → **7 passed in 11.46s** (Phase 2-P1 6건 + Code Reviewer 1건, 네트워크 호출 0건).
+- **Code Reviewer 명명 결정**: `next_session_context.md`의 잠정 명명 `create_qa_reviewer_agent()` 대신 어근 일관성을 우선해 `create_code_reviewer_agent()` 채택. 기존 3개 에이전트와 동일한 *역할-기반 이름* 패턴 유지.
+- **보고서**: `docs/progress/phase2_priority2_complete.md`
 
 ### Phase 2 우선순위 1 — pytest 하네스 정식화 (2026-04-17)
 - `pyproject.toml` 신규 — `[tool.pytest.ini_options]`, `[tool.ruff]` (line-length 100, py313)
@@ -97,7 +115,8 @@ nexus-alpha/
 │   │   └── next_session_context.md   # ← 본 문서
 │   └── progress/
 │       ├── phase1_complete.md
-│       └── phase2_priority1_complete.md
+│       ├── phase2_priority1_complete.md
+│       └── phase2_priority2_complete.md   # Phase 2-P2 — 본 세션
 └── src/
     ├── __init__.py
     ├── README.md
@@ -116,8 +135,11 @@ nexus-alpha/
     │   │   ├── __init__.py
     │   │   ├── python_engineer.py      # create_python_engineer_agent
     │   │   └── README.md
+    │   ├── qa/                          # Phase 2-P2 — 본 세션
+    │   │   ├── __init__.py              # exports: create_code_reviewer_agent
+    │   │   ├── code_reviewer.py         # create_code_reviewer_agent
+    │   │   └── README.md
     │   ├── planning/        (__init__.py + README만 — Phase 2 이후 채움)
-    │   ├── qa/              (    〃    )
     │   ├── knowledge/       (    〃    )
     │   └── operations/      (    〃    )
     ├── llm/
@@ -142,11 +164,12 @@ nexus-alpha/
     │   ├── test_cto_agent.py           # + pytest 1건 (FakeProvider)
     │   ├── test_data_analyst_agent.py  # + pytest 1건
     │   ├── test_python_engineer_agent.py # + pytest 1건
-    │   ├── test_workflow_analyze_and_implement.py   # E2E 3-agent + pytest 1건 (tmp_path)
+    │   ├── test_code_reviewer_agent.py # Phase 2-P2 — pytest 1건 (본 세션)
+    │   ├── test_workflow_analyze_and_implement.py   # E2E 4-agent + pytest 1건 (tmp_path)
     │   └── README.md
     └── workflows/
         ├── __init__.py                 # exports: run_analyze_and_implement, WorkflowResult
-        ├── analyze_and_implement.py    # CTO → Analyst → Engineer
+        ├── analyze_and_implement.py    # CTO → Analyst → Engineer → Code Reviewer (4-agent)
         └── README.md
 ```
 
@@ -209,13 +232,14 @@ nexus-alpha/
 ### 4-10. 코드 생성 결과 저장 규약
 - 에이전트의 Python 코드 응답은 마크다운 내부 `python ... ` 블록 형태.
 - 자동 추출을 위해 엔지니어 에이전트에게 **첫 줄에 `# file: <상대경로>` 헤더를 넣도록** 백스토리에서 강제.
-- 워크플로우 저장 디렉터리 구조:
+- 워크플로우 저장 디렉터리 구조 (Phase 2-P2 4-agent 기준):
   ```
   outputs/workflow_<ts>/
     00_user_request.txt
     01_cto_strategy.md
     02_analyst_brief.md
     03_engineer_output.md
+    04_qa_review.md           ← Code Reviewer 정적 리뷰 (Phase 2-P2)
     code/   ← 추출된 .py (이름은 `# file:` 헤더를 기준)
   ```
 
@@ -284,26 +308,33 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 
 ## 6. Phase 2 다음 할 일 (우선순위 순)
 
-> 근거: `docs/progress/phase1_complete.md` 4절 + `docs/progress/phase2_priority1_complete.md` 6절.
+> 근거: `docs/progress/phase1_complete.md` 4절 + `docs/progress/phase2_priority1_complete.md` 6절 + `docs/progress/phase2_priority2_complete.md` 5절.
 
 | # | 항목 | 핵심 작업 | 상태 |
 |---|---|---|---|
 | 1 | **pytest 하네스 정식화** | `pyproject.toml` + `src/tests/conftest.py`(FakeProvider autouse, LangFuse no-op), 5개 smoke test 전환 | ✅ **완료 (2026-04-17)** |
-| 1-B | **Linux CI (GitHub Actions)** | `pytest --disable-socket` opt-in, `pytest -m integration` 러너, cache, matrix. Phase 2-P1에서 의도적으로 분리됨 | 🟡 대기 |
-| 2 | **QA 에이전트** (`src/agents/qa/code_reviewer.py`) | Engineer 산출 코드에 대해 타입 힌트·docstring·pytest 실행 여부 정적 점검. 4-agent 워크플로우로 확장. | 🟡 다음 작업 |
-| 3 | **Knowledge 에이전트** (`src/agents/knowledge/*`) | `outputs/workflow_*` 적재·요약·검색. 재실행 시 과거 전략을 참고할 수 있는 RAG 경로. | 🟡 대기 |
-| 4 | **Operations 에이전트** (`src/agents/operations/*`) | 생성된 코드의 스케줄 실행·로그 수집·실패 알림. | 🟡 대기 |
+| 2 | **QA 에이전트(Code Reviewer)** | `src/agents/qa/code_reviewer.py` + 4-agent 워크플로우 확장 + pytest | ✅ **완료 (2026-04-17)** |
+| 1-B | **Linux CI (GitHub Actions)** | `pytest --disable-socket` opt-in, `pytest -m integration` 러너, cache, matrix. Phase 2-P1/2-P2에서 의도적으로 분리됨 | 🟡 **다음 후보 ①** |
+| 3 | **Knowledge 에이전트** (`src/agents/knowledge/{knowledge_curator,rag_searcher}.py`) | `outputs/workflow_*` 적재·요약·검색. 재실행 시 과거 전략을 참고할 수 있는 RAG 경로. | 🟡 **다음 후보 ②** |
+| 4 | **Operations 에이전트** (`src/agents/operations/sandbox_runner.py`) | 생성된 코드의 스케줄 실행·로그 수집·실패 알림. Code Reviewer가 "정적 점검"이라면 이 에이전트는 "동적 검증". | 🟡 대기 |
 | 5 | **요청 라우팅 + UI** | Gradio/Streamlit 기반 단일 엔트리. 자연어 요청 → 적절한 워크플로우 자동 선택. | 🟡 대기 |
 
-**권장 진입 순서**: ~~`1`~~ → **`2`** → (`3` 또는 `4` 병렬) → `1-B` → `5`.
+**권장 진입 순서**: ~~`1`~~ → ~~`2`~~ → **`1-B`** (작고 즉시 효과 큼) → **`3`** (Knowledge) → `4` → `5`.
 
-### 다음 작업을 시작할 때 제일 먼저 할 일 — 우선순위 2 (QA 에이전트)
+### 다음 작업을 시작할 때 제일 먼저 할 일
 
-1. 새 브랜치 생성: `git checkout -b phase2/qa-agent`
-2. `src/agents/qa/code_reviewer.py` — `create_qa_reviewer_agent()` 팩토리. backstory에 "타입 힌트·docstring·pytest 실행 가능성" 점검 역할 명시.
-3. `src/workflows/analyze_and_implement.py`에 4번째 Task 추가 — Engineer의 `engineer_output` 마크다운 + 추출된 코드 경로를 QA에게 context로 주입.
-4. `src/tests/test_qa_reviewer_agent.py` — 본 세션에서 만든 FakeProvider 패턴을 그대로 재사용.
-5. 전체 `pytest` 통과 확인 — 회귀 방어선이 이미 깔려 있어 즉시 검증 가능.
+#### 후보 ① — Phase 2-P1B (Linux GitHub Actions CI)
+1. 새 브랜치 생성: `git checkout -b phase2/linux-ci`
+2. `.github/workflows/pytest.yml` — Python 3.13 + pip cache + `pytest --disable-socket` 실행. socket 차단으로 회귀 안전망 확보.
+3. (선택) `pytest -m integration` 분리 러너 — 실제 LLM 검증용 (LangFuse·API 키 secrets 필요).
+4. README badge 추가, PR 템플릿에 CI 통과 항목 명시.
+
+#### 후보 ② — Phase 2-P3 (Knowledge 에이전트)
+1. 새 브랜치 생성: `git checkout -b phase2/knowledge-agent`
+2. `src/agents/knowledge/knowledge_curator.py` — 과거 `outputs/workflow_*` 폴더 스캔, summary·tag 생성.
+3. `src/agents/knowledge/rag_searcher.py` — 사용자 새 요청과 과거 워크플로우 사이 유사도 검색(임베딩 또는 키워드 기반 1차).
+4. Code Reviewer와 동일 패턴: factory 함수 + smoke test + pytest 함수.
+5. (선택) `analyze_and_implement` 진입 시 RAG Searcher가 유사 사례를 CTO 컨텍스트에 주입하는 5-agent 확장 검토.
 
 ---
 

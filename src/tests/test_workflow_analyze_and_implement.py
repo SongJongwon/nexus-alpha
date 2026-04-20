@@ -118,6 +118,13 @@ def main() -> int:
             border_style="green",
         )
     )
+    console.print(
+        Panel(
+            _preview(result.qa_review),
+            title="[green]④ Code Reviewer 정적 리뷰 (preview)[/green]",
+            border_style="green",
+        )
+    )
 
     # 저장 경로 요약
     rel_saved = result.saved_dir.relative_to(PROJECT_ROOT)
@@ -145,7 +152,7 @@ def main() -> int:
         console.print(
             Panel(
                 f"LangFuse 대시보드: [cyan]{monitor.host}[/cyan]\n"
-                f"(trace: [bold]analyze_and_implement[/bold] — 아래에 3개 "
+                f"(trace: [bold]analyze_and_implement[/bold] — 아래에 4개 "
                 f"generation이 함께 기록됩니다.)",
                 title="[green]LangFuse[/green]",
                 border_style="green",
@@ -158,12 +165,13 @@ def main() -> int:
 # ---------------------------------------------------------------------------
 # pytest 하네스 진입점 (네트워크 없이 FakeProvider 경유)
 # ---------------------------------------------------------------------------
-def test_run_analyze_and_implement_produces_three_stage_artifacts(tmp_path) -> None:
-    """3명 체인 워크플로우가 FakeProvider로 완주하고 산출물 디렉터리가 생기는지 검증.
+def test_run_analyze_and_implement_produces_four_stage_artifacts(tmp_path) -> None:
+    """4명 체인 워크플로우가 FakeProvider로 완주하고 산출물 디렉터리가 생기는지 검증.
 
-    `tmp_path`로 `outputs_dir`을 격리해 저장소에 쓰레기 디렉터리가 남지 않도록 한다.
-    FakeProvider는 3번의 Task 각각에 동일한 "Final Answer: ..." 응답을 돌려주므로
-    3개 md 산출물(cto/analyst/engineer)이 동일한 표지 문자열을 포함해야 한다.
+    Phase 2-P2에서 Code Reviewer가 4번째 단계로 추가됨. `tmp_path`로 `outputs_dir`을
+    격리해 저장소에 쓰레기 디렉터리가 남지 않도록 한다. FakeProvider는 4번의 Task
+    각각에 동일한 "Final Answer: ..." 응답을 돌려주므로, 4개 md 산출물(cto/analyst/
+    engineer/qa)이 모두 동일한 표지 문자열을 포함해야 한다.
     """
     result = run_analyze_and_implement(
         "pytest 하네스 smoke test용 더미 요청",
@@ -179,6 +187,7 @@ def test_run_analyze_and_implement_produces_three_stage_artifacts(tmp_path) -> N
         "01_cto_strategy.md",
         "02_analyst_brief.md",
         "03_engineer_output.md",
+        "04_qa_review.md",
     ):
         assert (result.saved_dir / filename).exists(), f"{filename} 가 저장되지 않았다"
 
@@ -186,6 +195,7 @@ def test_run_analyze_and_implement_produces_three_stage_artifacts(tmp_path) -> N
     assert marker in result.cto_strategy
     assert marker in result.analyst_brief
     assert marker in result.engineer_output
+    assert marker in result.qa_review
 
 
 if __name__ == "__main__":
