@@ -197,6 +197,87 @@ def test_run_analyze_and_implement_produces_four_stage_artifacts(tmp_path) -> No
     assert marker in result.engineer_output
     assert marker in result.qa_review
 
+    # Phase 4 신규 필드 — backward compat 기본값 확인 (enable_gui_branch=False)
+    assert result.chosen_path == ""  # Phase 4 미활성 시 빈 문자열
+    assert result.ui_spec == ""
+    assert result.gui_design == ""
+    assert result.design_tokens == ""
+    assert result.gui_code_output == ""
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — 파서 단위 테스트 (LLM 무관)
+# ---------------------------------------------------------------------------
+def test_parse_ui_ux_path_gui_via_final_answer() -> None:
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    md = "## UI/UX 분석\n... 일부 본문 ...\nFinal Answer: form_factor=single_window, complexity=simple, need_gui=yes\n"
+    assert _parse_ui_ux_path(md) == "gui"
+
+
+def test_parse_ui_ux_path_cli_via_final_answer() -> None:
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    md = "Final Answer: form_factor=cli, complexity=simple, need_gui=no\n"
+    assert _parse_ui_ux_path(md) == "cli"
+
+
+def test_parse_ui_ux_path_gui_via_yaml_body() -> None:
+    """Final Answer 줄이 없어도 YAML 본문에서 need_gui: yes 인식."""
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    md = "```yaml\nneed_gui: yes\nform_factor: dashboard\ncomplexity: medium\n```\n"
+    assert _parse_ui_ux_path(md) == "gui"
+
+
+def test_parse_ui_ux_path_fallback_to_cli_when_unknown() -> None:
+    """모호하거나 신호가 없으면 안전한 cli 로 fallback (비싼 GUI 사슬 회피)."""
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    assert _parse_ui_ux_path("") == "cli"
+    assert _parse_ui_ux_path("Final Answer: 이것은 FakeProvider가 반환한 고정 응답입니다.") == "cli"
+    assert _parse_ui_ux_path("어떤 임의 텍스트") == "cli"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — enable_gui_branch=True E2E (FakeProvider → CLI 경로 fallback)
+# ---------------------------------------------------------------------------
+def test_run_with_gui_branch_enabled_falls_back_to_cli(tmp_path) -> None:
+    """`enable_gui_branch=True` + FakeProvider 응답에 need_gui 마커 없음
+    → 파서가 cli 로 안전 fallback → Engineer 가 그대로 실행되되 UI/UX 컨텍스트
+    가 추가로 채워진 결과 반환.
+
+    검증:
+        - chosen_path == "cli"
+        - ui_spec 비어 있지 않음 (UI/UX Analyst 가 실행됨)
+        - engineer_output 비어 있지 않음 (CLI 경로라 Engineer 그대로)
+        - gui_* 필드는 빈 문자열 (GUI 경로 미실행)
+        - 10_ui_ux_spec.md 파일 존재
+        - 11~13 GUI 파일은 존재하지 않음 (CLI 경로라 미생성)
+    """
+    result = run_analyze_and_implement(
+        "FakeProvider 시나리오 — GUI 분기 활성, but need_gui 마커 없음 → cli fallback",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_gui_branch=True,
+    )
+
+    assert result.chosen_path == "cli"
+    assert result.ui_spec.strip()  # UI/UX Analyst 산출 채워짐
+    assert "FakeProvider가 반환한 고정 응답" in result.ui_spec
+    assert result.engineer_output.strip()  # Engineer 가 실행됨
+    assert result.gui_design == ""  # GUI 경로 미실행
+    assert result.design_tokens == ""
+    assert result.gui_code_output == ""
+
+    # 파일 시스템 확인
+    assert (result.saved_dir / "10_ui_ux_spec.md").exists()
+    assert (result.saved_dir / "03_engineer_output.md").exists()  # CLI 경로 — Engineer 산출 보존
+    # GUI 전용 파일은 미생성
+    assert not (result.saved_dir / "11_gui_design.md").exists()
+    assert not (result.saved_dir / "12_design_tokens.md").exists()
+    assert not (result.saved_dir / "13_gui_code_output.md").exists()
+
 
 if __name__ == "__main__":
     sys.exit(main())

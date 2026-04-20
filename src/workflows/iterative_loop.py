@@ -157,6 +157,7 @@ class _LoopState(TypedDict, total=False):
     outputs_dir: str  # Path.as_posix() — TypedDict serialization friendly
     enable_sandbox: bool  # Phase 3 — False 면 sandbox 노드가 즉시 None 반환
     sandbox_timeout_sec: int  # Phase 3
+    enable_gui_branch: bool  # Phase 4 — analyze_and_implement 의 GUI 분기 토글
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -348,6 +349,7 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
         request_with_feedback,
         outputs_dir=outputs_dir,
         verbose=False,
+        enable_gui_branch=state.get("enable_gui_branch", False),
     )
 
     artifacts = list(state.get("iteration_artifacts", []))
@@ -564,6 +566,7 @@ def run_iterative_loop(
     outputs_dir: Optional[Path] = None,
     enable_sandbox: bool = True,
     sandbox_timeout_sec: int = DEFAULT_SANDBOX_TIMEOUT_SEC,
+    enable_gui_branch: bool = False,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -577,6 +580,10 @@ def run_iterative_loop(
             False 면 sandbox 노드가 즉시 None 반환하고 Gap Analyst 입력에는
             "(없음)" 안내. 호환성·디버깅 목적의 우회 스위치.
         sandbox_timeout_sec: 자식 프로세스 강제 종료 임계 (초). 기본 30.
+        enable_gui_branch: Phase 4 토글. True 면 매 iteration 의
+            `run_analyze_and_implement` 호출에 동일 토글이 propagate 되어,
+            UI/UX Analyst → (GUI 면) 디자인 본부 3명 / (CLI 면) Engineer 분기
+            가 발동된다. 기본 False — backward compat.
 
     Returns:
         LoopOutcome — verdict + 4-agent chain 결과 + sandbox 실행 결과 + 산출 경로.
@@ -605,12 +612,13 @@ def run_iterative_loop(
         name="iterative_loop",
         user_id="local-dev",
         metadata={
-            "phase": "phase_3_sandbox_integration",
+            "phase": "phase_4_gui_integration" if enable_gui_branch else "phase_3_sandbox_integration",
             "workflow": "iterative_loop",
             "user_request_preview": user_request[:160],
             "max_iterations": max_iterations,
             "budget_initial": budget_tokens_remaining,
             "enable_sandbox": enable_sandbox,
+            "enable_gui_branch": enable_gui_branch,
         },
     )
 
@@ -623,6 +631,7 @@ def run_iterative_loop(
             "outputs_dir": target_outputs.as_posix(),
             "enable_sandbox": enable_sandbox,
             "sandbox_timeout_sec": sandbox_timeout_sec,
+            "enable_gui_branch": enable_gui_branch,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.
