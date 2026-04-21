@@ -1,15 +1,20 @@
 # Linux 기반 CI 회귀 안전망.
 #
-# 설계 결정 (Phase 2-P1B, 2026-04-17):
-#   - Windows에서는 `pytest-socket`의 `disable_socket()`이 ProactorEventLoop의
-#     내부 `socket.socketpair()`까지 차단해 anyio.run() 경로가 전부 실패한다
-#     (`docs/progress/phase2_priority1_complete.md` §3-1 참조). 따라서 conftest의
-#     autouse fixture에서 제외하고 Linux CI에서 `--disable-socket` 플래그로만
-#     opt-in 한다.
-#   - Linux의 `SelectorEventLoop`는 `os.pipe2` 기반 self-pipe를 사용하므로
-#     소켓 차단이 이벤트 루프 초기화에 영향을 주지 않는다. 안전하게 적용 가능.
-#   - 네트워크 차단의 주력 안전망은 `conftest.py`의 FakeProvider monkeypatch.
-#     `--disable-socket`은 회귀 시 즉시 실패시키는 보조 안전망이다.
+# 설계 결정 (Phase 2-P1B 디버깅, 2026-04-21):
+#   - 초기 설계는 Linux 에서 `pytest --disable-socket` opt-in 으로 회귀 안전망
+#     이중화하려 했음 (Windows ProactorEventLoop 호환성 이유로 conftest autouse
+#     에선 제외). 그러나 PR #5 ~ #21 누적 13개 PR 의 CI 가 "Failing after 1m"
+#     으로 빠르게 실패 — collection 단계 import 에러 신호.
+#   - 의심 1순위: `--disable-socket` 이 Linux 에서도 일부 lib (httpx/requests/
+#     langfuse OTel 등) 의 *import 시점* socket 호출을 차단해 부작용. Windows
+#     autouse 와 같은 본질적 문제일 가능성.
+#   - 1차 액션: `--disable-socket` 제거. 네트워크 차단의 주력 안전망은 conftest
+#     의 FakeProvider monkeypatch — 이게 LLM 호출 자체를 차단하므로 외부 네트워크
+#     도달 가능성 0. pytest-socket 은 *추가* 안전망일 뿐, 없어도 안전.
+#   - 향후 Linux 동작 확인 후 `--disable-socket --allow-hosts=127.0.0.1` 같은
+#     방식으로 점진 재도입 가능.
+#
+#   상세 기록: docs/progress/phase2_priority1_complete.md §3-1 + 본 PR 메시지.
 
 name: CI
 
@@ -48,13 +53,21 @@ jobs:
         run: |
           python --version
           pip --version
+          uname -a
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run pytest (with --disable-socket safety net)
-        # FakeProvider monkeypatch가 1차 안전망, --disable-socket이 2차 안전망.
-        # 두 단계 모두 통과해야 회귀 0건으로 본다.
-        run: pytest --disable-socket
+      - name: Show installed packages (diagnostic)
+        # 디버깅 목적 — Linux 환경의 실제 설치 버전 + 의존성 그래프 확인용.
+        # 향후 ci 안정화되면 제거 가능.
+        run: pip list
+
+      - name: Run pytest
+        # 네트워크 차단은 conftest 의 FakeProvider monkeypatch 가 담당 — LLM
+        # 호출 자체가 차단되므로 외부 네트워크 도달 가능성 0.
+        # `--disable-socket` 제거 이력은 본 파일 상단 코멘트 참조.
+        # `-v --tb=short` 로 실패 시 어떤 테스트인지 즉시 식별.
+        run: pytest -v --tb=short
