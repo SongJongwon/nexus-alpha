@@ -240,6 +240,73 @@ def test_parse_ui_ux_path_fallback_to_cli_when_unknown() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 5 E2E 이슈 대응 (2026-04-21) — 파서가 LLM 변형 출력도 GUI 로 인식하는지
+# ---------------------------------------------------------------------------
+def test_parse_ui_ux_path_gui_via_true_variant() -> None:
+    """LLM 이 `need_gui=true` 로 쓰더라도 GUI 로 인식."""
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    assert _parse_ui_ux_path("Final Answer: need_gui=true, form_factor=single_window") == "gui"
+    assert _parse_ui_ux_path("```yaml\nneed_gui: true\n```\n") == "gui"
+
+
+def test_parse_ui_ux_path_cli_via_false_variant() -> None:
+    """`need_gui=false` 도 CLI 로 인식."""
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    assert _parse_ui_ux_path("Final Answer: need_gui=false, form_factor=cli") == "cli"
+    assert _parse_ui_ux_path("```yaml\nneed_gui: false\n```\n") == "cli"
+
+
+def test_parse_ui_ux_path_gui_via_form_factor_only() -> None:
+    """LLM 이 need_gui 줄을 누락해도 form_factor 가 GUI 계열이면 GUI 로 인식.
+
+    이 규칙이 E2E 검증 이슈(2026-04-21)의 핵심 교정 — 초기 구현은 need_gui 마커가
+    없으면 무조건 cli fallback 이었음. 이제 form_factor 가 GUI 계열 5종 중 하나면
+    GUI 로 라우팅.
+    """
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    # Final Answer 줄에 form_factor 만 있는 경우
+    assert _parse_ui_ux_path(
+        "Final Answer: form_factor=single_window, complexity=simple"
+    ) == "gui"
+    assert _parse_ui_ux_path(
+        "Final Answer: form_factor=dashboard, complexity=medium"
+    ) == "gui"
+    assert _parse_ui_ux_path(
+        "Final Answer: form_factor=multi_window, complexity=medium"
+    ) == "gui"
+    assert _parse_ui_ux_path(
+        "Final Answer: form_factor=wizard, complexity=simple"
+    ) == "gui"
+    # YAML 본문에 form_factor 만 있는 경우
+    assert _parse_ui_ux_path("```yaml\nform_factor: single_window\n```\n") == "gui"
+
+
+def test_parse_ui_ux_path_cli_via_form_factor_cli() -> None:
+    """form_factor=cli 는 CLI 로 유지."""
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    assert _parse_ui_ux_path("Final Answer: form_factor=cli, complexity=simple") == "cli"
+    assert _parse_ui_ux_path("```yaml\nform_factor: cli\n```\n") == "cli"
+
+
+def test_parse_ui_ux_path_need_gui_wins_over_form_factor() -> None:
+    """need_gui 와 form_factor 가 충돌하면 need_gui 우선 (명시적 결정자)."""
+    from src.workflows.analyze_and_implement import _parse_ui_ux_path
+
+    # need_gui=no + form_factor=single_window → CLI (need_gui 가 결정자)
+    assert _parse_ui_ux_path(
+        "Final Answer: need_gui=no, form_factor=single_window"
+    ) == "cli"
+    # need_gui=yes + form_factor=cli → GUI (need_gui 가 결정자)
+    assert _parse_ui_ux_path(
+        "Final Answer: need_gui=yes, form_factor=cli"
+    ) == "gui"
+
+
+# ---------------------------------------------------------------------------
 # Phase 4 — enable_gui_branch=True E2E (FakeProvider → CLI 경로 fallback)
 # ---------------------------------------------------------------------------
 def test_run_with_build_branch_enabled_appends_build_artifacts(tmp_path) -> None:

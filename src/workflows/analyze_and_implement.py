@@ -147,34 +147,66 @@ def _extract_code_blocks(markdown: str, code_dir: Path) -> list[Path]:
     return saved
 
 
+_GUI_FORM_FACTORS = ("single_window", "multi_window", "wizard", "dashboard")
+
+
 def _parse_ui_ux_path(ui_ux_markdown: str) -> str:
-    """UI/UX Analyst 산출 마크다운에서 `need_gui` 를 파싱해 경로 문자열 반환.
+    """UI/UX Analyst 산출 마크다운에서 `need_gui` 또는 `form_factor` 를 파싱.
 
     파싱 우선순위:
-        1. 마지막 `Final Answer:` 줄에서 `need_gui=yes/no` 검색
-        2. `need_gui: yes` / `need_gui: no` (YAML 본문)
-        3. 둘 다 못 찾으면 `cli` 로 안전 fallback
-           (모호 시 GUI 오버헤드 회피 — 디자인 본부 3명 호출 비용 큼)
+        1. 마지막 `Final Answer:` 줄의 `need_gui=<yes|no|true|false>`
+        2. 같은 줄의 `form_factor=<cli|single_window|multi_window|wizard|dashboard>`
+        3. 본문 YAML 의 `need_gui:` / `form_factor:` (같은 규칙)
+        4. 아무 신호도 없으면 `cli` 로 안전 fallback — 비싼 GUI 사슬 회피
+
+    E2E 이슈 (2026-04-21) 대응:
+        초기 구현은 `need_gui=yes/no` 만 인식해 LLM 이 Korean/true/false 변형을
+        쓰거나 need_gui 줄을 생략하면 즉시 cli fallback → GUI 분기 미실행 문제.
+        해결: (a) true/false 변형 수용, (b) form_factor 가 GUI 계열이면 GUI 로
+        간주 (need_gui 누락 방어), (c) 본문·Final Answer 모두 동일 규칙 적용.
 
     Returns:
         "gui" | "cli"
     """
     text = (ui_ux_markdown or "").lower()
 
-    # Final Answer 줄 우선 (가장 신뢰)
+    def _match_need_gui(segment: str) -> Optional[str]:
+        """segment 에서 need_gui 시그널 추출. None 이면 신호 없음."""
+        m = re.search(r"need_gui\s*[:=]\s*([a-z]+)", segment)
+        if not m:
+            return None
+        v = m.group(1)
+        if v in ("yes", "true"):
+            return "gui"
+        if v in ("no", "false"):
+            return "cli"
+        return None
+
+    def _match_form_factor(segment: str) -> Optional[str]:
+        """segment 에서 form_factor 시그널 추출. CLI/GUI 판정 또는 None."""
+        m = re.search(r"form_factor\s*[:=]\s*([a-z_]+)", segment)
+        if not m:
+            return None
+        v = m.group(1)
+        if v in _GUI_FORM_FACTORS:
+            return "gui"
+        if v == "cli":
+            return "cli"
+        return None
+
+    # 1) Final Answer 줄 — need_gui 우선, 그 다음 form_factor
     for line in text.splitlines():
         s = line.strip()
-        if s.startswith("final answer"):
-            if "need_gui=yes" in s or "need_gui: yes" in s:
-                return "gui"
-            if "need_gui=no" in s or "need_gui: no" in s:
-                return "cli"
+        if not s.startswith("final answer"):
+            continue
+        verdict = _match_need_gui(s) or _match_form_factor(s)
+        if verdict is not None:
+            return verdict
 
-    # YAML 본문 fallback
-    if "need_gui: yes" in text:
-        return "gui"
-    if "need_gui: no" in text:
-        return "cli"
+    # 2) 본문 YAML — need_gui 우선, 그 다음 form_factor
+    body_verdict = _match_need_gui(text) or _match_form_factor(text)
+    if body_verdict is not None:
+        return body_verdict
 
     return "cli"  # 모호 시 안전한 기본 — 비싼 GUI 사슬 회피
 
@@ -232,26 +264,47 @@ def _build_analyst_task(analyst, cto_task: Task) -> Task:
 
 
 def _build_engineer_task(engineer, cto_task: Task, analyst_task: Task) -> Task:
-    """Python Engineer 구현 Task (기존 4-agent 흐름)."""
+    """Python Engineer 구현 Task (기존 4-agent 흐름).
+
+    도메인 중립 — 데이터 분석·단순 CLI·유틸 스크립트 등 무엇이든 *사용자 요청에
+    실제로 맞는* Python 구현을 생성하도록 지시한다. 분석 지시서가 데이터 품질/
+    지표/차트 구조를 다루더라도, **요청이 데이터 분석이 아니면** Engineer 는
+    분석 지시서를 무시하고 요청에 충실한 구현을 작성해야 한다.
+    """
     return Task(
         description=(
-            "CTO의 전략 문서와 Data Analyst의 분석 지시서(이전 컨텍스트)를 모두 "
-            "만족하는 **바로 실행 가능한 Python 구현 산출물**을 작성하세요.\n\n"
+            "CTO의 전략 문서(이전 컨텍스트)를 기반으로 **사용자 요청을 실제로 "
+            "만족하는 바로 실행 가능한 Python 구현 산출물**을 작성하세요. Data "
+            "Analyst 의 분석 지시서는 참고용 — 요청이 *데이터 분석이 아닌* "
+            "경우(예: 계산기, 에디터, 유틸) 분석 지시서의 지표/차트 틀에 끼워 "
+            "맞추지 말고 요청에 충실한 구현을 선택하세요.\n\n"
             "요구 사항:\n"
-            "  - 모듈별 파일 분리 (loader / transform / metrics / chart / "
-            "    render / cli 등 역할 단위)\n"
+            "  - **단독 실행 가능 (self-contained)**: 엔트리 파일은 **반드시** "
+            "    `python <entry>.py` 만으로 실행 가능해야 합니다. 추가 설치나 "
+            "    `python -m <pkg>` 강제는 금지. (복잡하면 `python -m <pkg>` 도 "
+            "    같이 가능하게 — 하지만 단일 파일 실행이 *기본 경로*.)\n"
+            "  - **import 규칙**: 엔트리에서 `from .xxx import ...` 같은 **상대 "
+            "    import 금지**. 같은 디렉터리 파일은 `from xxx import ...` (절대 "
+            "    import) 또는 `import xxx` 로 참조. `sys.path` 조작 금지.\n"
+            "  - **파일 분리 원칙**: 복잡도에 맞게 — 단순 요청이면 단일 파일, "
+            "    복잡하면 역할 단위로 나누되 모든 파일이 한 디렉터리에 있어 "
+            "    평면 import 가 가능한 구조로. 패키지 레이아웃 (`pkg/__init__.py`)이 "
+            "    꼭 필요하면 `python -m pkg` 경로도 같이 제공.\n"
             "  - 모든 공개 함수에 타입 힌트와 docstring\n"
-            "  - 최소 3건의 pytest 단위 테스트 (지표 계산 함수 중심)\n"
-            "  - CLI 엔트리 포함 (`python -m <pkg> --input ... --output ...`)\n"
-            "  - 경계 지점(I/O, CLI)에만 예외 처리, 내부 함수는 계약 신뢰\n\n"
+            "  - 핵심 로직에 최소 2~3건의 pytest 단위 테스트 (실제 로직 기준 — "
+            "    계산기라면 계산 함수, 에디터라면 텍스트 처리)\n"
+            "  - 경계 지점(I/O, CLI, GUI 이벤트)에만 예외 처리, 내부 함수는 "
+            "    계약 신뢰\n\n"
             "산출 규약:\n"
             "  - 각 파일은 ```python 코드 블록으로 감싸고 첫 줄에 `# file: "
             "    <상대경로>` 헤더 주석 포함\n"
-            "  - 마지막 섹션에 설치·실행 방법과 예시 커맨드 요약"
+            "  - 마지막 섹션에 **설치·실행 방법** — 최소 한 줄의 `python "
+            "    <entry>.py` 예시 명시"
         ),
         expected_output=(
-            "모듈별 실행 가능한 Python 코드 세트와 pytest 테스트, 설치·실행 가이드를 "
-            "포함한 완전한 구현 산출물"
+            "요청에 충실한, 단독 실행 가능한 (python <entry>.py) Python 코드 세트와 "
+            "pytest 테스트, 설치·실행 가이드를 포함한 완전한 구현 산출물. 상대 "
+            "import 또는 sys.path 조작 없이 실행 가능해야 함."
         ),
         agent=engineer,
         context=[cto_task, analyst_task],
