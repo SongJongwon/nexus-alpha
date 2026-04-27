@@ -1,9 +1,9 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-27 (PR #25~33 머지 + PR #34 작성 중)
-> **현재 브랜치**: `phase5/e2e-7th-verification-extended-structured-output`
-> **테스트**: pytest **184 passed** (138 + 누적 신규 46)
-> **마지막 세션 로그**: [progress/session_log_20260421-22.md](./progress/session_log_20260421-22.md)
+> **마지막 업데이트**: 2026-04-27 (PR #25~34 머지 완료, 이슈 4/5/6 모두 close)
+> **현재 브랜치**: `main` (모든 작업 머지됨)
+> **테스트**: pytest **184 passed** (138 + 누적 신규 46, 회귀 0)
+> **최근 세션 로그**: [progress/session_log_20260427.md](./progress/session_log_20260427.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v5_built.md](./architecture/nexus_alpha_v5_built.md)
 
 ---
@@ -12,7 +12,7 @@
 
 | 영역 | 상태 |
 |---|---|
-| Phase 0~5 구축 | ✅ 완료 (33개 PR) |
+| Phase 0~5 구축 | ✅ 완료 (34개 PR) |
 | 메인 워크플로우 (`analyze_and_implement`) | ✅ 작동 |
 | GUI 분기 라우팅 | ✅ 작동 (PR #23 fix 검증 완료 — PR #24) |
 | GUI 코드 생성 본문 캡처 | ✅ **PR #25 머지** (이슈 4 해결, 2026-04-27) |
@@ -23,27 +23,32 @@
 
 ---
 
-## 🟢 이슈 6 사실상 close (PR #34 결과)
+## 🟢 이슈 4 / 5 / 6 모두 close (2026-04-27 단일 세션)
 
-### 1. PR #34 7차 E2E 결과 (작성 중) — 방어선 2 전체 확장 효과 입증
+| 이슈 | 증상 | 해결 PR | 검증 PR |
+|---|---|---|---|
+| **이슈 4** | GUI 4 에이전트 본문 누락 | PR #25 | PR #26 (재재검증) |
+| **이슈 5** | 비-GUI 16 에이전트 동일 패턴 | PR #27 | PR #28 (4차) |
+| **이슈 6** | LLM 비결정적 컴플라이언스 | PR #29 (방어선 1) → PR #31/#32 (방어선 2 시범) → PR #33 (전체 확장) | PR #34 (7차) |
 
-- **브랜치**: `phase5/e2e-7th-verification-extended-structured-output`
-- **결과 문서**: [progress/e2e_7th_verification_post_pr33.md](./progress/e2e_7th_verification_post_pr33.md)
-- **결과 요약**:
-  - ✅ 캡처율 81% → **94%** (15/16, +13%)
-  - ✅ Systematic failure **5/5 해결**: BuildEngineer / ReleaseManager / CodeReviewer / ThemeDesigner / PlatformTester 모두 본문 캡처
-  - ✅ Cosmetic sanitize 작동 — 헤더 중복 0건
-  - 🟡 잔존 1건 (DepAnalyzer 782자) 은 *LLM content variance* — schema 강제는 정상, LLM 이 "입력 부족" 으로 의도적 짧은 응답. **무처리 권장**.
+**최종 캡처율**: 38% → **94%** (15/16, 잔존 1건은 LLM content variance, 무처리 권장)
+**상세**: [progress/session_log_20260427.md](./progress/session_log_20260427.md)
 
-## 🎯 다음 단계 — 외부 도구 통합 (WORK_STATUS §4)
+## 🎯 다음 마일스톤 — 외부 도구 통합 (WORK_STATUS §4)
 
-이슈 6 사실상 종결됨. 사양 수준 사슬 안정 → 외부 도구 통합으로 이동 가능:
+GUI 풀체인 + 사양 산출 사슬 7차 연속 안정. 다음은 **첫 진짜 `.exe` 생성**:
 
-### PyInstaller 실제 호출 통합 (Phase 4.5 강화)
-- 현재: Build Engineer 가 spec 사양만 산출
-- 목표: 사양 → `pyinstaller` 실제 호출 → `.exe` 생성 → SHA256 산출
-- 위치: `src/agents/build_release/` 옆에 `build_executor.py` 추가
-- 첫 진짜 `.exe` 생성 단계
+### PR #35 (예정) — PyInstaller 실제 호출 통합 (Phase 4.5 강화)
+- **현재**: Build Engineer 가 BuildSpec 사양만 산출
+- **목표**: 사양 → `pyinstaller` 실제 호출 → `.exe` 생성 → SHA256 산출
+- **위치**: `src/agents/build_release/build_executor.py` (신규)
+- **통합**: `build_workflow.py` 의 5단 사슬 끝에 executor 추가
+- **검증**: 8차 E2E 에서 `calculator.exe` 생성 + 부팅 확인
+
+### 후속 마일스톤
+- **PR #36** (조건부): GitHub Release 자동 업로드 (`gh release create` 호출)
+- **PR #37** (조건부): Update Checker 산출 코드 통합
+- **PR #38** (조건부): 풀체인 E2E ('계산기' → 다운로드 가능 setup.exe URL)
 
 ---
 
@@ -178,6 +183,7 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 | v4 풀 비전 설계 (자연어 → .exe) | [architecture/nexus_alpha_v4.md](./architecture/nexus_alpha_v4.md) |
 | v4 조직도 (9 본부 24명) | [architecture/nexus_alpha_org_v4.md](./architecture/nexus_alpha_org_v4.md) |
 | 최근 세션 로그 (2026-04-21~22) | [progress/session_log_20260421-22.md](./progress/session_log_20260421-22.md) |
+| **세션 로그 (2026-04-27, 이슈 4/5/6 close)** | [progress/session_log_20260427.md](./progress/session_log_20260427.md) |
 | E2E 재재검증 (2026-04-27, 이슈 5 발견) | [progress/e2e_rereverification_post_pr25.md](./progress/e2e_rereverification_post_pr25.md) |
 | E2E 4차 검증 (2026-04-27, 이슈 6 발견) | [progress/e2e_4th_verification_post_pr27.md](./progress/e2e_4th_verification_post_pr27.md) |
 | E2E 5차 검증 (2026-04-27, 방어선 1 효과 미미) | [progress/e2e_5th_verification_post_pr29.md](./progress/e2e_5th_verification_post_pr29.md) |
