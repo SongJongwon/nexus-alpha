@@ -50,10 +50,15 @@ class NexusAlphaLLM(BaseLLM):
         - 호출마다 LangFuse generation 자동 기록
 
     현재 어댑터가 **지원하지 않는** CrewAI 기능:
-        - 툴 콜(tools / available_functions)
-        - 구조화 출력(response_model)
+        - 툴 콜(tools / available_functions) — supports_function_calling=False
+        - response_model 인자 (call/acall 시그니처에선 받지만 무시)
         - 콜백(callbacks)
         이들 인자는 받아 두고 무시한다. 이후 Phase에서 점진적으로 채운다.
+
+    구조화 출력(``output_pydantic``) 지원 (PR #32, 2026-04-27):
+        ``supports_function_calling`` = False 로 명시 → CrewAI converter 가
+        prompt-based JSON instruction 방식으로 fallback. 별도 LLM 호출로 텍스트를
+        Pydantic 모델에 맞게 변환. Claude 는 JSON 출력에 강해 안정 작동.
     """
 
     _provider: BaseLLMProvider = PrivateAttr()
@@ -80,6 +85,22 @@ class NexusAlphaLLM(BaseLLM):
     def backend_provider(self) -> BaseLLMProvider:
         """현재 어댑터가 위임 중인 Provider 인스턴스."""
         return self._provider
+
+    # ------------------------------------------------------------------
+    # CrewAI capability flags
+    # ------------------------------------------------------------------
+    def supports_function_calling(self) -> bool:
+        """CrewAI converter (output_pydantic 등)가 호출하는 capability check.
+
+        본 어댑터는 단일 텍스트 in/out 만 위임하므로 OpenAI 식 function-calling
+        프로토콜은 미지원. False 반환 시 CrewAI 가 prompt-based JSON instruction
+        방식으로 fallback (별도 LLM 호출로 텍스트→Pydantic 변환). Claude 는
+        JSON 출력에 강해 fallback 경로로도 안정 작동.
+
+        구현 누락 시 ``AttributeError`` → CrewAI converter 무한 재귀 → ConverterError
+        (PR #32 회귀 발견).
+        """
+        return False
 
     # ------------------------------------------------------------------
     # 메시지 변환
