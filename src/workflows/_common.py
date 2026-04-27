@@ -29,10 +29,26 @@ def task_output_text(task: Task) -> str:
         본 함수는 *경고만* — 실제 본문 회수는 ``retry_task_if_short`` 가 담당.
         pytest 환경에서는 FakeProvider 응답이 본질적으로 짧아 false positive 방지를
         위해 경고 skip.
+
+    이슈 6 방어선 2 (PR #31): 일부 Task 가 ``output_pydantic`` 으로 schema 를 강제
+    → ``task.output.pydantic`` 에 파싱된 모델 인스턴스 저장. 모델이 ``to_markdown()``
+    메서드를 제공하면 그 결과를 우선 반환 (raw 의 JSON 대신 markdown 으로 디스크 저장).
     """
     out = task.output
     if out is None:
         return ""
+
+    # 방어선 2 — output_pydantic 이 적용됐고 모델이 to_markdown 을 제공하면 우선
+    pyd = getattr(out, "pydantic", None)
+    if pyd is not None and hasattr(pyd, "to_markdown"):
+        try:
+            rendered = pyd.to_markdown()
+            if isinstance(rendered, str) and rendered.strip():
+                return rendered
+        except Exception:
+            # 렌더 실패 시 raw 로 fallback (graceful degradation)
+            pass
+
     raw = getattr(out, "raw", None) or str(out)
 
     import sys

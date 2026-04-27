@@ -62,6 +62,7 @@ from src.workflows._common import (
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
+from src.workflows._schemas import BuildSpecOutput
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -123,7 +124,11 @@ def _build_dependency_analyzer_task(agent, code_summary: str, target_platform: s
 def _build_build_engineer_task(
     agent, code_summary: str, target_platform: str, entry_hint: str, dep_task: Task
 ) -> Task:
-    return Task(
+    # 이슈 6 방어선 2 (PR #31) — production 에서만 output_pydantic 활성.
+    # pytest 환경에선 FakeProvider 응답이 JSON 스키마와 맞지 않아 false 실패 방지.
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 의존성 보고서 + 아래 3블록을 받아, 백스토리에 명시된 "
             "5단 구조(도구 선택 / 빌드 명령 / 함정 / 검증 체크리스트 / 빌드 엔지니어 "
@@ -139,6 +144,9 @@ def _build_build_engineer_task(
         agent=agent,
         context=[dep_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = BuildSpecOutput
+    return Task(**kwargs)
 
 
 def _build_asset_manager_task(

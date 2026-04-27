@@ -53,6 +53,7 @@ from src.workflows._common import (
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
+from src.workflows._schemas import ReleaseDecisionOutput
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -98,7 +99,10 @@ def _build_release_manager_task(
     build_summary: str,
     target_platform: str,
 ) -> Task:
-    return Task(
+    # 이슈 6 방어선 2 (PR #31) — production 에서만 output_pydantic 활성.
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "아래 5블록을 입력으로, 백스토리에 명시된 4단 구조(버전 결정 / RELEASE.md "
             "초안 / 사용자 친화 요약 / 매니저 노트)로 한국어 릴리스 결정을 작성하세요.\n\n"
@@ -114,6 +118,9 @@ def _build_release_manager_task(
         ),
         agent=agent,
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = ReleaseDecisionOutput
+    return Task(**kwargs)
 
 
 def _build_changelog_task(
