@@ -348,6 +348,84 @@ def test_gui_agent_backstories_do_not_use_truncating_final_answer_pattern() -> N
         )
 
 
+# ---------------------------------------------------------------------------
+# Issue 5 회귀 방지 (2026-04-27) — 비-GUI 16개 에이전트 (PR #26 E2E 발견)
+# ---------------------------------------------------------------------------
+def test_non_gui_agent_backstories_do_not_use_truncating_final_answer_pattern() -> None:
+    """16개 비-GUI 에이전트 backstory 가 본문 손실 패턴을 쓰지 않는지 정적 검증.
+
+    이슈 5 (PR #26 E2E 재재검증 발견): 동일 `마지막 줄은 반드시 Final Answer:`
+    패턴이 GUI 4 에이전트 외에도 *16 개* 더 잔존. 빌드·릴리스 사양 / QA 판정 /
+    iterative_loop 결정표 / 지식베이스 entry 모두 1줄 요약만 캡처되어 후속 단계가
+    근거를 받지 못하는 문제.
+
+    대상 분류:
+      - QA: code_reviewer (1)
+      - Build: dependency_analyzer / build_engineer / asset_manager /
+               installer_creator / platform_tester (5)
+      - Release: release_manager / changelog_generator / update_checker /
+                 distribution_agent (4)
+      - C-Level: convergence_judge (1)
+      - Operations: sandbox_runner (1)
+      - Analysis: requirement_expander / gap_analyst (2)
+      - Knowledge: curator / rag_searcher (2)
+
+    `code_reviewer` 는 변형 표현 (`마지막 줄에 반드시`) 사용 → 두 패턴 모두 차단.
+    """
+    from src.agents.qa.code_reviewer import CODE_REVIEWER_BACKSTORY
+    from src.agents.build_release.dependency_analyzer import DEPENDENCY_ANALYZER_BACKSTORY
+    from src.agents.build_release.build_engineer import BUILD_ENGINEER_BACKSTORY
+    from src.agents.build_release.asset_manager import ASSET_MANAGER_BACKSTORY
+    from src.agents.build_release.installer_creator import INSTALLER_CREATOR_BACKSTORY
+    from src.agents.build_release.platform_tester import PLATFORM_TESTER_BACKSTORY
+    from src.agents.build_release.release_manager import RELEASE_MANAGER_BACKSTORY
+    from src.agents.build_release.changelog_generator import CHANGELOG_GENERATOR_BACKSTORY
+    from src.agents.build_release.update_checker import UPDATE_CHECKER_BACKSTORY
+    from src.agents.build_release.distribution_agent import DISTRIBUTION_AGENT_BACKSTORY
+    from src.agents.c_level.convergence_judge import CONVERGENCE_JUDGE_BACKSTORY
+    from src.agents.operations.sandbox_runner import SANDBOX_RUNNER_BACKSTORY
+    from src.agents.analysis.requirement_expander import REQUIREMENT_EXPANDER_BACKSTORY
+    from src.agents.analysis.gap_analyst import GAP_ANALYST_BACKSTORY
+    from src.agents.knowledge.curator import KNOWLEDGE_CURATOR_BACKSTORY
+    from src.agents.knowledge.rag_searcher import RAG_SEARCHER_BACKSTORY
+
+    backstories = {
+        "CodeReviewer": CODE_REVIEWER_BACKSTORY,
+        "DependencyAnalyzer": DEPENDENCY_ANALYZER_BACKSTORY,
+        "BuildEngineer": BUILD_ENGINEER_BACKSTORY,
+        "AssetManager": ASSET_MANAGER_BACKSTORY,
+        "InstallerCreator": INSTALLER_CREATOR_BACKSTORY,
+        "PlatformTester": PLATFORM_TESTER_BACKSTORY,
+        "ReleaseManager": RELEASE_MANAGER_BACKSTORY,
+        "ChangelogGenerator": CHANGELOG_GENERATOR_BACKSTORY,
+        "UpdateChecker": UPDATE_CHECKER_BACKSTORY,
+        "DistributionAgent": DISTRIBUTION_AGENT_BACKSTORY,
+        "ConvergenceJudge": CONVERGENCE_JUDGE_BACKSTORY,
+        "SandboxRunner": SANDBOX_RUNNER_BACKSTORY,
+        "RequirementExpander": REQUIREMENT_EXPANDER_BACKSTORY,
+        "GapAnalyst": GAP_ANALYST_BACKSTORY,
+        "Curator": KNOWLEDGE_CURATOR_BACKSTORY,
+        "RAGSearcher": RAG_SEARCHER_BACKSTORY,
+    }
+
+    DANGEROUS_PATTERNS = (
+        "마지막 줄은 반드시 `Final Answer:`",
+        "마지막 줄에 반드시 `Final Answer:`",  # code_reviewer 의 변형 표현
+    )
+    REQUIRED_MARKER = "출력 규약 (CRITICAL)"
+
+    for name, backstory in backstories.items():
+        for pattern in DANGEROUS_PATTERNS:
+            assert pattern not in backstory, (
+                f"{name} backstory 가 본문 손실 패턴 ('{pattern}') 사용 중. "
+                "CrewAI 가 본문을 잃어버립니다 (이슈 5 회귀)."
+            )
+        assert REQUIRED_MARKER in backstory, (
+            f"{name} backstory 에 '{REQUIRED_MARKER}' 마커가 없음 — "
+            "이슈 5 교정 형식을 사용 중인지 확인 필요."
+        )
+
+
 def test_task_output_text_returns_short_raw_without_modification() -> None:
     """_task_output_text 의 길이 fallback 은 *경고만* — raw 값은 그대로 반환.
 
