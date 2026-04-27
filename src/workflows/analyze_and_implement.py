@@ -43,6 +43,11 @@ from src.agents.engineering import create_python_engineer_agent
 from src.agents.planning import create_uiux_analyst_agent
 from src.agents.qa import create_code_reviewer_agent
 from src.monitoring import get_langfuse_client
+from src.workflows._common import (
+    SUSPICIOUS_OUTPUT_THRESHOLD as _SUSPICIOUS_OUTPUT_THRESHOLD,
+    retry_short_tasks_in_chain,
+    task_output_text as _task_output_text,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -113,45 +118,9 @@ class WorkflowResult:
 
 
 # ---------------------------------------------------------------------------
-# 내부 헬퍼
+# 내부 헬퍼 — _task_output_text / SUSPICIOUS_OUTPUT_THRESHOLD 는 _common 으로 이동
+# (PR #29, 이슈 6 fix). build_workflow / release_workflow 와 동일 구현 공유.
 # ---------------------------------------------------------------------------
-_SUSPICIOUS_OUTPUT_THRESHOLD = 120  # 문자 — 이보다 짧으면 summary-only 의심
-
-
-def _task_output_text(task: Task) -> str:
-    """CrewAI Task의 출력을 안전하게 문자열로 꺼낸다(버전별 속성 차이 대응).
-
-    이슈 4 (2026-04-21) 회귀 방지:
-        agent backstory 가 `"마지막 줄 Final Answer: <summary>"` 패턴을 사용하면
-        LLM 이 본문 전체를 생략하고 summary 한 줄만 출력 → CrewAI 의 raw 가
-        매우 짧아짐 → 후속 단계가 빈 입력만 받음. 이를 *런타임에 감지* 하여
-        warnings.warn 으로 surface — 회귀 즉시 알 수 있음.
-
-        본 fallback 은 *경고만* — 실제 본문 회수는 불가능 (CrewAI 가 이미 잃었음).
-        근본 해결은 backstory 의 출력 규약 수정 (이슈 4 PR).
-    """
-    out = task.output
-    if out is None:
-        return ""
-    raw = getattr(out, "raw", None) or str(out)
-
-    # pytest 환경에서는 FakeProvider 응답이 본질적으로 짧아 false positive 발생 →
-    # production 런타임에서만 경고 (회귀 감지 목적이므로 production 시 더 가치 있음).
-    import sys
-
-    if "pytest" not in sys.modules and raw and 0 < len(raw.strip()) < _SUSPICIOUS_OUTPUT_THRESHOLD:
-        import warnings
-
-        agent_name = getattr(getattr(out, "agent", None), "role", "unknown")
-        warnings.warn(
-            f"Task output is suspiciously short ({len(raw)} chars) for agent "
-            f"'{agent_name}'. The backstory may use a `Final Answer: <summary>` "
-            f"pattern that truncates body. See "
-            f"docs/progress/e2e_verification_issues.md (Issue 4).",
-            stacklevel=2,
-        )
-
-    return raw or ""
 
 
 def _extract_code_blocks(markdown: str, code_dir: Path) -> list[Path]:
@@ -576,6 +545,8 @@ def run_analyze_and_implement(
                 process=Process.sequential,
                 verbose=verbose,
             ).kickoff()
+            # 이슈 6 fix — LLM 이 본문 생략 시 자동 재시도
+            retry_short_tasks_in_chain([uiux_task])
             ui_spec = _task_output_text(uiux_task)
 
             chosen_path = _parse_ui_ux_path(ui_spec)
@@ -705,6 +676,8 @@ def _run_classic_chain(
         process=Process.sequential,
         verbose=verbose,
     ).kickoff()
+    # 이슈 6 fix — LLM 본문 누락 자동 재시도
+    retry_short_tasks_in_chain([cto_task, analyst_task, engineer_task, qa_review_task])
 
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)
@@ -757,6 +730,8 @@ def _run_cli_branch_chain_with_ui_context(
         process=Process.sequential,
         verbose=verbose,
     ).kickoff()
+    # 이슈 6 fix — LLM 본문 누락 자동 재시도
+    retry_short_tasks_in_chain([cto_task, analyst_task, engineer_task, qa_review_task])
 
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)
@@ -823,6 +798,10 @@ def _run_gui_branch_chain(
         process=Process.sequential,
         verbose=verbose,
     ).kickoff()
+    # 이슈 6 fix — LLM 본문 누락 자동 재시도 (GUI 체인 6 task)
+    retry_short_tasks_in_chain([
+        cto_task, analyst_task, designer_task, theme_task, code_gen_task, qa_review_task,
+    ])
 
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)
