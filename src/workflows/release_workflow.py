@@ -49,6 +49,10 @@ from src.agents.build_release import (
     create_update_checker_agent,
 )
 from src.monitoring import get_langfuse_client
+from src.workflows._common import (
+    retry_short_tasks_in_chain,
+    task_output_text as _task_output_text,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -197,13 +201,8 @@ def _build_distribution_task(
 
 
 # ---------------------------------------------------------------------------
-# 헬퍼
+# 헬퍼 — _task_output_text 는 PR #29 부터 _common 에서 import
 # ---------------------------------------------------------------------------
-def _task_output_text(task: Task) -> str:
-    out = task.output
-    if out is None:
-        return ""
-    return getattr(out, "raw", None) or str(out)
 
 
 def _detect_default_endpoint(repo_url: str) -> str:
@@ -332,6 +331,8 @@ def run_release_workflow(
             process=Process.sequential,
             verbose=verbose,
         ).kickoff()
+        # 이슈 6 fix — LLM 본문 누락 자동 재시도 (Release 4 task)
+        retry_short_tasks_in_chain([release_task, changelog_task, update_task, distribution_task])
 
         release_decision = _task_output_text(release_task)
         changelog_entry = _task_output_text(changelog_task)

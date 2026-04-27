@@ -58,6 +58,10 @@ from src.agents.build_release import (
 )
 from src.agents.operations import run_python_package_in_sandbox
 from src.monitoring import get_langfuse_client
+from src.workflows._common import (
+    retry_short_tasks_in_chain,
+    task_output_text as _task_output_text,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -217,13 +221,8 @@ def _build_platform_tester_task(
 
 
 # ---------------------------------------------------------------------------
-# 헬퍼
+# 헬퍼 — _task_output_text 는 PR #29 부터 _common 에서 import
 # ---------------------------------------------------------------------------
-def _task_output_text(task: Task) -> str:
-    out = task.output
-    if out is None:
-        return ""
-    return getattr(out, "raw", None) or str(out)
 
 
 def _format_code_layout(code_files: list[Path]) -> str:
@@ -391,6 +390,8 @@ def run_build_workflow(
             process=Process.sequential,
             verbose=verbose,
         ).kickoff()
+        # 이슈 6 fix — LLM 본문 누락 자동 재시도 (Build 4 task)
+        retry_short_tasks_in_chain([dep_task, build_task, asset_task, installer_task])
 
         dependency_report = _task_output_text(dep_task)
         build_spec = _task_output_text(build_task)
@@ -415,6 +416,8 @@ def run_build_workflow(
                 process=Process.sequential,
                 verbose=verbose,
             ).kickoff()
+            # 이슈 6 fix — Platform Tester 단독 task 재시도
+            retry_short_tasks_in_chain([tester_task])
             platform_test_report = _task_output_text(tester_task)
         else:
             platform_test_report = (
