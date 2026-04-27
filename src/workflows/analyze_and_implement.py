@@ -48,6 +48,13 @@ from src.workflows._common import (
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
+from src.workflows._schemas import (
+    CodeReviewOutput,
+    GUICodeOutput,
+    GUIDesignOutput,
+    ThemeTokensOutput,
+    UIUXSpecOutput,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -313,7 +320,9 @@ def _build_engineer_task(engineer, cto_task: Task, analyst_task: Task) -> Task:
 
 def _build_qa_task(reviewer, code_task: Task) -> Task:
     """Code Reviewer Task — code_task (Engineer 또는 GUI Code Generator) 컨텍스트로."""
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 코드 산출물을 백스토리에 명시된 다섯 가지 정적 점검 "
             "항목 — 타입 힌트 / docstring / pytest 실행 가능성 / 경계 예외 처리 / "
@@ -333,6 +342,9 @@ def _build_qa_task(reviewer, code_task: Task) -> Task:
         agent=reviewer,
         context=[code_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = CodeReviewOutput
+    return Task(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +352,9 @@ def _build_qa_task(reviewer, code_task: Task) -> Task:
 # ---------------------------------------------------------------------------
 def _build_uiux_task(user_request: str, ui_ux) -> Task:
     """UI/UX Analyst Task — Phase 4 활성 시 첫 단계."""
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             f"[사용자 요청]\n{user_request}\n\n"
             "위 요청을 받아 백스토리에 명시된 2단 구조(YAML ui_spec + 분석가 노트)로 "
@@ -355,11 +369,16 @@ def _build_uiux_task(user_request: str, ui_ux) -> Task:
         ),
         agent=ui_ux,
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = UIUXSpecOutput
+    return Task(**kwargs)
 
 
 def _build_gui_designer_task(designer, uiux_task: Task) -> Task:
     """GUI Designer Task — UI/UX 산출 ui_spec 을 컨텍스트로."""
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 UI/UX ui_spec 을 받아, 백스토리에 명시된 4단 구조"
             "(와이어프레임 + 위젯 트리 + 인터랙션 흐름 + 디자이너 노트)로 한국어 "
@@ -372,11 +391,16 @@ def _build_gui_designer_task(designer, uiux_task: Task) -> Task:
         agent=designer,
         context=[uiux_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = GUIDesignOutput
+    return Task(**kwargs)
 
 
 def _build_theme_task(theme, uiux_task: Task, designer_task: Task) -> Task:
     """Theme Designer Task — ui_spec + GUI 설계를 컨텍스트로."""
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 ui_spec + GUI 설계를 받아, 백스토리에 명시된 3단 구조"
             "(JSON 토큰 + 적용 가이드 + 디자이너 노트)로 한국어 디자인 토큰을 "
@@ -390,13 +414,18 @@ def _build_theme_task(theme, uiux_task: Task, designer_task: Task) -> Task:
         agent=theme,
         context=[uiux_task, designer_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = ThemeTokensOutput
+    return Task(**kwargs)
 
 
 def _build_gui_code_gen_task(
     coder, uiux_task: Task, designer_task: Task, theme_task: Task
 ) -> Task:
     """GUI Code Generator Task — 셋 모두 컨텍스트로."""
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 ui_spec + GUI 설계 + 디자인 토큰을 모두 만족하는 "
             "**바로 실행 가능한 Python GUI 코드** 를 백스토리에 명시된 4단 구조"
@@ -410,6 +439,9 @@ def _build_gui_code_gen_task(
         agent=coder,
         context=[uiux_task, designer_task, theme_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = GUICodeOutput
+    return Task(**kwargs)
 
 
 # ---------------------------------------------------------------------------

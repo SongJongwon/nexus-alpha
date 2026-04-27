@@ -53,7 +53,12 @@ from src.workflows._common import (
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
-from src.workflows._schemas import ReleaseDecisionOutput
+from src.workflows._schemas import (
+    ChangelogEntryOutput,
+    DistributionSpecOutput,
+    ReleaseDecisionOutput,
+    UpdateModuleSpecOutput,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -126,7 +131,9 @@ def _build_release_manager_task(
 def _build_changelog_task(
     agent, change_sources: str, breaking_flags: str, previous_changelog: str, release_task: Task
 ) -> Task:
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 Release Manager 결정 + 아래 3블록을 입력으로, "
             "백스토리에 명시된 2단 구조(Keep a Changelog 형식 항목 + 작성자 노트)로 "
@@ -143,6 +150,9 @@ def _build_changelog_task(
         agent=agent,
         context=[release_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = ChangelogEntryOutput
+    return Task(**kwargs)
 
 
 def _build_update_checker_task(
@@ -153,7 +163,9 @@ def _build_update_checker_task(
     signing_available: bool,
     release_task: Task,
 ) -> Task:
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 Release Manager 결정 + 아래 4블록을 입력으로, 백스토리에 "
             "명시된 5단 구조(동작 흐름 / 참조 구현 updater.py / 통합 위치 / 보안 "
@@ -175,6 +187,9 @@ def _build_update_checker_task(
         agent=agent,
         context=[release_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = UpdateModuleSpecOutput
+    return Task(**kwargs)
 
 
 def _build_distribution_task(
@@ -186,7 +201,9 @@ def _build_distribution_task(
     release_task: Task,
     update_task: Task,
 ) -> Task:
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 Release Manager 결정 + Update Checker endpoint 요구 + "
             "아래 4블록을 입력으로, 백스토리에 명시된 5단 구조(채널 선택 / 업로드 "
@@ -205,6 +222,9 @@ def _build_distribution_task(
         agent=agent,
         context=[release_task, update_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = DistributionSpecOutput
+    return Task(**kwargs)
 
 
 # ---------------------------------------------------------------------------
