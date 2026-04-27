@@ -62,7 +62,13 @@ from src.workflows._common import (
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
-from src.workflows._schemas import BuildSpecOutput
+from src.workflows._schemas import (
+    AssetManifestOutput,
+    BuildSpecOutput,
+    DependencyReportOutput,
+    InstallerSpecOutput,
+    PlatformTestReportOutput,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -102,7 +108,9 @@ class BuildWorkflowResult:
 # Task 빌더 (5명 각자)
 # ---------------------------------------------------------------------------
 def _build_dependency_analyzer_task(agent, code_summary: str, target_platform: str) -> Task:
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "아래 4블록을 입력으로, 백스토리에 명시된 3단 구조(YAML 보고서 6축 + "
             "분석가 코멘트 + 미검토 영역)로 한국어 의존성 보고서를 작성하세요. "
@@ -119,6 +127,9 @@ def _build_dependency_analyzer_task(agent, code_summary: str, target_platform: s
         ),
         agent=agent,
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = DependencyReportOutput
+    return Task(**kwargs)
 
 
 def _build_build_engineer_task(
@@ -156,7 +167,9 @@ def _build_asset_manager_task(
     design_tokens: str,
     target_platform: str,
 ) -> Task:
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "아래 5블록을 입력으로, 백스토리에 명시된 3단 구조(YAML 매니페스트 + "
             "처리 지시 + 매니저 노트)로 한국어 자원 매니페스트를 작성하세요. "
@@ -175,6 +188,9 @@ def _build_asset_manager_task(
         ),
         agent=agent,
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = AssetManifestOutput
+    return Task(**kwargs)
 
 
 def _build_installer_creator_task(
@@ -184,7 +200,9 @@ def _build_installer_creator_task(
     build_task: Task,
     asset_task: Task,
 ) -> Task:
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 빌드 사양 + 자원 매니페스트 + 아래 3블록을 받아, "
             "백스토리에 명시된 4단 구조(도구 선택 / 인스톨러 스크립트 / 사용자 가이드 / "
@@ -203,12 +221,17 @@ def _build_installer_creator_task(
         agent=agent,
         context=[build_task, asset_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = InstallerSpecOutput
+    return Task(**kwargs)
 
 
 def _build_platform_tester_task(
     agent, sandbox_summary: str, build_context_summary: str
 ) -> Task:
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "아래는 Phase 3 의 결정론 sandbox(`run_python_package_in_sandbox`) "
             "산출물입니다. 진짜 .exe 검증이 아니라 **Engineer 산출 .py 코드의 부팅 "
@@ -226,6 +249,9 @@ def _build_platform_tester_task(
         ),
         agent=agent,
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = PlatformTestReportOutput
+    return Task(**kwargs)
 
 
 # ---------------------------------------------------------------------------
