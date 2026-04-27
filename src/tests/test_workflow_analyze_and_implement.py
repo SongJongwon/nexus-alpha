@@ -307,6 +307,77 @@ def test_parse_ui_ux_path_need_gui_wins_over_form_factor() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue 4 회귀 방지 (2026-04-22) — 4개 GUI 에이전트의 출력 규약 검증
+# ---------------------------------------------------------------------------
+def test_gui_agent_backstories_do_not_use_truncating_final_answer_pattern() -> None:
+    """4개 GUI 에이전트 backstory 가 본문 손실 패턴을 쓰지 않는지 정적 검증.
+
+    이슈 4 (PR 진행 중): backstory 가 `"마지막 줄은 반드시 Final Answer: <summary>"`
+    형식을 지시하면 LLM 이 본문을 Final Answer **앞** 에 두게 되고, CrewAI 의
+    파서는 **이후 텍스트만** 캡처하여 본문이 영구 손실됨.
+
+    교정 후에는 모든 backstory 가:
+      - "Final Answer: 라인에 요약 + 그 다음 줄부터 본문" 패턴을 사용하거나
+      - "마지막 줄 Final Answer" 패턴을 사용하지 *않아야* 함.
+
+    본 테스트는 위험 패턴의 정적 grep 으로 회귀를 차단.
+    """
+    from src.agents.planning.ui_ux_analyst import UIUX_ANALYST_BACKSTORY
+    from src.agents.design.gui_designer import GUI_DESIGNER_BACKSTORY
+    from src.agents.design.theme_designer import THEME_DESIGNER_BACKSTORY
+    from src.agents.design.gui_code_generator import GUI_CODE_GENERATOR_BACKSTORY
+
+    backstories = {
+        "UIUXAnalyst": UIUX_ANALYST_BACKSTORY,
+        "GUIDesigner": GUI_DESIGNER_BACKSTORY,
+        "ThemeDesigner": THEME_DESIGNER_BACKSTORY,
+        "GUICodeGenerator": GUI_CODE_GENERATOR_BACKSTORY,
+    }
+
+    DANGEROUS_PATTERN = "마지막 줄은 반드시 `Final Answer:`"
+    REQUIRED_MARKER = "출력 규약 (CRITICAL)"
+
+    for name, backstory in backstories.items():
+        assert DANGEROUS_PATTERN not in backstory, (
+            f"{name} backstory 가 본문 손실 패턴 ('{DANGEROUS_PATTERN}') 사용 중. "
+            "CrewAI 가 본문을 잃어버립니다 (이슈 4 회귀)."
+        )
+        assert REQUIRED_MARKER in backstory, (
+            f"{name} backstory 에 '{REQUIRED_MARKER}' 마커가 없음 — "
+            "이슈 4 교정 형식을 사용 중인지 확인 필요."
+        )
+
+
+def test_task_output_text_returns_short_raw_without_modification() -> None:
+    """_task_output_text 의 길이 fallback 은 *경고만* — raw 값은 그대로 반환.
+
+    이슈 4 의 fallback 은 production 환경에서 회귀를 surface 하기 위한 것 —
+    실제 본문 회수는 불가능 (CrewAI 가 이미 잃었음). raw 가 짧아도 그대로 반환
+    하여 호출자가 빈 산출을 명확히 인지하게 함.
+    """
+    from src.workflows.analyze_and_implement import _task_output_text
+
+    class _StubOutput:
+        raw = "framework=tkinter, files=1개"  # 28자 — 짧음
+
+    class _StubTask:
+        output = _StubOutput()
+
+    # raw 가 그대로 반환됨 (fallback 이 raw 를 변형하지 않음)
+    assert _task_output_text(_StubTask()) == "framework=tkinter, files=1개"
+
+
+def test_task_output_text_handles_none_output() -> None:
+    """task.output 이 None 이면 빈 문자열 반환 (안전성)."""
+    from src.workflows.analyze_and_implement import _task_output_text
+
+    class _StubTask:
+        output = None
+
+    assert _task_output_text(_StubTask()) == ""
+
+
+# ---------------------------------------------------------------------------
 # Phase 4 — enable_gui_branch=True E2E (FakeProvider → CLI 경로 fallback)
 # ---------------------------------------------------------------------------
 def test_run_with_build_branch_enabled_appends_build_artifacts(tmp_path) -> None:
