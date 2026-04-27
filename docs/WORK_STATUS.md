@@ -1,8 +1,8 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-27 (PR #25~27 머지 + PR #28 작성 중)
-> **현재 브랜치**: `phase5/e2e-4th-verification-issue5`
-> **테스트**: pytest **142 passed** (138 + PR #25 신규 3 + PR #27 신규 1)
+> **마지막 업데이트**: 2026-04-27 (PR #25~29 머지 + PR #30 작성 중)
+> **현재 브랜치**: `phase5/e2e-5th-verification-issue6`
+> **테스트**: pytest **154 passed** (138 + PR #25 신규 3 + PR #27 신규 1 + PR #29 신규 12)
 > **마지막 세션 로그**: [progress/session_log_20260421-22.md](./progress/session_log_20260421-22.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v5_built.md](./architecture/nexus_alpha_v5_built.md)
 
@@ -12,34 +12,38 @@
 
 | 영역 | 상태 |
 |---|---|
-| Phase 0~5 구축 | ✅ 완료 (27개 PR) |
+| Phase 0~5 구축 | ✅ 완료 (29개 PR) |
 | 메인 워크플로우 (`analyze_and_implement`) | ✅ 작동 |
 | GUI 분기 라우팅 | ✅ 작동 (PR #23 fix 검증 완료 — PR #24) |
 | GUI 코드 생성 본문 캡처 | ✅ **PR #25 머지** (이슈 4 해결, 2026-04-27) |
-| GUI 풀체인 ('계산기' → calculator.py 21,317자, py_compile 통과) | ✅ **첫 성공 + 안정화** (PR #28 4차 E2E) |
-| 비-GUI 16 에이전트 본문 캡처 | 🟡 **75% 해결** (PR #27 머지 — 12/16 정상, 4개 짧음) |
-| LLM 비결정적 컴플라이언스 | 🟡 **이슈 6 신규 발견** (PR #28 4차 E2E — prompt 만으론 100% 보장 안 됨) |
+| GUI 풀체인 ('계산기' → calculator.py 19~25k 자, py_compile 통과) | ✅ **안정화** (PR #28/30 5차 E2E 양 런 검증) |
+| 비-GUI 16 에이전트 본문 캡처 | 🟡 **75% 정체** (PR #27 머지 — 12/16, 5차 E2E 도 같음) |
+| LLM 비결정적 컴플라이언스 | 🟡 **방어선 1 효과 미미** (PR #29 머지 — 캡처율 75% 동일, 방어선 2 필요) |
 | 풀체인 E2E ('계산기' → setup.exe) | ❌ 미달성 (외부 도구 미통합) |
 
 ---
 
 ## 🔴 즉시 처리 필요 (Blocker)
 
-### 1. PR #28 4차 E2E 검증 결과 (작성 중)
+### 1. PR #30 5차 E2E 결과 (작성 중)
 
-- **브랜치**: `phase5/e2e-4th-verification-issue5`
-- **결과 문서**: [progress/e2e_4th_verification_post_pr27.md](./progress/e2e_4th_verification_post_pr27.md)
-- **검증 결과 요약**:
-  - ✅ 이슈 5 fix **75% 효과적** (7/10 비-GUI 에이전트 본문 캡처)
-  - ✅ GUI 풀체인 안정화: `calculator.py` 21,317자, py_compile 통과
-  - 🟡 **신규 이슈 6 발견** — LLM 비결정적 컴플라이언스 (4 에이전트 짧음 잔존)
+- **브랜치**: `phase5/e2e-5th-verification-issue6`
+- **결과 문서**: [progress/e2e_5th_verification_post_pr29.md](./progress/e2e_5th_verification_post_pr29.md)
+- **결과 요약**:
+  - ✅ 방어선 1 (auto-retry) 코드 정상 작동 (pytest 154 passed, E2E exit 0)
+  - 🟡 **캡처율 개선 미미** — 75% → 75% (양 런 모두 12/16)
+  - 🔴 BuildEngineer / ReleaseManager 는 *체계적* 짧은 출력 — 양 런에서 동일 형식 (1줄 요약)
 
-### 2. 이슈 6 수정 PR #29 (예정)
+### 2. PR #31 (예정) — 방어선 2 (structured output API)
 
-- **방어선 1 (적은 비용)**: `_task_output_text` 자동 재시도 (raw < 120자 시 task 재실행 1~2회)
-- **방어선 2 (근본 해결)**: structured output API 검토 (Anthropic tools / OpenAI response_format=json_schema)
-- **대상 잔존 짧음 에이전트**: BuildEngineer / ReleaseManager / DistributionAgent + UIUXAnalyst (PR #25 후 회귀)
-- **선결 조건**: PR #28 머지 후 진행
+- **이유**: 방어선 1 수학적 한계 — systematic failure 비중이 커 단순 재시도로 회복 불가
+- **옵션 A**: CrewAI 1.14.1 `output_pydantic` 호환성 검토 → 사용 가능하면 1~2 에이전트 시범
+- **옵션 B**: Anthropic SDK `tools` 강제 호출 (CrewAI 우회) — 옵션 A 안되는 경우
+- **검증**: 6차 E2E 로 캡처율 75% → 95%+ 도달 측정
+
+### 3. WORK_STATUS §4 (PyInstaller 통합) 평행 시작 가능
+
+- 현재 GUI 사슬은 사양 수준 안정 → 외부 도구 통합 작업은 이슈 6 와 독립적 진행 가능
 
 ---
 
@@ -175,7 +179,8 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 | v4 조직도 (9 본부 24명) | [architecture/nexus_alpha_org_v4.md](./architecture/nexus_alpha_org_v4.md) |
 | 최근 세션 로그 (2026-04-21~22) | [progress/session_log_20260421-22.md](./progress/session_log_20260421-22.md) |
 | E2E 재재검증 (2026-04-27, 이슈 5 발견) | [progress/e2e_rereverification_post_pr25.md](./progress/e2e_rereverification_post_pr25.md) |
-| **E2E 4차 검증** (2026-04-27, 이슈 6 발견) | [progress/e2e_4th_verification_post_pr27.md](./progress/e2e_4th_verification_post_pr27.md) |
+| E2E 4차 검증 (2026-04-27, 이슈 6 발견) | [progress/e2e_4th_verification_post_pr27.md](./progress/e2e_4th_verification_post_pr27.md) |
+| **E2E 5차 검증** (2026-04-27, 방어선 1 효과 측정) | [progress/e2e_5th_verification_post_pr29.md](./progress/e2e_5th_verification_post_pr29.md) |
 | Phase 1 완료 보고서 | [progress/phase1_complete.md](./progress/phase1_complete.md) |
 | Phase 2 P1 완료 보고서 | [progress/phase2_priority1_complete.md](./progress/phase2_priority1_complete.md) |
 | Phase 2 P2 완료 보고서 | [progress/phase2_priority2_complete.md](./progress/phase2_priority2_complete.md) |
@@ -185,13 +190,15 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 
 ## 🎯 추천 다음 액션 순서
 
-1. ~~**이슈 4 PR 생성** → 리뷰 → main 머지~~ ✅ PR #25 머지
-2. ~~**E2E 재재검증**~~ ✅ PR #26 머지 — 이슈 5 발견
-3. ~~**PR #27 (이슈 5 수정)** — 비-GUI 16 에이전트 backstory + 회귀 테스트~~ ✅ PR #27 머지
-4. ~~**4차 E2E** — 16 에이전트 본문 캡처 확인~~ ✅ 75% 확인 (이슈 6 발견)
-5. **PR #28**: 4차 E2E 결과 + 이슈 6 보고 ← **현재**
-6. **PR #29 (예정)**: 이슈 6 수정 — `_task_output_text` 자동 재시도 또는 structured output
-7. 이후 → 작업 #3 (CLI 경로 E2E) 또는 #4 (PyInstaller 통합) 중 선택
+1. ~~**이슈 4 PR 생성**~~ ✅ PR #25 머지
+2. ~~**E2E 재재검증**~~ ✅ PR #26 — 이슈 5 발견
+3. ~~**이슈 5 수정**~~ ✅ PR #27 머지
+4. ~~**4차 E2E**~~ ✅ PR #28 — 75% 확인 + 이슈 6 발견
+5. ~~**이슈 6 방어선 1 (auto-retry)**~~ ✅ PR #29 머지
+6. ~~**5차 E2E**~~ ✅ PR #30 — 방어선 1 효과 미미 (75% 정체) ← **현재**
+7. **PR #31 (예정)**: 방어선 2 (structured output API) — CrewAI `output_pydantic` 또는 Anthropic SDK tools
+8. **PR #31 사후 6차 E2E** — 캡처율 95%+ 달성 측정
+9. **WORK_STATUS §4 (PyInstaller 통합)** — 이슈 6 와 독립 진행 가능 (병렬 OK)
 
 ---
 
