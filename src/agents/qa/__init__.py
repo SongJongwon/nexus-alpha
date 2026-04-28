@@ -6,6 +6,7 @@
     from src.agents.qa import create_code_reviewer_agent
     from src.agents.qa import create_code_qa_agent, run_code_qa
     from src.agents.qa import create_functional_test_agent, run_test_cases
+    from src.agents.qa import create_gui_test_agent, run_gui_test
 """
 
 from .code_qa_agent import (
@@ -46,6 +47,23 @@ from .functional_test_executor import (
     format_functional_test_result_for_task,
     run_test_cases,
 )
+from .gui_test_agent import (
+    GUI_TEST_AGENT_BACKSTORY,
+    GUI_TEST_AGENT_GOAL,
+    GUI_TEST_AGENT_NAME,
+    GUI_TEST_AGENT_ROLE,
+    create_gui_test_agent,
+)
+from .gui_test_executor import (
+    DEFAULT_VISION_MODEL,
+    DEFAULT_VISION_PROMPT,
+    GUITestResult,
+    VisionAnalysis,
+    analyze_screenshot,
+    format_gui_test_result_for_task,
+    launch_and_capture,
+    run_gui_test,
+)
 
 __all__ = [
     # Code Reviewer (정적 분석, PR #25)
@@ -81,4 +99,19 @@ __all__ = [
     "TestCaseResult",
     "format_functional_test_result_for_task",
     "run_test_cases",
+    # GUI Test Agent (시각 검증, PR #44)
+    "GUI_TEST_AGENT_BACKSTORY",
+    "GUI_TEST_AGENT_GOAL",
+    "GUI_TEST_AGENT_NAME",
+    "GUI_TEST_AGENT_ROLE",
+    "create_gui_test_agent",
+    # GUI Test Executor (결정론적 도구, PR #44)
+    "DEFAULT_VISION_MODEL",
+    "DEFAULT_VISION_PROMPT",
+    "GUITestResult",
+    "VisionAnalysis",
+    "analyze_screenshot",
+    "format_gui_test_result_for_task",
+    "launch_and_capture",
+    "run_gui_test",
 ]
