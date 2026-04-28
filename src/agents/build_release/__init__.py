@@ -52,6 +52,11 @@ from .asset_manager import (
     create_asset_manager_agent,
 )
 from .build_executor import ExecuteResult, execute_pyinstaller
+from .distribution_executor import (
+    PublishResult,
+    build_sha256_manifest,
+    execute_gh_release,
+)
 from .build_engineer import (
     BUILD_ENGINEER_BACKSTORY,
     BUILD_ENGINEER_GOAL,
@@ -143,6 +148,7 @@ __all__ = [
     "PLATFORM_TESTER_ROLE",
     "ExecuteResult",
     "PlatformTestResult",
+    "PublishResult",
     "RELEASE_MANAGER_BACKSTORY",
     "RELEASE_MANAGER_GOAL",
     "RELEASE_MANAGER_NAME",
@@ -160,6 +166,8 @@ __all__ = [
     "create_platform_tester_agent",
     "create_release_manager_agent",
     "create_update_checker_agent",
+    "build_sha256_manifest",
+    "execute_gh_release",
     "execute_pyinstaller",
     "format_platform_test_result_for_task",
     "test_executable_in_sandbox",
