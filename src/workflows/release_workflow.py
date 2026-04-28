@@ -48,6 +48,12 @@ from src.agents.build_release import (
     create_release_manager_agent,
     create_update_checker_agent,
 )
+from src.agents.build_release.build_executor import ExecuteResult
+from src.agents.build_release.distribution_executor import (
+    PublishResult,
+    build_sha256_manifest,
+    execute_gh_release,
+)
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
     retry_short_tasks_in_chain,
@@ -82,6 +88,9 @@ class ReleaseWorkflowResult:
         saved_files: 산출 파일들 (30_~33_ prefix). workflow_dir 가 None 이면 빈 리스트.
         previous_version: 입력 echo (참고용).
         target_platform: 입력 echo.
+        publish_result: PR #39 — 실 ``gh release create`` 호출 결과.
+            ``enable_publish=True`` 이고 build 산출 .exe 가 제공됐을 때만 채워짐.
+            그 외엔 None.
     """
 
     release_decision: str
@@ -91,6 +100,7 @@ class ReleaseWorkflowResult:
     saved_files: list[Path] = field(default_factory=list)
     previous_version: str = ""
     target_platform: str = "windows"
+    publish_result: Optional["PublishResult"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +276,10 @@ def run_release_workflow(
     signing_available: bool = False,
     privacy_level: str = "public",
     workflow_dir: Optional[Path] = None,
+    enable_publish: bool = False,
+    publish_as_draft: bool = True,
+    publish_timeout_sec: int = 120,
+    executor_result: Optional[ExecuteResult] = None,
     verbose: bool = False,
 ) -> ReleaseWorkflowResult:
     """4-agent 릴리스 사슬을 한 번에 실행. Phase 4.5 산출물 직후 호출 가정.
@@ -380,6 +394,44 @@ def run_release_workflow(
                 path.write_text(content, encoding="utf-8")
                 saved.append(path)
 
+        # PR #39 — GitHub Release 자동 업로드 (enable_publish=True 일 때만)
+        publish_result: Optional[PublishResult] = None
+        if (
+            enable_publish
+            and executor_result is not None
+            and executor_result.success
+            and executor_result.exe_path is not None
+            and executor_result.sha256
+            and repo_url
+        ):
+            tag, title, notes = _parse_release_metadata(
+                release_decision=release_decision,
+                changelog_entry=changelog_entry,
+                previous_version=previous_version,
+            )
+            # SHA256 manifest 생성
+            manifest_path = build_sha256_manifest(
+                executor_result.exe_path, executor_result.sha256
+            )
+            files_to_upload = [executor_result.exe_path, manifest_path]
+            publish_result = execute_gh_release(
+                repo=repo_url,
+                tag=tag,
+                title=title,
+                notes_body=notes,
+                files_to_upload=files_to_upload,
+                draft=publish_as_draft,
+                timeout_sec=publish_timeout_sec,
+            )
+            # 34_publish_result.md 저장
+            if workflow_dir is not None:
+                publish_md = workflow_dir / "34_publish_result.md"
+                publish_md.write_text(
+                    _format_publish_result_md(publish_result),
+                    encoding="utf-8",
+                )
+                saved.append(publish_md)
+
         return ReleaseWorkflowResult(
             release_decision=release_decision,
             changelog_entry=changelog_entry,
@@ -388,8 +440,76 @@ def run_release_workflow(
             saved_files=saved,
             previous_version=previous_version,
             target_platform=target_platform,
+            publish_result=publish_result,
         )
 
     finally:
         monitor.end_trace()
         monitor.flush()
+
+
+def _parse_release_metadata(
+    *, release_decision: str, changelog_entry: str, previous_version: str
+) -> tuple[str, str, str]:
+    """Release Manager + Changelog Generator 산출에서 tag / title / notes 추출.
+
+    매우 단순한 휴리스틱:
+        - tag: release_decision 의 첫 줄에서 ``tag=v<X.Y.Z>`` 추출, 실패 시 ``v0.0.0``
+        - title: ``Release {tag} — {app_name}`` (간단한 default)
+        - notes: changelog_entry 전체 (Keep a Changelog markdown)
+    """
+    import re as _re
+
+    # tag 추출
+    tag = "v0.0.0"
+    m = _re.search(r"tag\s*=\s*(v[\d.]+)", release_decision)
+    if m:
+        tag = m.group(1)
+    else:
+        m = _re.search(r"version\s*=\s*([\d.]+)", release_decision)
+        if m:
+            tag = f"v{m.group(1)}"
+
+    title = f"Release {tag}"
+    notes = changelog_entry or "(자동 생성)"
+    return tag, title, notes
+
+
+def _format_publish_result_md(result: PublishResult) -> str:
+    """PublishResult → 34_publish_result.md 형식 markdown."""
+    lines = ["# GitHub Release 업로드 결과", ""]
+    lines.append(f"**상태**: {'✅ SUCCESS' if result.success else '🔴 FAILED'}")
+    lines.append(f"**Tag**: `{result.tag}`")
+    lines.append(f"**Draft**: {'예' if result.is_draft else '아니오 (published)'}")
+    lines.append(f"**Exit Code**: `{result.exit_code}`")
+    lines.append(f"**Elapsed**: {result.elapsed_sec:.2f}초")
+    if result.release_url:
+        lines.append("")
+        lines.append(f"**Release URL**: {result.release_url}")
+    if result.download_urls:
+        lines.append("")
+        lines.append("**다운로드 URL**:")
+        for url in result.download_urls:
+            lines.append(f"- {url}")
+    if result.error_message:
+        lines.append("")
+        lines.append(f"**에러 메시지**: {result.error_message}")
+    if result.command:
+        lines.append("")
+        lines.append("## 실행 명령")
+        lines.append("```")
+        lines.append(" ".join(result.command))
+        lines.append("```")
+    if result.stdout:
+        lines.append("")
+        lines.append("## stdout (tail)")
+        lines.append("```")
+        lines.append(result.stdout)
+        lines.append("```")
+    if result.stderr:
+        lines.append("")
+        lines.append("## stderr (tail)")
+        lines.append("```")
+        lines.append(result.stderr)
+        lines.append("```")
+    return "\n".join(lines) + "\n"

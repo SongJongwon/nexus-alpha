@@ -124,6 +124,8 @@ class WorkflowResult:
     distribution_spec: str = ""
     # PR #36/#37 — PyInstaller executor 결과 (enable_executor=True 시만)
     executor_result: object = None  # ExecuteResult | None — circular import 회피용 object
+    # PR #39 — GitHub Release publish 결과 (enable_publish=True 시만)
+    publish_result: object = None  # PublishResult | None — 동일 사유
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +485,9 @@ def run_analyze_and_implement(
     privacy_level: str = "public",
     enable_executor: bool = False,
     executor_timeout_sec: int = 300,
+    enable_publish: bool = False,
+    publish_as_draft: bool = True,
+    publish_timeout_sec: int = 120,
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -661,21 +666,36 @@ def run_analyze_and_implement(
             # app_short_name 휴리스틱 — UI/UX assumptions 또는 기본값
             app_short_name = "NexusApp"
 
+            # PR #36+39 — executor_result 가 있으면 artifact_summary 에 실 .exe 정보 포함
+            executor_result = result.executor_result
+            if executor_result is not None and getattr(executor_result, "success", False):
+                artifact_summary_text = (
+                    f"build_executor 산출 — {executor_result.exe_path.name}, "
+                    f"{executor_result.exe_size_bytes:,} bytes ({executor_result.exe_size_bytes / (1024*1024):.2f} MB), "
+                    f"sha256={executor_result.sha256[:16]}..."
+                )
+            else:
+                artifact_summary_text = (
+                    "Phase 4.5 빌드 사양 산출 — 실제 .exe 미생성 (외부 자동화 위임)"
+                )
+
             release_result = run_release_workflow(
                 previous_version=previous_version,
                 change_summary=change_summary,
                 change_sources=change_summary,  # 단일 패스라 history 부재 — summary 재사용
                 breaking_flags="none",
                 build_summary=build_summary,
-                artifact_summary=(
-                    f"Phase 4.5 빌드 사양 산출 — 실제 .exe 미생성 (외부 자동화 위임)"
-                ),
+                artifact_summary=artifact_summary_text,
                 target_platform=target_platform,
                 repo_url=repo_url,
                 app_short_name=app_short_name,
                 signing_available=signing_available,
                 privacy_level=privacy_level,
                 workflow_dir=result.saved_dir,
+                enable_publish=enable_publish,
+                publish_as_draft=publish_as_draft,
+                publish_timeout_sec=publish_timeout_sec,
+                executor_result=executor_result,
                 verbose=verbose,
             )
             # Release 결과 merge
@@ -683,6 +703,9 @@ def run_analyze_and_implement(
             result.changelog_entry = release_result.changelog_entry
             result.update_module_spec = release_result.update_module_spec
             result.distribution_spec = release_result.distribution_spec
+            # PR #39 — publish 결과 (있을 때만)
+            if release_result.publish_result is not None:
+                result.publish_result = release_result.publish_result
 
         return result
 
