@@ -22,6 +22,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -215,6 +217,113 @@ def test_code_reviewer_agent_runs_through_crew_with_fake_provider() -> None:
     output_text = getattr(result, "raw", None) or str(result)
 
     assert output_text.strip(), "Code Reviewer kickoff 결과가 비어 있으면 안 된다"
+    assert "FakeProvider가 반환한 고정 응답" in output_text
+
+
+# ---------------------------------------------------------------------------
+# PR #45 — review_with_execution 모드 신규 검증
+# ---------------------------------------------------------------------------
+
+
+def test_create_code_reviewer_default_mode_is_review_only() -> None:
+    """기본 mode='review_only' — 기존 호출자 0개 영향 (회귀 방지 핵심)."""
+    from src.agents.qa.code_reviewer import (
+        CODE_REVIEWER_BACKSTORY,
+        create_code_reviewer_agent,
+    )
+
+    agent = create_code_reviewer_agent(verbose=False)
+    # backstory 가 정확히 정적 분석 전용 상수
+    assert agent.backstory == CODE_REVIEWER_BACKSTORY
+
+
+def test_create_code_reviewer_with_execution_uses_extended_backstory() -> None:
+    """mode='review_with_execution' 일 때 확장된 backstory 사용."""
+    from src.agents.qa.code_reviewer import (
+        CODE_REVIEWER_BACKSTORY,
+        CODE_REVIEWER_BACKSTORY_WITH_EXECUTION,
+        create_code_reviewer_agent,
+    )
+
+    agent = create_code_reviewer_agent(verbose=False, mode="review_with_execution")
+    assert agent.backstory == CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+    # 확장 backstory 는 정적 backstory 를 *포함* (계승)
+    assert CODE_REVIEWER_BACKSTORY in agent.backstory
+    # 확장 부분 marker 존재
+    assert "[PR #45]" in agent.backstory
+    assert "review_with_execution" in agent.backstory
+
+
+def test_create_code_reviewer_invalid_mode_raises() -> None:
+    """알 수 없는 mode 값은 ValueError."""
+    from src.agents.qa.code_reviewer import create_code_reviewer_agent
+
+    with pytest.raises(ValueError, match="unknown mode"):
+        create_code_reviewer_agent(verbose=False, mode="unknown_mode")  # type: ignore[arg-type]
+
+
+def test_extended_backstory_contains_pytest_ruff_integration() -> None:
+    """확장 backstory 에 CodeQAResult / pytest / ruff 통합 안내 명시."""
+    from src.agents.qa.code_reviewer import CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+
+    bs = CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+    assert "CodeQAResult" in bs
+    assert "pytest" in bs.lower()
+    assert "ruff" in bs.lower()
+    assert "BLOCKER" in bs and "MAJOR" in bs and "MINOR" in bs
+
+
+def test_extended_backstory_preserves_final_answer_first_pattern() -> None:
+    """확장 backstory 도 출력 규약 (Final Answer 우선) 유지 — 이슈 4 회귀 방지."""
+    from src.agents.qa.code_reviewer import CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+
+    bs = CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+    # 정적 backstory 의 출력 규약을 그대로 계승해야 함
+    assert "출력 규약 (CRITICAL)" in bs
+    assert "Final Answer:" in bs
+
+
+def test_extended_backstory_does_not_introduce_dangerous_patterns() -> None:
+    """확장 backstory 에 본문 손실 유발 패턴이 *재도입* 되지 않았는지 (이슈 4 회귀 방지)."""
+    from src.agents.qa.code_reviewer import CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+
+    bs = CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+    # PR #25 회귀 테스트와 동일 패턴 차단
+    DANGEROUS_PATTERNS = (
+        "마지막 줄은 반드시 `Final Answer:`",
+        "마지막 줄에 반드시 `Final Answer:`",
+    )
+    for pat in DANGEROUS_PATTERNS:
+        assert pat not in bs, f"확장 backstory 에 위험 패턴 재도입: {pat!r}"
+
+
+def test_review_with_execution_runs_through_crew_with_fake_provider() -> None:
+    """확장 모드도 FakeProvider 로 AgentFinish 정상 수렴."""
+    from src.agents.qa.code_reviewer import create_code_reviewer_agent
+
+    reviewer = create_code_reviewer_agent(verbose=False, mode="review_with_execution")
+    assert reviewer.llm.backend_provider.name == "fake"
+
+    task = Task(
+        description=(
+            "다음은 Engineer 산출물 + CodeQAResult 입니다.\n\n"
+            f"--- 산출물 ---\n{ENGINEER_SAMPLE_OUTPUT}\n--- 끝 ---\n\n"
+            "--- CodeQAResult ---\n"
+            "# Code QA Result — overall_success=False, elapsed=0.6s\n"
+            "## pytest\n"
+            "  [PYTEST FAIL] passed=2 failed=1 errors=0 skipped=0 (exit=1, 0.5s)\n"
+            "## ruff\n"
+            "  [RUFF VIOLATIONS] 3 위반 (exit=1, 0.1s)\n"
+            "--- 끝 ---\n\n"
+            "정적 점검과 실행 결과를 모두 종합한 5단 보고서를 작성하세요."
+        ),
+        expected_output="정적 + 실행 통합 5단 보고서. Final Answer 가 본문보다 앞.",
+        agent=reviewer,
+    )
+    result = Crew(agents=[reviewer], tasks=[task], verbose=False).kickoff()
+    output_text = getattr(result, "raw", None) or str(result)
+
+    assert output_text.strip(), "Reviewer (with_execution) kickoff 결과가 비어 있으면 안 된다"
     assert "FakeProvider가 반환한 고정 응답" in output_text
 
 
