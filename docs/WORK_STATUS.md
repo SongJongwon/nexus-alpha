@@ -21,7 +21,7 @@
 | LLM 비결정적 컴플라이언스 (이슈 6) | ✅ **close** (방어선 2 + LLM variance 자연 회복) |
 | 🎯 자연어 → `.exe` 풀체인 (M4.7) | ✅ **첫 자동 생성 성공** (PR #38 — Calculator.exe 10.68 MB) |
 | **🎯 다운로드 가능 setup.exe URL (M5)** | ✅ **사실상 완성** (PR #39 — gh release smoke test 4.6초, draft mode) |
-| Published mode E2E 검증 | ⏳ PR #40 예정 (9차 E2E, `enable_publish=True`) |
+| Published mode E2E 검증 | ⏳ PR #41 예정 (9차 E2E, `enable_publish=True`) |
 
 ---
 
@@ -62,7 +62,7 @@ Download URLs:
 - ✅ **M4.5 (수동 build_executor)** — PR #36 ⭐
 - ✅ **M4.7 (자연어 → `.exe` 자동 풀체인)** — PR #38 ⭐
 - ✅ **M5 (다운로드 가능 setup.exe URL)** — PR #39 ⭐ (draft mode smoke test)
-- ⏳ M5 published mode E2E 검증 — PR #40 예정
+- ⏳ M5 published mode E2E 검증 — PR #41 예정
 
 ---
 
@@ -78,11 +78,11 @@ Download URLs:
 **상세**: [progress/session_log_20260427.md](./progress/session_log_20260427.md) +
 [progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md)
 
-## 🎯 다음 마일스톤 — PR #40 9차 E2E (M5 published mode 검증)
+## 🎯 다음 마일스톤 — PR #41 9차 E2E (M5 published mode 검증)
 
 M5 가 PR #39 smoke test 로 사실상 완성. 남은 검증: **풀체인 E2E 에서 자동 publish**.
 
-### PR #40 (예정) — 9차 E2E (`enable_publish=True`)
+### PR #41 (예정) — 9차 E2E (`enable_publish=True`)
 - **목적**: `enable_executor=True` + `enable_publish=True` 활성으로 자연어 → 다운로드 URL 풀체인 첫 자동 검증
 - **소요 예상**: ~30분 (E2E 27분 + publish 4초)
 - **측정**:
@@ -93,8 +93,8 @@ M5 가 PR #39 smoke test 로 사실상 완성. 남은 검증: **풀체인 E2E �
 - **결과 양호 시**: published mode 별도 옵션 추가 검토 (PR #41+)
 
 ### 후속 마일스톤
-- **PR #41** (조건부): Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
-- **PR #42** (조건부): CLI 경로 E2E 검증 (데이터 분석 시나리오)
+- **PR #42** (조건부): Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
+- **PR #43** (조건부): CLI 경로 E2E 검증 (데이터 분석 시나리오)
 - **Phase 6 착수** (조건부): Track B 시작 (5명 추가 — Web Scraping / Desktop Auto / API / Data Parser / DevOps)
 
 ---
@@ -270,14 +270,15 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 14. ~~PR #38 — 8차 E2E (자연어 → .exe 풀체인 자동)~~ ✅ **M4.7 달성**
 15. ~~PR #39 — GitHub Release 자동 업로드~~ ✅ **M5 사실상 완성** ← **현재**
 
-### 다음 작업 (PR #40~)
+### 다음 작업 (PR #40 = 본 세션 로그 + PR #41~)
 
-16. **PR #40 — 9차 E2E (`enable_publish=True`, M5 풀체인 검증)** ← **다음**
+16. ~~PR #40 — 세션 로그 (2026-04-28) + WORK_STATUS 정리~~ ✅ 본 PR
+17. **PR #41 — 9차 E2E (`enable_publish=True`, M5 풀체인 검증)** ← **다음**
     - 자연어 → 다운로드 가능 setup.exe URL 첫 풀체인 자동 검증
     - 소요 ~30분 (E2E 27분 + publish 4초)
-17. (조건부) **PR #41 — Update Checker 실 통합** (산출 calculator.py 에 updater.py 임포트)
-18. (조건부) **PR #42 — CLI 경로 E2E 검증** (데이터 분석 시나리오)
-19. (조건부) **Phase 6 착수** — Track B 시작 (5명 추가)
+18. (조건부) **PR #42 — Update Checker 실 통합** (산출 calculator.py 에 updater.py 임포트)
+19. (조건부) **PR #43 — CLI 경로 E2E 검증** (데이터 분석 시나리오)
+20. (조건부) **Phase 6 착수** — Track B 시작 (5명 추가)
 
 ---
 

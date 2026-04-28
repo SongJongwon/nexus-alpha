@@ -240,7 +240,7 @@ PR #38 의 calculator.exe 로 검증 (draft mode):
 | **M4.5** — **수동 build_executor** | ✅ | **PR #36** ⭐ |
 | **M4.7** — **자연어 → `.exe` 자동 풀체인** | ✅ | **PR #38** ⭐ |
 | **M5** — **다운로드 가능 setup.exe URL** | ✅ **사실상 완성** (draft) | **PR #39** ⭐ |
-| M5+ published mode 풀체인 검증 | ⏳ PR #40 예정 | — |
+| M5+ published mode 풀체인 검증 | ⏳ PR #41 예정 | — |
 
 ---
 
@@ -293,7 +293,7 @@ forward reference 무효화. 후속 commit 으로 정합성 정리. **교훈**: 
 ### A. M5 published mode 미검증
 
 PR #39 가 draft mode 만 smoke test 완료. published mode (실제 public release) 는
-PR #40 9차 E2E 에서 검증 예정. draft → published 전환 흐름은 사용자가 GitHub UI
+PR #41 9차 E2E 에서 검증 예정. draft → published 전환 흐름은 사용자가 GitHub UI
 에서 수동 또는 `gh release edit --draft=false` 호출로 가능하나 자동화는 미구현.
 
 ### B. PR 번호 vs 문서 forward reference
@@ -306,14 +306,14 @@ architecture 문서들에 "PR #38 (예정 9차 E2E)" 등 미래 PR 명시 — �
 방어선 2 (output_pydantic) 가 CrewAI converter 동작에 의존. 메이저 업그레이드 시
 호환성 재검증 필요.
 
-### D. Update Checker 산출 코드 통합 (PR #40+ 잔여)
+### D. Update Checker 산출 코드 통합 (PR #41+ 잔여)
 
 산출 calculator.py 에 updater.py 임포트 미구현. 5원칙 (HTTPS / TLS / 채널 allowlist
 / SHA256 / no auto-apply) 코드 통합은 별도 PR 필요.
 
 ---
 
-## 🎯 다음 액션 — PR #40 9차 E2E (M5 published mode 검증)
+## 🎯 다음 액션 — PR #41 9차 E2E (M5 published mode 검증)
 
 ### 목적
 
@@ -330,7 +330,7 @@ result = run_analyze_and_implement(
     enable_build_branch=True,
     enable_release_branch=True,
     enable_executor=True,        # PR #38 부터
-    enable_publish=True,         # ⭐ PR #40 부터
+    enable_publish=True,         # ⭐ PR #41 부터
     publish_as_draft=True,       # 안전 default 유지
     repo_url="https://github.com/SongJongwon/nexus-alpha",
     previous_version="0.1.0",
@@ -345,12 +345,12 @@ result = run_analyze_and_implement(
   - `result.publish_result.release_url` 발급 확인
   - `result.publish_result.download_urls` 2개 (.exe + .sha256.txt)
   - GitHub UI 에서 draft release 확인 (인증 사용자만)
-- 결과 양호 시: published mode 별도 옵션 추가 검토 (PR #41+)
+- 결과 양호 시: published mode 별도 옵션 추가 검토 (PR #42+)
 
 ### 후속 마일스톤
 
-- **PR #41** (조건부): Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
-- **PR #42** (조건부): CLI 경로 E2E 검증 (데이터 분석 시나리오)
+- **PR #42** (조건부): Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
+- **PR #43** (조건부): CLI 경로 E2E 검증 (데이터 분석 시나리오)
 - **Phase 6 착수**: Track B 시작 (5명 추가 — Web Scraping / Desktop Auto / API / Data Parser / DevOps)
 
 ---
