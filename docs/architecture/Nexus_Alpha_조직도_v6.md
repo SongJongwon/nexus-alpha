@@ -408,7 +408,7 @@ src/workflows/
 | ✅ Phase 4.5 | 완료 | 빌드 사양 산출 |
 | ✅ Phase 5 | 완료 | 배포 자동화 사양 |
 | ✅ **PR #36** | **완료** | **외부 도구 첫 호출 + 첫 `.exe` 산출** |
-| 🔄 Phase 5 풀체인 (PR #37~) | 진행 중 | E2E 자연어 → `.exe` 자동 생성 |
+| 🔄 Phase 5 풀체인 (PR #38~) | 진행 중 | E2E 자연어 → `.exe` 자동 생성 |
 | ⬜ PR #38+ | 예정 | GitHub Release 자동 업로드 (gh release create) |
 
 ### Track B: 업무 자동화 완성 (목표: 46명 완성)

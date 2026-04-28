@@ -154,7 +154,7 @@ PR #36 부터 **실제 `.exe` 가 자동 생성**됩니다:
 ### E2E 검증 7회 누적 (PR #21-34)
 
 ```python
-# 8차 E2E 진행 중 (PR #37) — enable_executor=True 추가
+# 8차 E2E 진행 중 (PR #38) — enable_executor=True 추가
 result = run_analyze_and_implement(
     "계산기 만들어줘",
     enable_gui_branch=True,
@@ -190,7 +190,7 @@ result = run_analyze_and_implement(
 ✅ CI 누적 실패 해결 (PR #22)
 ✅ E2E 이슈 4/5/6 close (PR #23~34)
 ✅ PR #36 — PyInstaller 실제 호출 통합 (첫 .exe 산출)
-✅ PR #37 — 8차 E2E 풀체인 검증 진행 중 (자연어 → calculator.exe)
+✅ PR #38 — 8차 E2E 풀체인 검증 진행 중 (자연어 → calculator.exe)
 ─────────
 Track A 완성 = 23명 구현 + 1도구 = M4.5 달성 ✅
 ```
@@ -210,10 +210,10 @@ Track B 완성 = 46명 완성 = 상용 수준
 
 ## 5. Track A: .exe 생성기 → ✅ **완성**
 
-### 8차 E2E 검증 흐름 (PR #37 진행 중)
+### 8차 E2E 검증 흐름 (PR #38 진행 중)
 
 ```python
-# scripts/run_e2e_verification.py — PR #37 부터
+# scripts/run_e2e_verification.py — PR #38 부터
 result = run_analyze_and_implement(
     "계산기 만들어줘",
     enable_gui_branch=True,
@@ -395,7 +395,7 @@ PR #36 부터:
 | Phase 5 워크플로우 | ✅ 완료 | 0 | 23 | 🎯 **Track A 도달** | 138 |
 | **PR #25-34 (이슈 close)** | ✅ **완료** | 0 | **23** | **이슈 4/5/6 close** | **184** |
 | **PR #36 (외부 도구)** | ✅ **완료** | 0 + **1도구** | **23 + 1도구** | 🎯 **첫 `.exe` 산출** | **199** |
-| 🔄 PR #37 (8차 E2E) | 진행 중 | 0 | 23 + 1도구 | 자연어 → `.exe` 풀체인 | 199 |
+| 🔄 PR #38 (8차 E2E) | 진행 중 | 0 | 23 + 1도구 | 자연어 → `.exe` 풀체인 | 199 |
 | Phase 6 | ⬜ | +5 | 28 | 실행 엔진 확장 | - |
 | Phase 7 | ⬜ | +4 | 32 | 품질·보안 강화 | - |
 | Phase 8 | ⬜ | +2 | 34 | C-Level 완성 | - |
@@ -506,9 +506,9 @@ PR #36 부터:
 
 | 우선순위 | 작업 | 비고 |
 |---|---|---|
-| 🟡 단기 | **PR #37 — 8차 E2E** (자연어 → `.exe` 풀체인 검증) | 진행 중, 8차 E2E 백그라운드 실행 |
-| 🟡 단기 | **PR #38 — GitHub Release 자동 업로드** (gh release create) | Track A 풀체인 완성 |
-| 🟡 단기 | **PR #39 — Update Checker 실제 통합** | 산출 코드에 updater.py 임포트 |
+| 🟡 단기 | **PR #38 — 8차 E2E** (자연어 → `.exe` 풀체인 검증) | 진행 중, 8차 E2E 백그라운드 실행 |
+| 🟡 단기 | **PR #39 — GitHub Release 자동 업로드** (gh release create) | Track A 풀체인 완성 |
+| 🟡 단기 | **PR #40 — Update Checker 실제 통합** | 산출 코드에 updater.py 임포트 |
 | 🟢 중기 | Phase 6 시작 (Track B 착수) | 클로드 코드 주간 한도 리셋 후 |
 | 🟢 중기 | Streamlit UI 추가 (v1 계획 항목) | Phase 10 일부 |
 | 🟢 중기 | Phase 10 Tauri UI + HITL 설계 | Track B 완성 후 |
@@ -530,10 +530,10 @@ PR #36 부터:
 
 ### 다음 단계
 
-1. **PR #37 — 8차 E2E** (현재 진행 중)
+1. **PR #38 — 8차 E2E** (현재 진행 중)
    - `enable_executor=True` 활성으로 자연어 → calculator.exe 풀체인 검증
    - 결과: 16/16 본문 캡처 + 자동 .exe 생성
-2. **PR #38 — GitHub Release 자동 업로드** (예정)
+2. **PR #39 — GitHub Release 자동 업로드** (예정)
 3. **Phase 6 착수** — Track B 시작 (클로드 코드 주간 한도 리셋 후)
 
 ### 최종 목표

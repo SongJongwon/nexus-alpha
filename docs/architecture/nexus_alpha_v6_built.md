@@ -18,7 +18,7 @@
 > **테스트 커버리지**: pytest **199 passed** (v5 138 → +61)
 > **누적 PR**: **36개 머지** (v5 24 → +12, 단일 세션)
 > **첫 `.exe` 산출**: ✅ Calculator.exe 10.7MB, SHA256 검증 완료 (PR #36)
-> **8차 E2E**: 진행 중 (PR #37 — 자연어 → `.exe` 풀체인 검증)
+> **8차 E2E**: 진행 중 (PR #38 — 자연어 → `.exe` 풀체인 검증)
 
 ---
 
@@ -153,7 +153,7 @@ class ExecuteResult:
 
 ## 🔄 실제 워크플로우 (PR #36 부터 변경)
 
-### 메인 워크플로우 — `analyze_and_implement` (PR #37 진행 중)
+### 메인 워크플로우 — `analyze_and_implement` (PR #38 진행 중)
 
 [src/workflows/analyze_and_implement.py](../../src/workflows/analyze_and_implement.py)
 
@@ -271,7 +271,7 @@ nexus-alpha/
 │   └── context/                 # CrewAI 호환성 노트
 │
 ├── scripts/
-│   └── run_e2e_verification.py  # 실 LLM E2E (PR #37 부터 enable_executor=True)
+│   └── run_e2e_verification.py  # 실 LLM E2E (PR #38 부터 enable_executor=True)
 │
 ├── outputs/                     # 워크플로우 산출 + 🆕 build_output/dist/*.exe (PR #36)
 ├── .github/workflows/ci.yml     # ubuntu py3.13, pytest -v --tb=short
@@ -299,7 +299,8 @@ nexus-alpha/
 | **PR #34** | ✅ 완료 | 7차 E2E | 94% 도달, **이슈 6 close** |
 | **PR #35** | ✅ 완료 | 세션 로그 정리 | 2026-04-27 단일 세션 종합 |
 | **PR #36** | ✅ 완료 | **PyInstaller 통합** | **첫 진짜 `.exe` 산출** ⭐ |
-| 🔄 PR #37 | 진행 중 | 8차 E2E | 자연어 → `.exe` 풀체인 |
+| **PR #37** | 본 PR | architecture 문서 최신화 (v6) | (문서 정리) |
+| 🔄 PR #38 (예정) | 진행 중 | 8차 E2E | 자연어 → `.exe` 풀체인 |
 
 **총 PR**: 36개 / **누적 기간**: 11일 (2026-04-17 ~ 2026-04-28) / **테스트**: 199 passed
 
@@ -382,7 +383,7 @@ def execute_pyinstaller(
 | Build Engineer 산출 | LLM 사양 (markdown) | LLM 사양 (markdown) |
 | `.exe` 산출 | ❌ 미달성 (외부 도구 미통합) | ✅ **달성** (build_executor 가 실 호출) |
 | SHA256 | (사양만) | **실제 계산** (build_executor) |
-| 풀체인 E2E | 사양 수준 | **실 `.exe` 까지 도달** (PR #37 진행 중) |
+| 풀체인 E2E | 사양 수준 | **실 `.exe` 까지 도달** (PR #38 진행 중) |
 
 ---
 
@@ -482,11 +483,11 @@ build_executor 는 결정론적 코드 (subprocess + SHA256). LLM 아님. 본부
 
 ## 🔮 다음 단계 (Phase 6 이전 후보)
 
-### 즉시 (PR #37~39)
+### 즉시 (PR #38~40)
 
-- [ ] **PR #37 — 8차 E2E** (자연어 → calculator.exe 풀체인 검증) — 🔄 진행 중
-- [ ] **PR #38 — GitHub Release 자동 업로드** (gh release create 실 호출)
-- [ ] **PR #39 — Update Checker 산출 코드 통합** (산출 calculator.py 에 updater.py 임포트)
+- [ ] **PR #38 — 8차 E2E** (자연어 → calculator.exe 풀체인 검증) — 🔄 진행 중
+- [ ] **PR #39 — GitHub Release 자동 업로드** (gh release create 실 호출)
+- [ ] **PR #40 — Update Checker 산출 코드 통합** (산출 calculator.py 에 updater.py 임포트)
 
 ### 단기 (1~2주)
 
@@ -532,7 +533,7 @@ build_executor 는 결정론적 코드 (subprocess + SHA256). LLM 아님. 본부
 ---
 
 *본 v6 구성안은 2026-04-28 기준 PR #36 머지 시점의 실제 구축 상태를 반영합니다.*
-*PR #37 (8차 E2E) 완료 후 v6.1 로 업데이트 예정 — 자연어 → `.exe` 풀체인 검증 결과 추가.*
+*PR #38 (8차 E2E) 완료 후 v6.1 로 업데이트 예정 — 자연어 → `.exe` 풀체인 검증 결과 추가.*
 
 *v1 (2026-04-17 RPA 비전 원안) → v6 (2026-04-28 첫 진짜 `.exe` 산출) 의 비전 진화는
 구현 과정에서 자연 발생한 점진적 진화이며, RPA 비전은 향후 Phase 6+ 의 선택적 분기로
