@@ -56,6 +56,7 @@ from src.agents.build_release import (
     create_platform_tester_agent,
     format_platform_test_result_for_task,
 )
+from src.agents.build_release.build_executor import ExecuteResult, execute_pyinstaller
 from src.agents.operations import run_python_package_in_sandbox
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
@@ -92,6 +93,9 @@ class BuildWorkflowResult:
             entry 미탐지 중 하나.
         saved_files: 산출 파일들 (20~24 prefix). workflow_dir 가 None 이면 빈 리스트.
         target_platform: 빌드 대상 플랫폼 (windows / macos / linux 등) — 입력 echo.
+        executor_result: PR #36 — PyInstaller 실제 호출 결과. ``enable_executor=True``
+            이고 entry 가 탐지됐을 때만 채워짐. 그 외엔 None (graceful — 사양 사슬은
+            여전히 작동).
     """
 
     dependency_report: str
@@ -102,6 +106,7 @@ class BuildWorkflowResult:
     sandbox_result: Optional[PlatformTestResult]
     saved_files: list[Path] = field(default_factory=list)
     target_platform: str = "windows"
+    executor_result: Optional["ExecuteResult"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +280,63 @@ def _format_code_layout(code_files: list[Path]) -> str:
     return "\n".join(lines)
 
 
+def _resolve_entry_path(code_files: list[Path], entry_hint: str) -> Optional[Path]:
+    """entry_hint (상대경로 string) 를 실제 Path 로 해석.
+
+    `_detect_entry_hint` 가 반환하는 hint 는 보통 PROJECT_ROOT 기준 상대경로 또는
+    파일명. 이 함수는 code_files 에서 일치하는 절대경로를 찾아 반환.
+    못 찾으면 None.
+    """
+    if not code_files:
+        return None
+    # hint 가 절대경로 형식이면 그대로
+    candidate = Path(entry_hint)
+    if candidate.is_absolute() and candidate.exists():
+        return candidate
+    # 상대 또는 파일명 — code_files 에서 매치
+    hint_name = candidate.name
+    for p in code_files:
+        if p.name == hint_name and p.exists():
+            return p
+    # 마지막 fallback — 첫 파일
+    return code_files[0] if code_files[0].exists() else None
+
+
+def _format_executor_result_md(result: ExecuteResult) -> str:
+    """ExecuteResult → 25_executor_result.md 형식 markdown."""
+    lines = ["# PyInstaller 실행 결과", "", f"**상태**: {'✅ SUCCESS' if result.success else '🔴 FAILED'}", ""]
+    lines.append(f"**Exit Code**: `{result.exit_code}`")
+    lines.append(f"**Elapsed**: {result.elapsed_sec:.2f}초")
+    if result.exe_path:
+        lines.append(f"**산출 파일**: `{result.exe_path}`")
+    if result.exe_size_bytes is not None:
+        lines.append(f"**크기**: {result.exe_size_bytes:,} bytes ({result.exe_size_bytes / (1024 * 1024):.2f} MB)")
+    if result.sha256:
+        lines.append(f"**SHA256**: `{result.sha256}`")
+    if result.error_message:
+        lines.append("")
+        lines.append(f"**에러 메시지**: {result.error_message}")
+    if result.command:
+        lines.append("")
+        lines.append("## 실행 명령")
+        lines.append("```")
+        lines.append(" ".join(result.command))
+        lines.append("```")
+    if result.stdout:
+        lines.append("")
+        lines.append("## stdout (tail)")
+        lines.append("```")
+        lines.append(result.stdout)
+        lines.append("```")
+    if result.stderr:
+        lines.append("")
+        lines.append("## stderr (tail)")
+        lines.append("```")
+        lines.append(result.stderr)
+        lines.append("```")
+    return "\n".join(lines) + "\n"
+
+
 def _detect_entry_hint(code_files: list[Path]) -> str:
     """단순 휴리스틱 — 우선순위 키워드 매칭으로 entry 후보 1개 추정."""
     if not code_files:
@@ -352,6 +414,8 @@ def run_build_workflow(
     workflow_dir: Optional[Path] = None,
     enable_platform_test: bool = True,
     sandbox_timeout_sec: int = 30,
+    enable_executor: bool = False,
+    executor_timeout_sec: int = 300,
     verbose: bool = False,
 ) -> BuildWorkflowResult:
     """5-agent 빌드 사슬을 한 번에 실행. analyze_and_implement 산출 직후 호출 가정.
@@ -367,6 +431,10 @@ def run_build_workflow(
         enable_platform_test: Platform Tester 단계 실행 여부. False 면 narration
             보고서가 "Platform Tester skip" 안내.
         sandbox_timeout_sec: Phase 3 sandbox 타임아웃.
+        enable_executor: PR #36 — PyInstaller 실제 호출 활성. False (기본) 면
+            backward compat. True + workflow_dir 제공 시 실 빌드 → ``.exe`` 산출 →
+            SHA256. ``BuildWorkflowResult.executor_result`` 에 결과 채워짐.
+        executor_timeout_sec: PyInstaller subprocess 타임아웃 (기본 300s = 5분).
         verbose: CrewAI 중간 로그.
 
     Returns:
@@ -476,6 +544,31 @@ def run_build_workflow(
                 path.write_text(content, encoding="utf-8")
                 saved.append(path)
 
+        # PR #36 — PyInstaller 실제 호출 (enable_executor=True 일 때만)
+        executor_result: Optional[ExecuteResult] = None
+        if enable_executor and code_files and workflow_dir is not None:
+            entry_path = _resolve_entry_path(code_files, entry_hint)
+            if entry_path is not None:
+                # GUI 여부는 ui_spec 의 need_gui 파싱 (단순 substring 매치).
+                windowed = "need_gui: yes" in ui_spec or "need_gui=yes" in ui_spec
+                # 앱 이름은 entry 파일명 또는 user_request 단서 → 안전한 단순 휴리스틱
+                app_name = entry_path.stem.title() or "App"
+                executor_result = execute_pyinstaller(
+                    entry_path=entry_path,
+                    output_dir=workflow_dir / "build_output",
+                    app_name=app_name,
+                    windowed=windowed,
+                    onefile=True,
+                    timeout_sec=executor_timeout_sec,
+                )
+                # 25_executor_result.md 저장 — 사용자 가시 산출물
+                executor_md = workflow_dir / "25_executor_result.md"
+                executor_md.write_text(
+                    _format_executor_result_md(executor_result),
+                    encoding="utf-8",
+                )
+                saved.append(executor_md)
+
         return BuildWorkflowResult(
             dependency_report=dependency_report,
             build_spec=build_spec,
@@ -485,6 +578,7 @@ def run_build_workflow(
             sandbox_result=sandbox_result,
             saved_files=saved,
             target_platform=target_platform,
+            executor_result=executor_result,
         )
 
     finally:

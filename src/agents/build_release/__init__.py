@@ -51,6 +51,7 @@ from .asset_manager import (
     ASSET_MANAGER_ROLE,
     create_asset_manager_agent,
 )
+from .build_executor import ExecuteResult, execute_pyinstaller
 from .build_engineer import (
     BUILD_ENGINEER_BACKSTORY,
     BUILD_ENGINEER_GOAL,
@@ -140,6 +141,7 @@ __all__ = [
     "PLATFORM_TESTER_GOAL",
     "PLATFORM_TESTER_NAME",
     "PLATFORM_TESTER_ROLE",
+    "ExecuteResult",
     "PlatformTestResult",
     "RELEASE_MANAGER_BACKSTORY",
     "RELEASE_MANAGER_GOAL",
@@ -158,6 +160,7 @@ __all__ = [
     "create_platform_tester_agent",
     "create_release_manager_agent",
     "create_update_checker_agent",
+    "execute_pyinstaller",
     "format_platform_test_result_for_task",
     "test_executable_in_sandbox",
 ]
