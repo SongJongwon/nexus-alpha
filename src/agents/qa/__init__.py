@@ -7,6 +7,7 @@
     from src.agents.qa import create_code_qa_agent, run_code_qa
     from src.agents.qa import create_functional_test_agent, run_test_cases
     from src.agents.qa import create_gui_test_agent, run_gui_test
+    from src.agents.qa import create_robustness_tester_agent, run_robustness_scenarios
 """
 
 from .code_qa_agent import (
@@ -66,9 +67,24 @@ from .gui_test_executor import (
     launch_and_capture,
     run_gui_test,
 )
+from .robustness_executor import (
+    DEFAULT_SCENARIOS,
+    RobustnessResult,
+    RobustnessScenario,
+    ScenarioResult,
+    format_robustness_result_for_task,
+    run_robustness_scenarios,
+)
+from .robustness_tester import (
+    ROBUSTNESS_TESTER_BACKSTORY,
+    ROBUSTNESS_TESTER_GOAL,
+    ROBUSTNESS_TESTER_NAME,
+    ROBUSTNESS_TESTER_ROLE,
+    create_robustness_tester_agent,
+)
 
 __all__ = [
-    # Code Reviewer (정적 분석, PR #25)
+    # Code Reviewer (정적 분석, PR #25 + #45)
     "CODE_REVIEWER_BACKSTORY",
     "CODE_REVIEWER_BACKSTORY_WITH_EXECUTION",
     "CODE_REVIEWER_GOAL",
@@ -118,4 +134,16 @@ __all__ = [
     "format_gui_test_result_for_task",
     "launch_and_capture",
     "run_gui_test",
+    # Robustness Tester (부하 시나리오, PR #46)
+    "ROBUSTNESS_TESTER_BACKSTORY",
+    "ROBUSTNESS_TESTER_GOAL",
+    "ROBUSTNESS_TESTER_NAME",
+    "ROBUSTNESS_TESTER_ROLE",
+    "create_robustness_tester_agent",
+    "DEFAULT_SCENARIOS",
+    "RobustnessResult",
+    "RobustnessScenario",
+    "ScenarioResult",
+    "format_robustness_result_for_task",
+    "run_robustness_scenarios",
 ]
