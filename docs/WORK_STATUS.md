@@ -1,10 +1,12 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-28 (PR #25~39 모두 머지, **M4.7 + M5 사실상 완성**)
-> **현재 브랜치**: `main`
-> **테스트**: pytest **226 passed** (138 + 누적 신규 88, 회귀 0)
+> **마지막 업데이트**: 2026-04-28 (PR #41~#48 — **본부 4 (품질 검증) 100% + 자동 QA 피드백 루프 완성**)
+> **현재 브랜치**: `qa/feedback-loop-and-org-v7` (PR #48)
+> **테스트**: pytest 누적 (PR 별 독립, 머지 시 합산 ≈ **315+ passed** 예상)
 > **최근 세션 로그**: [progress/session_log_20260428.md](./progress/session_log_20260428.md)
+> **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md) ⭐
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
+> **9차 E2E 검증**: [progress/e2e_9th_verification_post_pr39.md](./progress/e2e_9th_verification_post_pr39.md)
 
 ---
 
@@ -12,16 +14,16 @@
 
 | 영역 | 상태 |
 |---|---|
-| Phase 0~5 구축 | ✅ 완료 (39개 PR) |
+| Phase 0~7 구축 | ✅ 완료 (PR #25~#48) |
 | 메인 워크플로우 (`analyze_and_implement`) | ✅ 작동 |
 | GUI 분기 라우팅 | ✅ 작동 |
-| GUI 코드 생성 본문 캡처 | ✅ 안정화 (이슈 4 해결, PR #25) |
-| GUI 풀체인 (`calculator.py`, py_compile 통과) | ✅ **8차 연속 안정** (PR #28~38) |
-| 16 에이전트 본문 캡처 | ✅ **100% 도달** (PR #38 8차 E2E — 16/16) |
-| LLM 비결정적 컴플라이언스 (이슈 6) | ✅ **close** (방어선 2 + LLM variance 자연 회복) |
-| 🎯 자연어 → `.exe` 풀체인 (M4.7) | ✅ **첫 자동 생성 성공** (PR #38 — Calculator.exe 10.68 MB) |
-| **🎯 다운로드 가능 setup.exe URL (M5)** | ✅ **사실상 완성** (PR #39 — gh release smoke test 4.6초, draft mode) |
-| Published mode E2E 검증 | ⏳ PR #41 예정 (9차 E2E, `enable_publish=True`) |
+| 16 에이전트 본문 캡처 | ✅ **100% 도달** (9차 E2E 유지) |
+| 🎯 자연어 → `.exe` 풀체인 (M4.7) | ✅ 달성 (PR #38) |
+| 🎯 자연어 → 다운로드 URL 풀체인 (M5) | ✅ **9차 E2E 5/5 ALL PASSED** (PR #41) |
+| **🎯 본부 4 (품질 검증) 100% 완성** | ✅ **9명 + Convergence Judge** (PR #42~#47) ⭐ |
+| **🎯 자동 QA 피드백 루프 인프라** | ✅ **완성** (qa_feedback_loop, PR #48) ⭐ |
+| 전체 구현률 | ✅ **30/46 (65%)** (v6 50% → v7 65%) ⭐ |
+| QA 루프 포함 E2E 검증 (M5+QA) | ⏳ PR #49 예정 (10차 E2E) |
 
 ---
 
