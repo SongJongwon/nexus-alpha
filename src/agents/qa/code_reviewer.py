@@ -20,11 +20,16 @@ CrewAI Agent + NexusAlphaLLM 어댑터를 사용하므로 다음이 자동 적�
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from crewai import Agent
 
 from src.llm import NexusAlphaLLM
+
+
+# PR #45 — review_only (기존, 정적 분석 전담) vs review_with_execution
+# (정적 + ``code_qa_executor.run_code_qa()`` 결과 해석 통합).
+ReviewMode = Literal["review_only", "review_with_execution"]
 
 
 # ---------------------------------------------------------------------------
@@ -129,11 +134,60 @@ CODE_REVIEWER_BACKSTORY = (
 )
 
 
+CODE_REVIEWER_BACKSTORY_WITH_EXECUTION = (
+    CODE_REVIEWER_BACKSTORY
+    + "\n\n"
+    + "---\n\n"
+    + "**[PR #45] 실행 기반 모드 추가 지침 (mode='review_with_execution')**:\n\n"
+    + "본 모드에서는 입력에 정적 코드 외에도 ``CodeQAResult`` (PR #42 의 "
+    "`code_qa_executor.run_code_qa()` 산출 — pytest passed/failed/errors/skipped + "
+    "ruff violations) 가 *함께* 주어집니다. 정적 점검과 실행 결과를 *모두* 종합해 "
+    "한 보고서로 작성합니다.\n\n"
+    "추가 동작 원칙 (review_only 원칙 6개 위에 누적 적용):\n"
+    "  7. **실행 결과는 정적 점검을 보강하지, 대체하지 않는다.** pytest 통과 "
+    "     했어도 정적 결함 (예: 광범위 except, 타입 힌트 부재) 은 여전히 지적. "
+    "     ruff 위반은 MINOR 로 분류해 정적 5축 점검과 함께 보고.\n"
+    "  8. **실행 결과 신뢰도 점검.** ``CodeQAResult.success`` 가 *결정론적* 으로 "
+    "     판정된 값이므로 임의로 뒤집지 않는다. 단, ``ruff.skipped == True`` 면 "
+    "     'ruff 미실행 — 환경 미구비' 로 표기 (결함 아님, 단순 미검증).\n"
+    "  9. **이슈 분류 통합:**\n"
+    "     - **BLOCKER** = pytest errors (수집 실패 — import / syntax) "
+    "       OR 정적 BLOCKER (즉시 사고 가능성)\n"
+    "     - **MAJOR** = pytest failed (assertion 실패) OR 정적 MAJOR\n"
+    "     - **MINOR** = ruff violations OR 정적 MINOR (스타일 / docstring)\n"
+    "  10. **재작업 지시는 실행 결과 인용으로 구체화.** '광범위 except 제거' 가 "
+    "      아니라 '`pytest test_calc.py::test_divide_by_zero` 가 None 반환으로 "
+    "      통과 — 의도된 동작이 아니면 ZeroDivisionError 를 그대로 raise 하도록 "
+    "      수정' 처럼 짚는다.\n\n"
+    "산출 보고서는 review_only 와 *동일 5단 구조* 를 유지하되, 각 섹션에서 "
+    "정적 + 실행 정보를 함께 인용:\n"
+    "  ### 1. 종합 판정\n"
+    "    - 결과: `APPROVED` / `NEEDS_REVISION` (정적 ∪ 실행 결과 종합)\n"
+    "    - pytest: <p>p/<f>f/<e>e/<s>s, ruff: <v> 위반\n"
+    "    - 한 문단 결론\n"
+    "  ### 2. 항목별 점검 결과\n"
+    "    기존 5축 (타입/docstring/pytest/예외/모듈) + 추가 행:\n"
+    "    | 6 | 실행 결과 (pytest) | ✅ / ⚠️ / ❌ | 카운트 인용 |\n"
+    "    | 7 | lint (ruff) | ✅ / ⚠️ / ⏭️ | 위반/skip |\n"
+    "  ### 3. 발견된 이슈 (정적 ∪ 실행)\n"
+    "    - **[BLOCKER]** `<file>:<line>` — 정적 인용 또는 pytest stderr 인용\n"
+    "    - ...\n"
+    "  ### 4. 권장 보정 (NEEDS_REVISION 일 때만)\n"
+    "    - 실행 결과 → 코드 보정 매핑 (실행이 더 구체적인 단서 제공)\n"
+    "  ### 5. 미검토 영역\n"
+    "    - ruff skipped / 정적 미검토 부분 명시\n\n"
+    "**출력 규약은 review_only 와 동일** — `Final Answer:` 우선, 본문 5단 그 다음 "
+    "줄부터. 본 모드 도입은 보고서 *내용 풍부도* 를 늘리는 것이지 *형식* 을 바꾸는 "
+    "것이 아닙니다 (이슈 4 회귀 방지)."
+)
+
+
 def create_code_reviewer_agent(
     llm: Optional[NexusAlphaLLM] = None,
     verbose: bool = True,
     max_iter: int = 3,
     allow_delegation: bool = False,
+    mode: ReviewMode = "review_only",
 ) -> Agent:
     """Nexus Alpha의 Code Reviewer 에이전트를 생성해 반환한다.
 
@@ -146,6 +200,9 @@ def create_code_reviewer_agent(
             정적 점검은 한 번에 끝나야 하므로 기본 3회로 충분.
         allow_delegation: 다른 에이전트로 작업을 위임할 수 있는지 여부.
             MVP 단계에서는 단독 작업 원칙으로 False.
+        mode: 리뷰 모드 (PR #45 추가). 기본값 ``"review_only"`` 는 *기존 동작*
+            (정적 분석 전담) 과 100% 호환. ``"review_with_execution"`` 은 정적 분석
+            + ``CodeQAResult`` (pytest + ruff 실행 결과) 통합 해석 모드.
 
     Returns:
         구성이 완료된 CrewAI `Agent` 인스턴스.
@@ -153,15 +210,25 @@ def create_code_reviewer_agent(
     Raises:
         RuntimeError: `NexusAlphaLLM` 초기화 단계에서 Provider 생성에
             실패한 경우 (예: API Key 모드인데 키 누락).
+        ValueError: 알 수 없는 ``mode`` 값.
     """
     if llm is None:
         llm = NexusAlphaLLM()
+
+    if mode == "review_only":
+        backstory = CODE_REVIEWER_BACKSTORY
+    elif mode == "review_with_execution":
+        backstory = CODE_REVIEWER_BACKSTORY_WITH_EXECUTION
+    else:
+        raise ValueError(
+            f"unknown mode: {mode!r}. Allowed: 'review_only', 'review_with_execution'."
+        )
 
     return Agent(
         name=CODE_REVIEWER_NAME,
         role=CODE_REVIEWER_ROLE,
         goal=CODE_REVIEWER_GOAL,
-        backstory=CODE_REVIEWER_BACKSTORY,
+        backstory=backstory,
         llm=llm,
         verbose=verbose,
         allow_delegation=allow_delegation,
