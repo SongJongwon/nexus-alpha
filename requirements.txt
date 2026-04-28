@@ -40,6 +40,11 @@ pyyaml>=6.0.0
 # 컬러풀한 콘솔 출력 및 진행률 표시
 rich>=13.0.0
 
+# 빌드 도구 (Phase 4.5 — PR #36)
+# Python → 단일 실행파일(.exe) 패키저. build_executor 가 subprocess 로 호출.
+# 6.20+ 부터 Python 3.13 안정 지원.
+pyinstaller>=6.20.0
+
 # 개발/테스트 (Phase 2 — pytest 하네스)
 # 단위·통합 테스트 러너
 pytest>=8.0.0

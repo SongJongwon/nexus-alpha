@@ -1,0 +1,319 @@
+# -*- coding: utf-8 -*-
+"""PyInstaller 실제 호출 executor (Phase 4.5 강화 — PR #36).
+
+Build Engineer 의 BuildSpec 사양 → 실제 ``pyinstaller`` 호출 → ``.exe`` 생성 →
+SHA256 산출. 첫 진짜 외부 도구 통합 — v5 doc DoD Phase 4.5 의 핵심 미완 항목 해소.
+
+설계 원칙:
+  - **subprocess 호출만 담당**: BuildSpec 의 LLM 산출 markdown 을 직접 파싱하지
+    않음. 입력은 *구조화된 인자* (entry_path / app_name / windowed / hidden_imports
+    등). 호출 측이 BuildSpec / ui_spec 에서 추출해 넘김.
+  - **timeout 강제**: PyInstaller 가 무한 hang 가능 — 5분 기본 타임아웃.
+  - **graceful failure**: 실패 시 None / 에러 메시지 반환, 예외 propagate 안 함.
+  - **결정적 산출 디렉터리**: ``output_dir/dist/<App>.exe`` (PyInstaller 표준).
+
+호출 측 (build_workflow.py) 통합 패턴:
+    if enable_executor and code_files:
+        result = execute_pyinstaller(
+            entry_path=Path(entry_hint),
+            output_dir=workflow_dir / "build_output",
+            app_name=...,  # ui_spec / asset_manifest 기반
+            windowed=ui_spec_indicates_gui,
+            hidden_imports=parsed_from_dependency_report,
+        )
+        # result 를 BuildWorkflowResult 에 병합
+"""
+
+from __future__ import annotations
+
+import hashlib
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+# ---------------------------------------------------------------------------
+# 결과 데이터 모델
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ExecuteResult:
+    """PyInstaller 실행 결과 — graceful failure 모델 (예외 propagate 안 함)."""
+
+    success: bool
+    """성공 여부 — exit_code == 0 AND .exe 존재 AND 크기 > 0."""
+
+    exit_code: int
+    """subprocess 종료 코드. -1 이면 timeout, -2 이면 pyinstaller 미설치."""
+
+    elapsed_sec: float
+    """소요 시간 (실측)."""
+
+    command: list[str] = field(default_factory=list)
+    """실행한 명령 (debug/재현용)."""
+
+    exe_path: Optional[Path] = None
+    """산출 .exe 경로 — 실패 시 None."""
+
+    exe_size_bytes: Optional[int] = None
+    """.exe 크기 (bytes) — 실패 시 None."""
+
+    sha256: Optional[str] = None
+    """.exe SHA256 hex — 실패 시 None."""
+
+    stdout: str = ""
+    """PyInstaller stdout (마지막 100KB)."""
+
+    stderr: str = ""
+    """PyInstaller stderr (마지막 100KB)."""
+
+    error_message: Optional[str] = None
+    """failure 시 사람이 읽을 수 있는 진단 메시지."""
+
+    def summary_line(self) -> str:
+        """한 줄 요약 — 로그/리포트 용."""
+        if self.success:
+            assert self.exe_path and self.exe_size_bytes is not None
+            return (
+                f"[BUILD SUCCESS] {self.exe_path.name} "
+                f"({self.exe_size_bytes / (1024 * 1024):.1f} MB, "
+                f"sha256={self.sha256[:16]}..., elapsed={self.elapsed_sec:.1f}s)"
+            )
+        return (
+            f"[BUILD FAILED] exit={self.exit_code}, "
+            f"error={self.error_message or 'unknown'}, "
+            f"elapsed={self.elapsed_sec:.1f}s"
+        )
+
+
+# ---------------------------------------------------------------------------
+# PyInstaller 실행자
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_TIMEOUT_SEC = 300  # 5분 — 단순 GUI 앱 빌드 충분
+_OUTPUT_TAIL_BYTES = 100_000  # stdout/stderr 보존 한도
+
+
+def _resolve_pyinstaller_executable() -> Optional[Path]:
+    """현재 venv 의 pyinstaller 실행 파일 위치를 찾는다.
+
+    Windows: ``.venv/Scripts/pyinstaller.exe``
+    Linux/macOS: ``.venv/bin/pyinstaller``
+    Fallback: ``shutil.which("pyinstaller")`` (PATH 검색).
+    """
+    venv_python = Path(sys.executable)  # 현재 실행 중인 Python
+    if sys.platform == "win32":
+        candidate = venv_python.parent / "pyinstaller.exe"
+    else:
+        candidate = venv_python.parent / "pyinstaller"
+    if candidate.exists():
+        return candidate
+    # PATH 검색
+    found = shutil.which("pyinstaller")
+    return Path(found) if found else None
+
+
+def _compute_sha256(path: Path, chunk_size: int = 65536) -> str:
+    """파일의 SHA256 hex digest 계산 — 메모리 효율적 청크 읽기."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(chunk_size):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _tail_text(text: str, limit: int = _OUTPUT_TAIL_BYTES) -> str:
+    """긴 stdout/stderr 의 마지막 limit bytes 만 보존."""
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return f"...(truncated {len(text) - limit} bytes)...\n" + text[-limit:]
+
+
+def execute_pyinstaller(
+    entry_path: Path,
+    output_dir: Path,
+    app_name: str = "App",
+    windowed: bool = True,
+    onefile: bool = True,
+    hidden_imports: Optional[list[str]] = None,
+    icon_path: Optional[Path] = None,
+    timeout_sec: int = _DEFAULT_TIMEOUT_SEC,
+    additional_args: Optional[list[str]] = None,
+) -> ExecuteResult:
+    """PyInstaller 를 subprocess 로 호출해 단일 실행파일 빌드.
+
+    Args:
+        entry_path: 엔트리 .py 파일 절대 경로 (예: code/calculator.py).
+        output_dir: 빌드 산출 루트 디렉터리. ``dist/`` ``build/`` ``*.spec`` 가
+            여기 아래에 생성됨.
+        app_name: ``--name`` — 산출 .exe 파일명 (확장자 제외).
+        windowed: True 면 ``--windowed`` (GUI), False 면 ``--console``.
+        onefile: True 면 ``--onefile`` (단일 .exe), False 면 ``--onedir``.
+        hidden_imports: ``--hidden-import`` 로 추가할 모듈 목록.
+        icon_path: ``--icon`` 으로 지정할 .ico/.icns 경로 (Optional).
+        timeout_sec: subprocess 타임아웃 (초). 기본 300 (5분).
+        additional_args: 추가 raw 인자 — 고급 사용자 escape hatch.
+
+    Returns:
+        ExecuteResult — 성공/실패 + 산출 경로 + SHA256 + 로그 + 진단.
+        예외 propagate 안 함 (실패 시 ExecuteResult.success=False).
+    """
+    started = time.time()
+
+    # 1. PyInstaller 실행 파일 검색
+    pyinstaller_exe = _resolve_pyinstaller_executable()
+    if pyinstaller_exe is None:
+        return ExecuteResult(
+            success=False,
+            exit_code=-2,
+            elapsed_sec=time.time() - started,
+            error_message=(
+                "PyInstaller 실행 파일을 찾을 수 없음. "
+                "`pip install pyinstaller>=6.20.0` 로 설치 필요."
+            ),
+        )
+
+    # 2. entry_path 검증
+    if not entry_path.exists():
+        return ExecuteResult(
+            success=False,
+            exit_code=-3,
+            elapsed_sec=time.time() - started,
+            error_message=f"entry_path 가 존재하지 않음: {entry_path}",
+        )
+
+    # 3. output_dir 준비
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dist_dir = output_dir / "dist"
+    work_dir = output_dir / "build"
+    spec_dir = output_dir
+
+    # 4. 명령 빌드
+    cmd: list[str] = [
+        str(pyinstaller_exe),
+        "--noconfirm",
+        "--clean",
+        "--name", app_name,
+        "--distpath", str(dist_dir),
+        "--workpath", str(work_dir),
+        "--specpath", str(spec_dir),
+        "--noupx",  # UPX 압축 우회 — antivirus false positive 방지
+    ]
+    cmd.append("--onefile" if onefile else "--onedir")
+    cmd.append("--windowed" if windowed else "--console")
+    for hi in hidden_imports or []:
+        cmd.extend(["--hidden-import", hi])
+    if icon_path and icon_path.exists():
+        cmd.extend(["--icon", str(icon_path)])
+    if additional_args:
+        cmd.extend(additional_args)
+    cmd.append(str(entry_path))
+
+    # 5. subprocess 실행
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+            check=False,  # exit_code 직접 확인
+        )
+        exit_code = proc.returncode
+        stdout = _tail_text(proc.stdout)
+        stderr = _tail_text(proc.stderr)
+    except subprocess.TimeoutExpired as e:
+        return ExecuteResult(
+            success=False,
+            exit_code=-1,
+            elapsed_sec=time.time() - started,
+            command=cmd,
+            stdout=_tail_text(e.stdout.decode("utf-8", errors="replace") if e.stdout else ""),
+            stderr=_tail_text(e.stderr.decode("utf-8", errors="replace") if e.stderr else ""),
+            error_message=f"PyInstaller timeout — {timeout_sec}s 내 완료 못 함.",
+        )
+    except FileNotFoundError as e:
+        return ExecuteResult(
+            success=False,
+            exit_code=-2,
+            elapsed_sec=time.time() - started,
+            command=cmd,
+            error_message=f"PyInstaller 실행 실패 (FileNotFoundError): {e}",
+        )
+
+    elapsed = time.time() - started
+
+    # 6. 산출 .exe 검증
+    if exit_code != 0:
+        return ExecuteResult(
+            success=False,
+            exit_code=exit_code,
+            elapsed_sec=elapsed,
+            command=cmd,
+            stdout=stdout,
+            stderr=stderr,
+            error_message=f"PyInstaller exit_code={exit_code} (non-zero).",
+        )
+
+    # 산출 파일 위치 찾기
+    if sys.platform == "win32":
+        if onefile:
+            exe_path = dist_dir / f"{app_name}.exe"
+        else:
+            exe_path = dist_dir / app_name / f"{app_name}.exe"
+    else:
+        # macOS/Linux: 확장자 없음
+        if onefile:
+            exe_path = dist_dir / app_name
+        else:
+            exe_path = dist_dir / app_name / app_name
+
+    if not exe_path.exists():
+        return ExecuteResult(
+            success=False,
+            exit_code=exit_code,
+            elapsed_sec=elapsed,
+            command=cmd,
+            stdout=stdout,
+            stderr=stderr,
+            error_message=f"PyInstaller 종료 코드 0 그러나 산출 파일 부재: {exe_path}",
+        )
+
+    exe_size = exe_path.stat().st_size
+    if exe_size == 0:
+        return ExecuteResult(
+            success=False,
+            exit_code=exit_code,
+            elapsed_sec=elapsed,
+            command=cmd,
+            stdout=stdout,
+            stderr=stderr,
+            error_message=f"산출 파일 크기 0: {exe_path}",
+        )
+
+    # 7. SHA256 산출
+    sha256 = _compute_sha256(exe_path)
+
+    return ExecuteResult(
+        success=True,
+        exit_code=exit_code,
+        elapsed_sec=elapsed,
+        command=cmd,
+        exe_path=exe_path,
+        exe_size_bytes=exe_size,
+        sha256=sha256,
+        stdout=stdout,
+        stderr=stderr,
+    )
