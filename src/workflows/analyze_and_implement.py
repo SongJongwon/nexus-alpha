@@ -122,6 +122,8 @@ class WorkflowResult:
     changelog_entry: str = ""
     update_module_spec: str = ""
     distribution_spec: str = ""
+    # PR #36/#37 — PyInstaller executor 결과 (enable_executor=True 시만)
+    executor_result: object = None  # ExecuteResult | None — circular import 회피용 object
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +481,8 @@ def run_analyze_and_implement(
     repo_url: str = "",
     signing_available: bool = False,
     privacy_level: str = "public",
+    enable_executor: bool = False,
+    executor_timeout_sec: int = 300,
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -615,6 +619,8 @@ def run_analyze_and_implement(
                 design_tokens=result.design_tokens,
                 workflow_dir=result.saved_dir,
                 enable_platform_test=True,
+                enable_executor=enable_executor,
+                executor_timeout_sec=executor_timeout_sec,
                 verbose=verbose,
             )
             # Build 결과를 메인 WorkflowResult 에 merge
@@ -623,6 +629,9 @@ def run_analyze_and_implement(
             result.asset_manifest = build_result.asset_manifest
             result.installer_spec = build_result.installer_spec
             result.platform_test_report = build_result.platform_test_report
+            # PR #36/#37 — executor 결과 (있을 때만 채워짐)
+            if build_result.executor_result is not None:
+                result.executor_result = build_result.executor_result
 
         # ─── Phase 5 — Release 사슬 (옵션) ──────────────────────────────────────
         if enable_release_branch:

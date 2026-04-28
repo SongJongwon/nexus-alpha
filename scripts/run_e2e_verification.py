@@ -47,7 +47,7 @@ def main():
     print("E2E Verification — Real LLM (Claude MAX / agent_sdk)")
     print(f"Start: {start_time.isoformat()}")
     print(f"Request: 계산기 만들어줘")
-    print(f"Flags: gui=True, build=True, release=True, prev=0.1.0")
+    print(f"Flags: gui=True, build=True, release=True, prev=0.1.0, executor=True (PR #37)")
     print("=" * 72)
     print()
 
@@ -63,6 +63,8 @@ def main():
             enable_release_branch=True,
             previous_version="0.1.0",
             repo_url="https://github.com/SongJongwon/nexus-alpha",
+            enable_executor=True,  # PR #37 — 실제 PyInstaller 호출 → calculator.exe 산출
+            executor_timeout_sec=600,  # 10분 — calculator 단순 GUI 빌드 충분 여유
         )
         status = "SUCCESS"
     except KeyboardInterrupt:
@@ -143,6 +145,17 @@ def main():
         workflow_id = getattr(result, "workflow_id", None) or getattr(result, "timestamp", None)
         if workflow_id is not None:
             print(f"  Workflow folder   : outputs/workflow_{workflow_id}/")
+
+        # PR #37 — executor (PyInstaller subprocess) 결과
+        executor = getattr(result, "executor_result", None)
+        if executor is not None:
+            print()
+            print("--- PyInstaller Executor (PR #36/#37) ---")
+            print(f"  {executor.summary_line()}")
+            if executor.exe_path is not None:
+                print(f"  exe_path: {executor.exe_path}")
+            if executor.error_message:
+                print(f"  error: {executor.error_message}")
 
     print()
     print("--- Next Steps ---")
