@@ -8,6 +8,9 @@
     from src.agents.qa import create_functional_test_agent, run_test_cases
     from src.agents.qa import create_gui_test_agent, run_gui_test
     from src.agents.qa import create_robustness_tester_agent, run_robustness_scenarios
+    from src.agents.qa import create_security_auditor_agent
+    from src.agents.qa import create_performance_engineer_agent
+    from src.agents.qa import create_compliance_officer_agent
 """
 
 from .code_qa_agent import (
@@ -34,6 +37,13 @@ from .code_reviewer import (
     CODE_REVIEWER_ROLE,
     ReviewMode,
     create_code_reviewer_agent,
+)
+from .compliance_officer import (
+    COMPLIANCE_OFFICER_BACKSTORY,
+    COMPLIANCE_OFFICER_GOAL,
+    COMPLIANCE_OFFICER_NAME,
+    COMPLIANCE_OFFICER_ROLE,
+    create_compliance_officer_agent,
 )
 from .functional_test_agent import (
     FUNCTIONAL_TEST_AGENT_BACKSTORY,
@@ -67,6 +77,13 @@ from .gui_test_executor import (
     launch_and_capture,
     run_gui_test,
 )
+from .performance_engineer import (
+    PERFORMANCE_ENGINEER_BACKSTORY,
+    PERFORMANCE_ENGINEER_GOAL,
+    PERFORMANCE_ENGINEER_NAME,
+    PERFORMANCE_ENGINEER_ROLE,
+    create_performance_engineer_agent,
+)
 from .robustness_executor import (
     DEFAULT_SCENARIOS,
     RobustnessResult,
@@ -81,6 +98,13 @@ from .robustness_tester import (
     ROBUSTNESS_TESTER_NAME,
     ROBUSTNESS_TESTER_ROLE,
     create_robustness_tester_agent,
+)
+from .security_auditor import (
+    SECURITY_AUDITOR_BACKSTORY,
+    SECURITY_AUDITOR_GOAL,
+    SECURITY_AUDITOR_NAME,
+    SECURITY_AUDITOR_ROLE,
+    create_security_auditor_agent,
 )
 
 __all__ = [
@@ -146,4 +170,22 @@ __all__ = [
     "ScenarioResult",
     "format_robustness_result_for_task",
     "run_robustness_scenarios",
+    # Security Auditor (Phase 7 정적, PR #47)
+    "SECURITY_AUDITOR_BACKSTORY",
+    "SECURITY_AUDITOR_GOAL",
+    "SECURITY_AUDITOR_NAME",
+    "SECURITY_AUDITOR_ROLE",
+    "create_security_auditor_agent",
+    # Performance Engineer (Phase 7 정량, PR #47)
+    "PERFORMANCE_ENGINEER_BACKSTORY",
+    "PERFORMANCE_ENGINEER_GOAL",
+    "PERFORMANCE_ENGINEER_NAME",
+    "PERFORMANCE_ENGINEER_ROLE",
+    "create_performance_engineer_agent",
+    # Compliance Officer (Phase 7 정책, PR #47)
+    "COMPLIANCE_OFFICER_BACKSTORY",
+    "COMPLIANCE_OFFICER_GOAL",
+    "COMPLIANCE_OFFICER_NAME",
+    "COMPLIANCE_OFFICER_ROLE",
+    "create_compliance_officer_agent",
 ]
