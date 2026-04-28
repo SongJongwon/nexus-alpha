@@ -27,9 +27,11 @@ from .code_qa_executor import (
 )
 from .code_reviewer import (
     CODE_REVIEWER_BACKSTORY,
+    CODE_REVIEWER_BACKSTORY_WITH_EXECUTION,
     CODE_REVIEWER_GOAL,
     CODE_REVIEWER_NAME,
     CODE_REVIEWER_ROLE,
+    ReviewMode,
     create_code_reviewer_agent,
 )
 from .functional_test_agent import (
@@ -68,9 +70,11 @@ from .gui_test_executor import (
 __all__ = [
     # Code Reviewer (정적 분석, PR #25)
     "CODE_REVIEWER_BACKSTORY",
+    "CODE_REVIEWER_BACKSTORY_WITH_EXECUTION",
     "CODE_REVIEWER_GOAL",
     "CODE_REVIEWER_NAME",
     "CODE_REVIEWER_ROLE",
+    "ReviewMode",
     "create_code_reviewer_agent",
     # Code QA Agent (실행 기반, PR #42)
     "CODE_QA_AGENT_BACKSTORY",
