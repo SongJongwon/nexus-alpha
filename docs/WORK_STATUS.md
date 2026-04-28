@@ -1,10 +1,10 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-27 (PR #25~34 머지 완료, 이슈 4/5/6 모두 close)
-> **현재 브랜치**: `main` (모든 작업 머지됨)
-> **테스트**: pytest **184 passed** (138 + 누적 신규 46, 회귀 0)
+> **마지막 업데이트**: 2026-04-28 (PR #38 머지 완료, **자연어 → `.exe` 풀체인 첫 자동 생성**)
+> **현재 브랜치**: `main` (PR #25~38 모두 머지)
+> **테스트**: pytest **199 passed** (138 + 누적 신규 61, 회귀 0)
 > **최근 세션 로그**: [progress/session_log_20260427.md](./progress/session_log_20260427.md)
-> **최신 통합 설계**: [architecture/nexus_alpha_v5_built.md](./architecture/nexus_alpha_v5_built.md)
+> **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
 
 ---
 
@@ -12,14 +12,38 @@
 
 | 영역 | 상태 |
 |---|---|
-| Phase 0~5 구축 | ✅ 완료 (34개 PR) |
+| Phase 0~5 구축 | ✅ 완료 (38개 PR) |
 | 메인 워크플로우 (`analyze_and_implement`) | ✅ 작동 |
-| GUI 분기 라우팅 | ✅ 작동 (PR #23 fix 검증 완료 — PR #24) |
-| GUI 코드 생성 본문 캡처 | ✅ **PR #25 머지** (이슈 4 해결, 2026-04-27) |
-| GUI 풀체인 (`calculator.py` 15~25k 자, py_compile 통과) | ✅ **안정화 (7차 연속)** (PR #28~34 양호) |
-| 16 에이전트 본문 캡처 | ✅ **94% 도달** (PR #34 7차 E2E — 15/16, 5개 systematic failure 모두 해결) |
-| LLM 비결정적 컴플라이언스 (이슈 6) | ✅ **사실상 close** (방어선 2 효과 입증, 잔존 1건은 LLM content variance) |
-| 풀체인 E2E ('계산기' → setup.exe) | ❌ 미달성 (외부 도구 미통합 — WORK_STATUS §4) |
+| GUI 분기 라우팅 | ✅ 작동 |
+| GUI 코드 생성 본문 캡처 | ✅ 안정화 (이슈 4 해결, PR #25) |
+| GUI 풀체인 (`calculator.py`, py_compile 통과) | ✅ **8차 연속 안정** (PR #28~38) |
+| 16 에이전트 본문 캡처 | ✅ **100% 도달** (PR #38 8차 E2E — 16/16) |
+| LLM 비결정적 컴플라이언스 (이슈 6) | ✅ **close** (방어선 2 + LLM variance 자연 회복) |
+| **🎯 자연어 → `.exe` 풀체인** | ✅ **첫 자동 생성 성공** (PR #38 — Calculator.exe 10.68 MB) |
+| 풀체인 E2E ('계산기' → 다운로드 가능 setup.exe URL) | ⏳ PR #39 예정 (GitHub Release 자동 업로드) |
+
+---
+
+## 🎯 PR #38 8차 E2E — 자연어 → `.exe` 풀체인 첫 자동 생성 성공 (2026-04-28)
+
+```
+입력: 자연어 "계산기 만들어줘"
+       ↓
+14 LLM 호출 + build_executor subprocess
+       ↓
+🎉 Calculator.exe (10.68 MB, PE32+ Windows GUI)
+   SHA256: 1d719f025c62b9e6e5042d6338b1a28f3bf14da952d2966248128057c4d2965a
+   빌드 시간: 12.28초 / 총 27분 04초
+```
+
+- **본문 캡처율**: 16/16 (**100%**, PR #34 94% 대비 +6%)
+- **DepAnalyzer 회복**: PR #34 782자 → PR #38 4,026자 (×5.1)
+- **상세**: [progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md)
+
+**v6 doc DoD 마일스톤 진척**:
+- ✅ M4.5 (수동 build_executor 호출, PR #36 smoke test)
+- ✅ **M4.7 (자연어 → `.exe` 자동 풀체인, PR #38)** ← 신규
+- ⏳ M5 (다운로드 가능 setup.exe URL, PR #39 예정)
 
 ---
 
@@ -31,24 +55,24 @@
 | **이슈 5** | 비-GUI 16 에이전트 동일 패턴 | PR #27 | PR #28 (4차) |
 | **이슈 6** | LLM 비결정적 컴플라이언스 | PR #29 (방어선 1) → PR #31/#32 (방어선 2 시범) → PR #33 (전체 확장) | PR #34 (7차) |
 
-**최종 캡처율**: 38% → **94%** (15/16, 잔존 1건은 LLM content variance, 무처리 권장)
-**상세**: [progress/session_log_20260427.md](./progress/session_log_20260427.md)
+**최종 캡처율**: 38% → **94%** (PR #34) → **100%** (PR #38) — 단일 세션 누적
+**상세**: [progress/session_log_20260427.md](./progress/session_log_20260427.md) +
+[progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md)
 
-## 🎯 다음 마일스톤 — 외부 도구 통합 (WORK_STATUS §4)
+## 🎯 다음 마일스톤 — M5 (다운로드 가능 setup.exe URL)
 
-GUI 풀체인 + 사양 산출 사슬 7차 연속 안정. 다음은 **첫 진짜 `.exe` 생성**:
+자연어 → `.exe` 자동 풀체인 (M4.7) 완성됨. 남은 마지막 단계:
 
-### PR #35 (예정) — PyInstaller 실제 호출 통합 (Phase 4.5 강화)
-- **현재**: Build Engineer 가 BuildSpec 사양만 산출
-- **목표**: 사양 → `pyinstaller` 실제 호출 → `.exe` 생성 → SHA256 산출
-- **위치**: `src/agents/build_release/build_executor.py` (신규)
-- **통합**: `build_workflow.py` 의 5단 사슬 끝에 executor 추가
-- **검증**: 8차 E2E 에서 `calculator.exe` 생성 + 부팅 확인
+### PR #39 (예정) — GitHub Release 자동 업로드
+- **현재**: Distribution Agent 가 사양만 산출 (URL placeholder)
+- **목표**: 사양 → `gh release create` 실 호출 → `.exe` + SHA256 manifest 업로드 → 다운로드 URL 자동 발급
+- **위치**: `src/agents/build_release/distribution_executor.py` (예정)
+- **검증**: 9차 E2E 에서 다운로드 가능 URL 자동 발급 확인 → **M5 완성**
 
 ### 후속 마일스톤
-- **PR #36** (조건부): GitHub Release 자동 업로드 (`gh release create` 호출)
-- **PR #37** (조건부): Update Checker 산출 코드 통합
-- **PR #38** (조건부): 풀체인 E2E ('계산기' → 다운로드 가능 setup.exe URL)
+- **PR #40** (조건부): Update Checker 산출 코드 통합 (산출 calculator.py 에 updater.py 임포트)
+- **PR #41** (조건부): CLI 경로 E2E 검증 (데이터 분석 시나리오)
+- **Phase 6 착수** (조건부): Track B 시작 (5명 추가 — Web Scraping / Desktop Auto / API / Data Parser / DevOps)
 
 ---
 
