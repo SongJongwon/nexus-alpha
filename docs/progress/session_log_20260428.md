@@ -369,5 +369,167 @@ result = run_analyze_and_implement(
 
 ---
 
-*"청산에서 도약으로 — 어제의 이슈 close 가 오늘의 마일스톤 도약을 가능케 함.*
-*4시간 동안 첫 .exe → 자동 풀체인 → 다운로드 가능 URL 까지 한 번에 도달."*
+## 🌙 저녁 후속 작업 (16:00~) — STEP 2 + STEP 3 시리즈 + 10차 E2E
+
+### PR #41 — 9차 E2E (M5 풀체인 자동 검증)
+
+**목적**: PR #39 의 smoke test 가 실 풀체인에서도 통과하는지 검증.
+
+**결과**: 🎉 **M5 DoD 5/5 ALL PASSED**
+- Elapsed: **24:19** (8차 27:04 대비 -2:45)
+- BUILD: Calculator.exe 10.7 MB, sha256=`8d1dcd7017fbac88...`, 12.88s
+- PUBLISH: `[DRAFT] v0.2.0` → release_url + download_urls 2개, 4.13s
+- Draft Release: https://github.com/SongJongwon/nexus-alpha/releases/tag/untagged-690fe429ce707af523e8
+
+**1차 실행 실패**: cp949 인코딩 (`UnicodeEncodeError: '—'`) → LLM 호출 0회 비용. UTF-8 reconfigure 추가 후 정상.
+
+**상세**: [progress/e2e_9th_verification_post_pr39.md](./e2e_9th_verification_post_pr39.md)
+
+---
+
+### STEP 2: PR #42~#48 — 본부 4 (품질 검증) 100% 완성
+
+**전환점**: M5 풀체인 검증 완료 → 다음 단계는 *품질 검증 본부 자동화*. "리뷰 중심"
+→ "실행 기반 자동 테스트" 전환.
+
+| PR | 제목 | 신규 모듈 | 신규 테스트 | 누적 pytest |
+|---|---|---|---|---|
+| **#42** | Code QA Agent (pytest + ruff) | `code_qa_executor.py` + agent | 48개 | 274 |
+| **#43** | Functional Test Agent (엣지케이스) | `functional_test_executor.py` + agent | 29개 | 255 |
+| **#44** | GUI Test Agent (pyautogui + Vision) | `gui_test_executor.py` + agent | 42개 | 268 |
+| **#45** | Code Reviewer 실행 기반 업그레이드 | `mode='review_with_execution'` | 7개 | 233 |
+| **#46** | Robustness Tester (부하 시나리오) | `robustness_executor.py` + agent | 24개 | 250 |
+| **#47** | Security/Performance/Compliance 3명 묶음 | 3개 LLM-only agents | 18개 | 244 |
+| **#48** | qa_feedback_loop + 조직도 v7 + WORK_STATUS | `qa_feedback_loop.py` (duck typing) | 16개 | 242 |
+
+**핵심 결과**:
+- 본부 4: 2/6 (33%) → **9/9 + Convergence Judge (100%)** ⭐
+- 전체 구현률: 23/46 (50%) → **30/46 (65%)**
+- 100% 완성 본부: 2개 → **3개** (디자인 / 빌드&배포 / 품질 검증)
+- 신규 인프라: 5개 모듈 (4종 QA executor + qa_feedback_loop)
+- 신규 에이전트: 7명 + Code Reviewer 강화 1명
+
+**조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](../architecture/Nexus_Alpha_조직도_v7.md)
+
+---
+
+### STEP 3: PR #49 — 10차 E2E (M5 + QA 풀체인) 스크립트
+
+**스크립트**: `scripts/run_e2e_10th_verification.py`
+- PR #41 (9차) 베이스 + qa_feedback_loop 통합
+- 4종 QA 도구 lazy import (graceful degrade)
+- max_qa_retries=3 회 자동 재시도 루프
+- M5+QA DoD 7/7 자동 체크 (9차 5 + 신규 2)
+
+**테스트**: 8개 (스크립트 syntax / lazy import / DoD 체크 grep / dump_safely)
+
+---
+
+### 머지 작업 (저녁 후반)
+
+**전체 9개 PR 순차 머지** (PR #41~#49) — `__init__.py` / `WORK_STATUS.md` 4건 충돌 모두 로컬 resolve:
+
+| PR | 충돌 | 결과 |
+|---|---|---|
+| #41 | - | ✅ 머지 |
+| #42 | - | ✅ 머지 |
+| #43 | `__init__.py` | ✅ resolve + 머지 |
+| #44 | `__init__.py` | ✅ resolve + 머지 |
+| #45 | - | ✅ 머지 |
+| #46 | `__init__.py` | ✅ resolve + 머지 |
+| #47 | `__init__.py` | ✅ resolve + 머지 |
+| #48 | `WORK_STATUS.md` | ✅ resolve + 머지 |
+| #49 | - | ✅ 머지 |
+
+**최종 main 회귀 검증**: pytest **418 passed** (회귀 0)
+
+---
+
+### ⚠️ 10차 E2E 1차 실 실행 — FAILED (이슈 6 재발현)
+
+**시도 1 (16:50~)**: Build Engineer 단계에서 Pydantic ValidationError
+
+```
+Elapsed: 14.92분 (정상 27분 대비 단축 = 중간에서 죽음)
+실패 위치: Build Engineer (Phase 4.5)
+에러: ValidationError: 7 validation errors for BuildSpecOutput
+      summary / tool_section / command_section / spec_section / pitfalls /
+      checklist / engineer_notes — 모두 Field required, input_value={}
+```
+
+**원인 분석**:
+- LLM (Claude Opus) 이 풍부한 markdown 보고서는 작성했지만, Pydantic JSON 매핑 실패
+- PR #29-#33 의 방어선 (auto-retry + Pydantic + sanitize) 가 모두 적용된 상태
+- 7차 E2E 캡처율이 94% — 즉 6% 잔여 실패 가능성. 이번이 그에 해당.
+- **회귀 아님** — PR #42-#48 변경은 본부 4 신규 모듈만 추가, build_workflow 미수정
+
+**시도 2 (17:30~)**: 진행 중이었으나 세션 마무리 요청으로 중도 종료. 약 50% 진행 (Code Reviewer 단계).
+- log 에 `qa_feedback_loop.build_feedback_message_for_engineer() 자동 생성 (retry_count=0)` 보임 — 1차 풀체인 통과 후 QA fail 로 재생성 진입한 것으로 추정
+- 정확한 원인은 내일 재실행 시 확인
+
+**보고서 템플릿 (실 실행 결과 미반영 상태)**: [progress/e2e_10th_verification_template.md](./e2e_10th_verification_template.md)
+
+---
+
+## 🎯 내일 (2026-04-29~) 시작 시 우선순위
+
+### 1순위 — 10차 E2E 재실행 (M5+QA DoD 7/7 통과)
+
+```bash
+cd C:\projects\nexus-alpha
+.venv\Scripts\activate
+python scripts\run_e2e_10th_verification.py
+```
+
+**예상 시나리오**:
+- A) **통과 (확률 ~94%)**: LLM variance 자연 회복 → DoD 7/7 ALL PASSED → 보고서 갱신 + commit
+- B) **다시 실패**: 이슈 6 재현 → 디버깅 필요 (build_workflow 의 Pydantic schema 적용 강도 재검토)
+
+**B 시나리오 시 디버깅 후보**:
+1. Build Engineer backstory 의 출력 규약 문구 강화 (Pydantic 명시 필요성)
+2. `_schemas.py` 의 BuildSpecOutput 검증 로직에 fallback 추가
+3. workflow 의 retry 횟수 증가 (현재 1회 → 2회)
+
+### 2순위 — Phase 6 착수 (Track B 시작)
+
+본부 3 (개발 본부) 의 미구현 5명:
+- Web Scraping Specialist (Playwright/Selenium)
+- Desktop Automation Specialist (PyAutoGUI/PyWinAuto)
+- API Integration Developer (REST/GraphQL/Webhook)
+- Data Parser Engineer (Excel/PDF/CSV/JSON)
+- DevOps Engineer (Docker/CI/CD)
+
+→ 본부 3: 3/9 (33%) → **8/9 (89%)** + 새 워크플로 `automate_workflow.py` (analyze_and_implement 와 병렬)
+
+### 3순위 — Update Checker 실 통합
+
+PR #21 의 Update Checker 사양을 산출 calculator.py 에 자동 임포트.
+
+### 4순위 — CLI 경로 E2E 검증
+
+데이터 분석 시나리오 (`매장별 월간 매출 Excel 분석 PDF 보고서`) 로 CLI 분기 검증.
+
+---
+
+## 📂 오늘 저녁 산출 문서 (16:00~)
+
+| 파일 | 내용 |
+|---|---|
+| `docs/progress/e2e_9th_verification_post_pr39.md` | 9차 E2E 검증 (M5 5/5 ALL PASSED) |
+| `docs/progress/e2e_10th_verification_template.md` | 10차 E2E 보고서 템플릿 (실 실행 미반영) |
+| `docs/architecture/Nexus_Alpha_조직도_v7.md` | 조직도 v7 (본부 4 100%) |
+| `scripts/run_e2e_9th_verification.py` | 9차 E2E 스크립트 |
+| `scripts/run_e2e_10th_verification.py` | 10차 E2E 스크립트 (lazy import + qa_feedback_loop) |
+| `src/agents/qa/code_qa_executor.py` + `code_qa_agent.py` | Code QA 도구 + 에이전트 |
+| `src/agents/qa/functional_test_executor.py` + `functional_test_agent.py` | Functional Test |
+| `src/agents/qa/gui_test_executor.py` + `gui_test_agent.py` | GUI Test (pyautogui + Vision) |
+| `src/agents/qa/robustness_executor.py` + `robustness_tester.py` | Robustness |
+| `src/agents/qa/security_auditor.py` | Security Auditor |
+| `src/agents/qa/performance_engineer.py` | Performance Engineer |
+| `src/agents/qa/compliance_officer.py` | Compliance Officer |
+| `src/workflows/qa_feedback_loop.py` | QA 결과 합산 + 재생성 결정 (duck typing) |
+
+---
+
+*"오전: 첫 .exe → 자동 풀체인 → 다운로드 URL 도달. 저녁: M5 풀체인 자동 검증 + QA 본부 100% 완성.*
+*PR #25 부터 PR #49 까지 25개 PR — 본 프로젝트 역사상 최대 단일 세션."*
