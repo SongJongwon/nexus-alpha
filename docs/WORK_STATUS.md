@@ -1,10 +1,11 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-28 (PR #25~39 모두 머지, **M4.7 + M5 사실상 완성**)
-> **현재 브랜치**: `main`
+> **마지막 업데이트**: 2026-04-28 (PR #41 — **M5 풀체인 자동화 완전 검증**)
+> **현재 브랜치**: `phase5/e2e-9th-published-verification`
 > **테스트**: pytest **226 passed** (138 + 누적 신규 88, 회귀 0)
 > **최근 세션 로그**: [progress/session_log_20260428.md](./progress/session_log_20260428.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
+> **9차 E2E 검증**: [progress/e2e_9th_verification_post_pr39.md](./progress/e2e_9th_verification_post_pr39.md) ⭐
 
 ---
 
@@ -12,20 +13,21 @@
 
 | 영역 | 상태 |
 |---|---|
-| Phase 0~5 구축 | ✅ 완료 (39개 PR) |
+| Phase 0~5 구축 | ✅ 완료 (40개 PR + PR #41) |
 | 메인 워크플로우 (`analyze_and_implement`) | ✅ 작동 |
 | GUI 분기 라우팅 | ✅ 작동 |
 | GUI 코드 생성 본문 캡처 | ✅ 안정화 (이슈 4 해결, PR #25) |
-| GUI 풀체인 (`calculator.py`, py_compile 통과) | ✅ **8차 연속 안정** (PR #28~38) |
-| 16 에이전트 본문 캡처 | ✅ **100% 도달** (PR #38 8차 E2E — 16/16) |
+| GUI 풀체인 (`calculator.py`, py_compile 통과) | ✅ **9차 연속 안정** (PR #28~41) |
+| 16 에이전트 본문 캡처 | ✅ **100% 도달 유지** (9차 E2E — 16/16) |
 | LLM 비결정적 컴플라이언스 (이슈 6) | ✅ **close** (방어선 2 + LLM variance 자연 회복) |
 | 🎯 자연어 → `.exe` 풀체인 (M4.7) | ✅ **첫 자동 생성 성공** (PR #38 — Calculator.exe 10.68 MB) |
-| **🎯 다운로드 가능 setup.exe URL (M5)** | ✅ **사실상 완성** (PR #39 — gh release smoke test 4.6초, draft mode) |
-| Published mode E2E 검증 | ⏳ PR #41 예정 (9차 E2E, `enable_publish=True`) |
+| **🎯 자연어 → 다운로드 URL 풀체인 (M5)** | ✅ **완전 검증** (PR #41 — 9차 E2E **DoD 5/5 ALL PASSED**) ⭐ |
+| Published mode E2E 검증 | ✅ **24:19 정상 완료** (draft v0.2.0 + 2 다운로드 URL) |
+| QA 본부 실행 기반 전환 | ⏳ STEP 2 예정 (PR #42~#48, 7개 PR) |
 
 ---
 
-## 🎉 PR #36~39 — 외부 도구 통합 + M4.7 + M5 사실상 완성 (2026-04-28)
+## 🎉 PR #36~41 — 외부 도구 통합 + M4.7 + M5 완전 검증 (2026-04-28)
 
 ### Track A 풀체인 자동 생성 흐름 (PR #38)
 
@@ -39,30 +41,47 @@
    빌드 시간: 12.28초 / 총 27분 04초
 ```
 
-### GitHub Release 자동 업로드 (PR #39)
+### GitHub Release 자동 업로드 smoke (PR #39)
 
 ```
 [PUBLISH SUCCESS] [DRAFT] v0.0.1-smoke-pr39 → 4.6초
-Release URL: https://github.com/SongJongwon/nexus-alpha/releases/tag/untagged-...
-Download URLs:
-  - .../releases/download/.../Calculator.exe
-  - .../releases/download/.../Calculator.exe.sha256.txt
 ```
 
-- **본문 캡처율**: 16/16 (**100%**, PR #34 94% 대비 +6%)
-- **외부 도구 통합 2건**: PyInstaller (PR #36) + gh CLI (PR #39)
-- **상세**: [progress/session_log_20260428.md](./progress/session_log_20260428.md) +
-  [progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md)
+### ⭐ M5 풀체인 E2E 검증 (PR #41) — 9차 E2E `enable_publish=True`
 
-**v6 doc DoD 마일스톤 진척 (M1~M5 모두 사실상 완성)**:
+```
+[BUILD SUCCESS] Calculator.exe (10.7 MB, sha256=8d1dcd7017fbac88..., 12.88s)
+[PUBLISH SUCCESS] [DRAFT] v0.2.0 → 4.13s
+   release_url: https://github.com/SongJongwon/nexus-alpha/releases/tag/untagged-690fe429ce707af523e8
+   download_urls (2개):
+     - .../download/.../Calculator.exe
+     - .../download/.../Calculator.exe.sha256.txt
+총 소요: 24분 19.57초 (8차 27:04 대비 -2:45)
+```
+
+**M5 DoD 체크 5/5 ALL PASSED**:
+1. ✅ `publish_result.success == True`
+2. ✅ `release_url` 발급
+3. ✅ `download_urls == 2`
+4. ✅ `is_draft == True`
+5. ✅ `executor_result.success == True`
+
+- **본문 캡처율**: 16/16 (**100%**, 9차 E2E 도 유지)
+- **외부 도구 통합 2건**: PyInstaller (PR #36) + gh CLI (PR #39)
+- **풀체인 검증**: 자연어 한 줄 → 다운로드 URL (PR #41)
+- **상세**: [progress/session_log_20260428.md](./progress/session_log_20260428.md) +
+  [progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md) +
+  [progress/e2e_9th_verification_post_pr39.md](./progress/e2e_9th_verification_post_pr39.md) ⭐
+
+**v6 doc DoD 마일스톤 진척 (M1~M5 모두 완전 달성)**:
 - ✅ M1 (Python 스크립트 생성) — Phase 1
 - ✅ M2 (자율 진화 루프) — Phase 2.5
 - ✅ M3 (실행 검증) — Phase 3
 - ✅ M4 (`.exe` 자동 생성 사양) — PR #21
 - ✅ **M4.5 (수동 build_executor)** — PR #36 ⭐
 - ✅ **M4.7 (자연어 → `.exe` 자동 풀체인)** — PR #38 ⭐
-- ✅ **M5 (다운로드 가능 setup.exe URL)** — PR #39 ⭐ (draft mode smoke test)
-- ⏳ M5 published mode E2E 검증 — PR #41 예정
+- ✅ **M5 (다운로드 가능 setup.exe URL — draft smoke)** — PR #39 ⭐
+- ✅ **M5 풀체인 자동 검증 (자연어 → 다운로드 URL E2E)** — PR #41 ⭐⭐
 
 ---
 
@@ -78,24 +97,55 @@ Download URLs:
 **상세**: [progress/session_log_20260427.md](./progress/session_log_20260427.md) +
 [progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md)
 
-## 🎯 다음 마일스톤 — PR #41 9차 E2E (M5 published mode 검증)
+## 🎯 다음 마일스톤 — STEP 2: QA 본부 실행 기반 전환 (PR #42~#48, 7개 PR)
 
-M5 가 PR #39 smoke test 로 사실상 완성. 남은 검증: **풀체인 E2E 에서 자동 publish**.
+M5 풀체인이 PR #41 로 완전 검증됨. 다음은 **품질 검증 본부 (본부 4) 의 성격 전환** —
+"리뷰 중심" → "실행 기반 자동 테스트". 자동 피드백 루프 (QA → Python Engineer 재생성)
+까지 도입해 자가 진화 사이클 강화.
 
-### PR #41 (예정) — 9차 E2E (`enable_publish=True`)
-- **목적**: `enable_executor=True` + `enable_publish=True` 활성으로 자연어 → 다운로드 URL 풀체인 첫 자동 검증
-- **소요 예상**: ~30분 (E2E 27분 + publish 4초)
-- **측정**:
-  - `result.publish_result.success == True`
-  - `result.publish_result.release_url` 발급 확인
-  - `result.publish_result.download_urls` 2개 (.exe + .sha256.txt)
-  - GitHub UI 에서 draft release 확인 (인증 사용자만)
-- **결과 양호 시**: published mode 별도 옵션 추가 검토 (PR #41+)
+### PR #42 — Code QA Agent (실행 기반 정적 분석)
+- 신설: `src/agents/qa/code_qa_agent.py` + `src/agents/qa/tools/test_executor.py`
+- pytest + ruff + mypy subprocess 호출 → 통과/실패 + stderr 파싱
+- Pydantic: `CodeQAReportOutput` (passed / failed / errors / coverage)
+- Sandbox Runner 와의 차별점: 테스트 스위트 전용 (Sandbox 는 단발 코드 실행)
 
-### 후속 마일스톤
-- **PR #42** (조건부): Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
-- **PR #43** (조건부): CLI 경로 E2E 검증 (데이터 분석 시나리오)
-- **Phase 6 착수** (조건부): Track B 시작 (5명 추가 — Web Scraping / Desktop Auto / API / Data Parser / DevOps)
+### PR #43 — Functional Test Agent (엣지케이스 입력값)
+- 신설: `src/agents/qa/functional_test_agent.py`
+- LLM 으로 엣지케이스 입력 생성 → `test_executor` 로 실행 → 검증
+- Pydantic: `FunctionalTestReportOutput` (test_cases / edge_cases_found / regressions)
+
+### PR #44 — GUI Test Agent (pyautogui + Claude Vision)
+- 신설: `src/agents/qa/gui_test_agent.py` + `src/agents/qa/tools/gui_test_runner.py`
+- pyautogui 로 `.exe`/`.py` 실행 → 스크린샷 → Claude API Vision 분석
+- Pydantic: `GUITestReportOutput` (screenshot_paths / vision_analysis / ui_issues)
+
+### PR #45 — QA Reviewer 실행 기반 업그레이드
+- 수정: `src/agents/qa/code_reviewer.py` (169 lines)
+- LLM 리뷰 + `test_executor` 도구 호출 (`mode='review_with_execution'`)
+- 회귀 방지: 기존 리뷰 모드도 `mode='review_only'` 로 유지
+
+### PR #46 — Robustness Tester
+- 신설: 예외/부하 테스트 (Phase 7 본부 4 확장)
+
+### PR #47 — Security Auditor + Performance Engineer + Compliance Officer
+- 3 에이전트 묶음 신설 (Phase 7 본부 4 완성)
+
+### PR #48 — 자동 피드백 루프 + 조직도 v7 + WORK_STATUS
+- `src/workflows/iterative_loop.py` 새 노드 (qa_test_node, feedback_node)
+- LangGraph 조건부 엣지: `qa_failed → python_engineer (재생성)`, `max_qa_retries=3`
+- 조직도 v7 신설: 본부 4 6명 → **9명 + Convergence Judge = 10명 (100%)**
+  - 전체 구현률 23/46 → **30/46 (65%)**
+
+### STEP 3: PR #49 — 10차 E2E (QA 루프 포함 풀체인)
+- `enable_publish=True` + `enable_qa_loop=True` + `max_qa_retries=3`
+- 자연어 → 코드 → QA 자동 → 버그시 재생성 → QA 통과 → .exe → publish URL
+- 예상 60-90분 (E2E 27분 + QA 20-40분 + publish 4초)
+- M5 최종 마일스톤: **자연어 한 줄 → QA 검증된 다운로드 URL**
+
+### 후속 마일스톤 (PR #50+)
+- (조건부) Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
+- (조건부) CLI 경로 E2E 검증 (데이터 분석 시나리오)
+- Phase 6 착수 (조건부): Track B 시작 (5명 추가 — Web Scraping / Desktop Auto / API / Data Parser / DevOps)
 
 ---
 
@@ -200,11 +250,12 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 - 새 GUI 에이전트 추가 시 해당 테스트의 `backstories` dict 에 등록 필수
 - **확장 필요**: PR #27 (이슈 5 fix) 에서 비-GUI 10 에이전트도 동일 grep 보호 대상으로 포함
 
-### B. 외부 도구 미통합 의존
+### B. 외부 도구 미통합 의존 — ✅ **해소됨 (PR #36 + PR #41)**
 
-- 현재 Phase 4.5/5 는 *사양 산출만* — 실제 PyInstaller / gh / signtool 호출 부재
-- 풀체인 E2E ('계산기' → 다운로드 가능 setup.exe URL) 는 작업 #4~5 완료 전에는 불가능
-- v5 doc DoD 의 미완 항목 모두 이 의존에 묶임
+- ~~현재 Phase 4.5/5 는 *사양 산출만* — 실제 PyInstaller / gh / signtool 호출 부재~~
+- ~~풀체인 E2E ('계산기' → 다운로드 가능 setup.exe URL) 는 작업 #4~5 완료 전에는 불가능~~
+- 2026-04-28 PR #36 (PyInstaller 실 호출) + PR #41 (gh release create 풀체인 검증) 로 해소
+- 잔여: signtool (코드 서명) — EV 인증서 도입 시 즉시 통합 가능
 
 ### C. 토큰 노출 사고 (2026-04-21)
 
@@ -239,7 +290,9 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 | E2E 4차 검증 (2026-04-27, 이슈 6 발견) | [progress/e2e_4th_verification_post_pr27.md](./progress/e2e_4th_verification_post_pr27.md) |
 | E2E 5차 검증 (2026-04-27, 방어선 1 효과 미미) | [progress/e2e_5th_verification_post_pr29.md](./progress/e2e_5th_verification_post_pr29.md) |
 | E2E 6차 검증 (2026-04-27, 방어선 2 시범 100%) | [progress/e2e_6th_verification_post_pr31.md](./progress/e2e_6th_verification_post_pr31.md) |
-| **E2E 7차 검증** (2026-04-27, 방어선 2 확장 94%, 이슈 6 close) | [progress/e2e_7th_verification_post_pr33.md](./progress/e2e_7th_verification_post_pr33.md) |
+| E2E 7차 검증 (2026-04-27, 방어선 2 확장 94%, 이슈 6 close) | [progress/e2e_7th_verification_post_pr33.md](./progress/e2e_7th_verification_post_pr33.md) |
+| E2E 8차 검증 (2026-04-28, M4.7 자연어 → .exe 풀체인) | [progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md) |
+| **E2E 9차 검증** (2026-04-28, M5 풀체인 자동 5/5 ALL PASSED) ⭐ | [progress/e2e_9th_verification_post_pr39.md](./progress/e2e_9th_verification_post_pr39.md) |
 | Phase 1 완료 보고서 | [progress/phase1_complete.md](./progress/phase1_complete.md) |
 | Phase 2 P1 완료 보고서 | [progress/phase2_priority1_complete.md](./progress/phase2_priority1_complete.md) |
 | Phase 2 P2 완료 보고서 | [progress/phase2_priority2_complete.md](./progress/phase2_priority2_complete.md) |
@@ -268,17 +321,32 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 12. ~~PR #36 — PyInstaller 실제 호출 (첫 .exe)~~ ✅ M4.5 달성
 13. ~~PR #37 — architecture 문서 v6 최신화~~ ✅
 14. ~~PR #38 — 8차 E2E (자연어 → .exe 풀체인 자동)~~ ✅ **M4.7 달성**
-15. ~~PR #39 — GitHub Release 자동 업로드~~ ✅ **M5 사실상 완성** ← **현재**
+15. ~~PR #39 — GitHub Release 자동 업로드~~ ✅ **M5 사실상 완성**
+16. ~~PR #40 — 세션 로그 (2026-04-28) + WORK_STATUS 정리~~ ✅
+17. ~~PR #41 — 9차 E2E (`enable_publish=True`, M5 풀체인 검증)~~ ✅ **M5 DoD 5/5 ALL PASSED** ⭐ ← **본 PR**
 
-### 다음 작업 (PR #40 = 본 세션 로그 + PR #41~)
+### 다음 작업 — STEP 2: QA 본부 실행 기반 전환 (PR #42~#48)
 
-16. ~~PR #40 — 세션 로그 (2026-04-28) + WORK_STATUS 정리~~ ✅ 본 PR
-17. **PR #41 — 9차 E2E (`enable_publish=True`, M5 풀체인 검증)** ← **다음**
-    - 자연어 → 다운로드 가능 setup.exe URL 첫 풀체인 자동 검증
-    - 소요 ~30분 (E2E 27분 + publish 4초)
-18. (조건부) **PR #42 — Update Checker 실 통합** (산출 calculator.py 에 updater.py 임포트)
-19. (조건부) **PR #43 — CLI 경로 E2E 검증** (데이터 분석 시나리오)
-20. (조건부) **Phase 6 착수** — Track B 시작 (5명 추가)
+18. **PR #42 — Code QA Agent** (pytest + ruff/mypy 실 호출) ← **다음**
+19. **PR #43 — Functional Test Agent** (엣지케이스 입력값)
+20. **PR #44 — GUI Test Agent** (pyautogui + Claude Vision)
+21. **PR #45 — QA Reviewer 실행 기반 업그레이드**
+22. **PR #46 — Robustness Tester** (Phase 7)
+23. **PR #47 — Security Auditor + Performance Engineer + Compliance Officer** (Phase 7 묶음)
+24. **PR #48 — 자동 피드백 루프 + 조직도 v7 + WORK_STATUS** (구현률 23/46 → 30/46)
+
+### STEP 3 — 10차 E2E (QA 루프 포함 풀체인)
+
+25. **PR #49 — 10차 E2E** (`enable_publish=True` + `enable_qa_loop=True`)
+    - 자연어 → 코드 → QA 자동 → 버그시 재생성 → QA 통과 → .exe → publish URL
+    - 소요 60-90분 (E2E 27분 + QA 20-40분 + publish 4초)
+    - M5 최종 마일스톤: **자연어 한 줄 → QA 검증된 다운로드 URL**
+
+### 후속 (PR #50+, 조건부)
+
+26. (조건부) Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
+27. (조건부) CLI 경로 E2E 검증 (데이터 분석 시나리오)
+28. (조건부) Phase 6 착수 — Track B 시작 (5명 추가)
 
 ---
 
