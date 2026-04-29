@@ -16,6 +16,7 @@ from crewai import Task
 
 from src.workflows._common import (
     SUSPICIOUS_OUTPUT_THRESHOLD,
+    kickoff_with_converter_rescue,
     retry_short_tasks_in_chain,
     retry_task_if_short,
     task_output_text,
@@ -207,3 +208,226 @@ def test_retry_short_tasks_in_chain_skips_under_pytest() -> None:
 def test_threshold_constant_is_120() -> None:
     """이슈 4/5/6 전체에서 일관된 임계값 보장 — 변경 시 의도적 결정 필요."""
     assert SUSPICIOUS_OUTPUT_THRESHOLD == 120
+
+
+# ---------------------------------------------------------------------------
+# kickoff_with_converter_rescue — PR #53 (이슈 6 방어선 3)
+# ---------------------------------------------------------------------------
+
+
+from pydantic import BaseModel  # noqa: E402
+
+from src.workflows._common import _ConverterError  # noqa: E402
+
+
+class _DummySchema(BaseModel):
+    summary: str
+
+
+class _FakeCrew:
+    """Crew 흉내 — kickoff() 호출 횟수 추적 + 시퀀스 기반 결과 / 예외 분기."""
+
+    def __init__(self, results):
+        # results: callable() 또는 예외 인스턴스 / 정상 리턴 값 시퀀스
+        self.results = list(results)
+        self.kickoff_calls = 0
+
+    def kickoff(self):
+        self.kickoff_calls += 1
+        if not self.results:
+            return "exhausted"
+        item = self.results.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _converter_error(msg: str = "Agent must be provided"):
+    """ConverterError 인스턴스 (CrewAI 미가용 시 RuntimeError 로 fallback)."""
+    if _ConverterError is None:
+        return RuntimeError(msg)
+    return _ConverterError(msg)
+
+
+def test_rescue_happy_path_no_exception_no_retry() -> None:
+    """예외 없을 때 kickoff 1회, output_pydantic 미변경."""
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+    crew = _FakeCrew(results=["OK"])
+
+    result = kickoff_with_converter_rescue(crew, [task])
+
+    assert result == "OK"
+    assert crew.kickoff_calls == 1
+    assert task.output_pydantic is _DummySchema  # 손대지 않음
+
+
+def test_rescue_strips_pydantic_and_retries_on_converter_error() -> None:
+    """ConverterError 시 output_pydantic=None 으로 벗기고 1회 재시도."""
+    if _ConverterError is None:
+        import pytest
+
+        pytest.skip("CrewAI ConverterError 미가용 환경")
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+    crew = _FakeCrew(results=[_converter_error(), "RECOVERED"])
+
+    result = kickoff_with_converter_rescue(crew, [task])
+
+    assert result == "RECOVERED"
+    assert crew.kickoff_calls == 2
+    assert task.output_pydantic is None  # 벗겨짐
+
+
+def test_rescue_strips_multiple_tasks_with_pydantic() -> None:
+    """체인 내 여러 task 의 output_pydantic 모두 벗김."""
+    if _ConverterError is None:
+        import pytest
+
+        pytest.skip("CrewAI ConverterError 미가용 환경")
+
+    task_a = _make_task()
+    task_b = _make_task()
+    task_c = _make_task()
+    object.__setattr__(task_a, "output_pydantic", _DummySchema)
+    object.__setattr__(task_b, "output_pydantic", _DummySchema)
+    # task_c 는 output_pydantic 없음
+    object.__setattr__(task_c, "output_pydantic", None)
+
+    crew = _FakeCrew(results=[_converter_error(), "RECOVERED"])
+
+    kickoff_with_converter_rescue(crew, [task_a, task_b, task_c])
+
+    assert task_a.output_pydantic is None
+    assert task_b.output_pydantic is None
+    assert task_c.output_pydantic is None  # 변화 없음
+
+
+def test_rescue_reraises_when_no_tasks_have_pydantic() -> None:
+    """벗길 output_pydantic 이 없으면 원본 예외 재상승 — 다른 원인의 ConverterError 일 수 있음."""
+    if _ConverterError is None:
+        import pytest
+
+        pytest.skip("CrewAI ConverterError 미가용 환경")
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", None)
+    crew = _FakeCrew(results=[_converter_error("unrelated"), "would-not-reach"])
+
+    import pytest
+
+    with pytest.raises(_ConverterError):
+        kickoff_with_converter_rescue(crew, [task])
+    assert crew.kickoff_calls == 1
+
+
+def test_rescue_max_rescue_zero_disables_recovery() -> None:
+    """max_rescue=0 이면 rescue 비활성 — 즉시 raise."""
+    if _ConverterError is None:
+        import pytest
+
+        pytest.skip("CrewAI ConverterError 미가용 환경")
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+    crew = _FakeCrew(results=[_converter_error()])
+
+    import pytest
+
+    with pytest.raises(_ConverterError):
+        kickoff_with_converter_rescue(crew, [task], max_rescue=0)
+    assert crew.kickoff_calls == 1
+    # max_rescue=0 이면 벗기기조차 안 함
+    assert task.output_pydantic is _DummySchema
+
+
+def test_rescue_propagates_non_converter_errors() -> None:
+    """ConverterError 가 아닌 예외 (RuntimeError 등) 는 rescue 안 함, 그대로 propagate."""
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+    crew = _FakeCrew(results=[ValueError("unrelated bug")])
+
+    import pytest
+
+    with pytest.raises(ValueError, match="unrelated bug"):
+        kickoff_with_converter_rescue(crew, [task])
+    assert crew.kickoff_calls == 1
+    assert task.output_pydantic is _DummySchema  # 변경 없음
+
+
+def test_rescue_only_calls_kickoff_twice_max() -> None:
+    """rescue 후 2번째 kickoff 도 ConverterError → max_rescue=1 이면 raise (총 2회)."""
+    if _ConverterError is None:
+        import pytest
+
+        pytest.skip("CrewAI ConverterError 미가용 환경")
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+    crew = _FakeCrew(results=[_converter_error(), _converter_error("second")])
+
+    import pytest
+
+    with pytest.raises(_ConverterError):
+        kickoff_with_converter_rescue(crew, [task], max_rescue=1)
+    assert crew.kickoff_calls == 2  # 1차 실패 + rescue 1회 = 2
+
+
+# ---------------------------------------------------------------------------
+# PR #53 v2 — ValidationError 도 rescue (10차 E2E 4차 Installer Creator 사례)
+# ---------------------------------------------------------------------------
+
+
+def _validation_error():
+    """Pydantic ValidationError 인스턴스 — Installer Creator 사례 재현용."""
+    from pydantic import BaseModel
+
+    class _Throw(BaseModel):
+        x: int
+
+    try:
+        _Throw.model_validate_json('{{not-valid-json}}')
+    except Exception as e:
+        return e
+    raise AssertionError("expected ValidationError but none raised")
+
+
+def test_rescue_strips_pydantic_and_retries_on_validation_error() -> None:
+    """CrewAI handle_partial_json 의 _JSON_PATTERN 이 비-JSON {..} 매칭해 raw
+    ValidationError escape 케이스 (10차 E2E 4차 Installer Creator 패턴) 도 rescue."""
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+    crew = _FakeCrew(results=[_validation_error(), "RECOVERED"])
+
+    result = kickoff_with_converter_rescue(crew, [task])
+
+    assert result == "RECOVERED"
+    assert crew.kickoff_calls == 2
+    assert task.output_pydantic is None  # 벗겨짐
+
+
+def test_rescue_validation_error_no_pydantic_reraises() -> None:
+    """output_pydantic 없는 task 에 ValidationError 만 raise → rescue 안 함."""
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", None)
+    crew = _FakeCrew(results=[_validation_error()])
+
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        kickoff_with_converter_rescue(crew, [task])
+    assert crew.kickoff_calls == 1
+
+
+def test_rescuable_exc_classes_includes_both_when_available() -> None:
+    """rescuable 예외 set 에 ConverterError + ValidationError 모두 포함 (정상 환경)."""
+    from src.workflows._common import _rescuable_exc_classes
+
+    classes = _rescuable_exc_classes()
+    if _ConverterError is not None:
+        assert _ConverterError in classes
+    from pydantic import ValidationError
+
+    assert ValidationError in classes

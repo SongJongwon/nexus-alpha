@@ -56,6 +56,7 @@ from src.agents.build_release.distribution_executor import (
 )
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
+    kickoff_with_converter_rescue,
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
@@ -366,14 +367,17 @@ def run_release_workflow(
             update_task=update_task,
         )
 
-        Crew(
+        _release_chain_tasks = [release_task, changelog_task, update_task, distribution_task]
+        _release_chain_crew = Crew(
             agents=[release_agent, changelog_agent, update_agent, distribution_agent],
-            tasks=[release_task, changelog_task, update_task, distribution_task],
+            tasks=_release_chain_tasks,
             process=Process.sequential,
             verbose=verbose,
-        ).kickoff()
-        # 이슈 6 fix — LLM 본문 누락 자동 재시도 (Release 4 task)
-        retry_short_tasks_in_chain([release_task, changelog_task, update_task, distribution_task])
+        )
+        # 이슈 6 방어선 3 (PR #53) — ConverterError 시 output_pydantic 벗기고 1회 재시도
+        kickoff_with_converter_rescue(_release_chain_crew, _release_chain_tasks)
+        # 이슈 6 방어선 1 (PR #29) — LLM 본문 누락 자동 재시도 (Release 4 task)
+        retry_short_tasks_in_chain(_release_chain_tasks)
 
         release_decision = _task_output_text(release_task)
         changelog_entry = _task_output_text(changelog_task)
