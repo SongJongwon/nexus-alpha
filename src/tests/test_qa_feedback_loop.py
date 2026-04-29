@@ -15,6 +15,7 @@ import pytest
 from src.workflows.qa_feedback_loop import (
     QAFeedbackDecision,
     build_feedback_message_for_engineer,
+    detect_artifact_category,
     evaluate_qa_results,
 )
 
@@ -27,6 +28,24 @@ from src.workflows.qa_feedback_loop import (
 @dataclass
 class FakeQAResult:
     success: bool
+    skipped: bool = False
+    line: Optional[str] = None
+
+    def summary_line(self) -> str:
+        return self.line or ("PASS" if self.success else "FAIL")
+
+
+@dataclass
+class FakePytestResult:
+    """CodeQAResult.pytest 흉내 — exit_code 만 확인."""
+    exit_code: int
+
+
+@dataclass
+class FakeCodeQAResult:
+    """CodeQAResult 흉내 — pytest 중첩 attr 노출 (PR #50 SKIPPED 규칙용)."""
+    success: bool
+    pytest: FakePytestResult
     skipped: bool = False
     line: Optional[str] = None
 
@@ -228,3 +247,180 @@ def test_build_message_includes_retry_metadata() -> None:
     msg = build_feedback_message_for_engineer(d)
     assert "retry_count=1" in msg
     assert "max_retries=3" in msg
+
+
+# ---------------------------------------------------------------------------
+# PR #50 — pytest exit=5 (no tests collected) → SKIPPED
+# ---------------------------------------------------------------------------
+
+
+def test_pytest_exit_5_treated_as_skipped() -> None:
+    """워크플로가 pytest 스위트를 안 만들면 (exit=5) FAIL 이 아니라 SKIPPED."""
+    code_qa = FakeCodeQAResult(
+        success=False,
+        pytest=FakePytestResult(exit_code=5),
+        line="[CODE_QA FAIL] no tests",
+    )
+    results = {
+        "code_qa": code_qa,
+        "functional": FakeQAResult(success=True),
+    }
+    d = evaluate_qa_results(results, retry_count=0, max_retries=3)
+    assert d.overall_passed is True
+    assert "code_qa" in d.skipped_qa_tools
+    assert d.failed_qa_tools == []
+    assert any("no tests collected" in line for line in d.summary_lines)
+
+
+def test_pytest_exit_other_than_5_still_fails() -> None:
+    """pytest exit_code≠5 (실 테스트 실패) 는 그대로 FAIL 집계."""
+    code_qa = FakeCodeQAResult(
+        success=False,
+        pytest=FakePytestResult(exit_code=1),
+    )
+    results = {"code_qa": code_qa}
+    d = evaluate_qa_results(results, retry_count=0, max_retries=3)
+    assert d.overall_passed is False
+    assert "code_qa" in d.failed_qa_tools
+    assert "code_qa" not in d.skipped_qa_tools
+
+
+def test_pytest_exit_5_with_pass_status_still_marked_skipped() -> None:
+    """pytest exit=5 는 success 여부와 무관하게 SKIPPED — 게이트 역할 없음."""
+    code_qa = FakeCodeQAResult(
+        success=True,  # 테스트 0개도 success=True 가 가능 (executor 정책)
+        pytest=FakePytestResult(exit_code=5),
+    )
+    d = evaluate_qa_results({"code_qa": code_qa}, retry_count=0, max_retries=3)
+    assert "code_qa" in d.skipped_qa_tools
+
+
+# ---------------------------------------------------------------------------
+# PR #50 — artifact_category="gui" → functional/robustness 자동 SKIPPED
+# ---------------------------------------------------------------------------
+
+
+def test_gui_category_skips_functional_and_robustness() -> None:
+    """GUI 산출물에 stdin 기반 도구 부적합 → 강제 SKIPPED."""
+    results = {
+        "code_qa": FakeQAResult(success=True),
+        "functional": FakeQAResult(success=False, line="[FUNCTIONAL FAIL] 0/10"),
+        "robustness": FakeQAResult(success=False, line="[ROBUSTNESS FAIL] 0/9"),
+        "gui": FakeQAResult(success=True, line="[GUI PASS]"),
+    }
+    d = evaluate_qa_results(
+        results, retry_count=0, max_retries=3, artifact_category="gui"
+    )
+    assert d.overall_passed is True
+    assert d.failed_qa_tools == []
+    assert "functional" in d.skipped_qa_tools
+    assert "robustness" in d.skipped_qa_tools
+
+
+def test_cli_category_does_not_skip_functional() -> None:
+    """CLI 산출물에서는 functional/robustness 정상 평가."""
+    results = {"functional": FakeQAResult(success=False)}
+    d = evaluate_qa_results(
+        results, retry_count=0, max_retries=3, artifact_category="cli"
+    )
+    assert d.overall_passed is False
+    assert "functional" in d.failed_qa_tools
+
+
+def test_default_category_none_preserves_legacy_behavior() -> None:
+    """artifact_category 미지정 시 backwards compat — 기존 6개 테스트 유효."""
+    results = {"functional": FakeQAResult(success=False)}
+    d = evaluate_qa_results(results, retry_count=0, max_retries=3)
+    assert d.overall_passed is False
+    assert "functional" in d.failed_qa_tools
+
+
+def test_gui_category_does_not_skip_code_qa_or_gui() -> None:
+    """GUI 카테고리는 functional/robustness 만 skip — code_qa / gui 는 유효 게이트."""
+    results = {
+        "code_qa": FakeQAResult(success=False),
+        "gui": FakeQAResult(success=False),
+    }
+    d = evaluate_qa_results(
+        results, retry_count=0, max_retries=3, artifact_category="gui"
+    )
+    assert d.overall_passed is False
+    assert set(d.failed_qa_tools) == {"code_qa", "gui"}
+
+
+# ---------------------------------------------------------------------------
+# PR #50 — detect_artifact_category 휴리스틱
+# ---------------------------------------------------------------------------
+
+
+def test_detect_gui_from_tkinter_import(tmp_path) -> None:
+    script = tmp_path / "calc.py"
+    script.write_text(
+        "import tkinter as tk\nroot = tk.Tk()\nroot.mainloop()\n",
+        encoding="utf-8",
+    )
+    assert detect_artifact_category(target_script=script) == "gui"
+
+
+def test_detect_gui_from_pyqt_import(tmp_path) -> None:
+    script = tmp_path / "app.py"
+    script.write_text(
+        "from PyQt5.QtWidgets import QApplication\n", encoding="utf-8"
+    )
+    assert detect_artifact_category(target_script=script) == "gui"
+
+
+def test_detect_gui_from_pyside6(tmp_path) -> None:
+    script = tmp_path / "app.py"
+    script.write_text(
+        "from PySide6.QtWidgets import QMainWindow\n", encoding="utf-8"
+    )
+    assert detect_artifact_category(target_script=script) == "gui"
+
+
+def test_detect_cli_from_argparse(tmp_path) -> None:
+    script = tmp_path / "tool.py"
+    script.write_text(
+        "import argparse\nparser = argparse.ArgumentParser()\n",
+        encoding="utf-8",
+    )
+    assert detect_artifact_category(target_script=script) == "cli"
+
+
+def test_detect_cli_from_sys_argv(tmp_path) -> None:
+    script = tmp_path / "main.py"
+    script.write_text(
+        "import sys\nname = sys.argv[1]\nprint(name)\n", encoding="utf-8"
+    )
+    assert detect_artifact_category(target_script=script) == "cli"
+
+
+def test_detect_library_when_no_markers(tmp_path) -> None:
+    script = tmp_path / "lib.py"
+    script.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    assert detect_artifact_category(target_script=script) == "library"
+
+
+def test_detect_unknown_when_paths_missing(tmp_path) -> None:
+    nonexistent = tmp_path / "missing.py"
+    assert detect_artifact_category(target_script=nonexistent) == "unknown"
+
+
+def test_detect_unknown_when_no_inputs() -> None:
+    assert detect_artifact_category() == "unknown"
+
+
+def test_detect_gui_fallback_when_only_exe_present(tmp_path) -> None:
+    """source 미가용 + .exe 만 존재 시 보수적으로 GUI 추정."""
+    exe = tmp_path / "app.exe"
+    exe.write_bytes(b"MZ\x00\x00")
+    assert detect_artifact_category(target_exe=exe) == "gui"
+
+
+def test_detect_gui_takes_precedence_over_cli_when_both_imports(tmp_path) -> None:
+    """동일 파일에 GUI + CLI 마커 둘 다 있으면 GUI 우선 (사용자 대면 = GUI)."""
+    script = tmp_path / "hybrid.py"
+    script.write_text(
+        "import argparse\nimport tkinter as tk\n", encoding="utf-8"
+    )
+    assert detect_artifact_category(target_script=script) == "gui"

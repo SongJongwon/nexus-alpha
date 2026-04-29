@@ -93,6 +93,7 @@ def test_try_import_qa_modules_returns_dict_with_known_keys() -> None:
         expected_keys = {
             "evaluate_qa_results",
             "build_feedback_message",
+            "detect_artifact_category",
             "run_code_qa",
             "run_test_cases",
             "run_gui_test",

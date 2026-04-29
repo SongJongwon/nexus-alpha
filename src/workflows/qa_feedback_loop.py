@@ -21,16 +21,26 @@ iterative_loop 통합 패턴 (PR #49 10차 E2E 에서 실 사용)::
         "gui": run_gui_test(target_path, output_dir),
         "robustness": run_robustness_scenarios(target_script),
     }
+    category = detect_artifact_category(target_script, target_exe)  # "gui"|"cli"|...
     decision = evaluate_qa_results(qa_results, retry_count=current_retry,
-                                   max_retries=3)
+                                   max_retries=3, artifact_category=category)
     if decision.should_retry:
         feedback = build_feedback_message_for_engineer(decision, qa_reports)
         # → Python Engineer 에게 feedback 전달 후 재생성
+
+산출물 카테고리 SKIPPED 규칙 (PR #50 — 10차 E2E 1차 실행 후 도입):
+    - ``artifact_category="gui"`` 일 때 ``functional`` / ``robustness`` 자동
+      SKIPPED — stdin 기반 도구는 GUI event loop 와 부적합 (deterministic
+      timeout 으로 무한 재시도 발생).
+    - ``code_qa`` 의 pytest exit_code==5 (no tests collected) 는 워크플로가
+      pytest 스위트를 생성하지 않은 *환경적* 사실이므로 SKIPPED 로 처리 —
+      LLM 재생성으로 해결 불가.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 
@@ -72,10 +82,115 @@ class QAFeedbackDecision:
         )
 
 
+# ---------------------------------------------------------------------------
+# 산출물 카테고리 감지 (PR #50)
+# ---------------------------------------------------------------------------
+
+_GUI_FRAMEWORK_KEYWORDS: tuple[str, ...] = (
+    "tkinter",
+    "customtkinter",
+    "PyQt5",
+    "PyQt6",
+    "PySide2",
+    "PySide6",
+    "wxPython",
+    "wx.App",
+    "kivy",
+)
+
+_CLI_KEYWORDS: tuple[str, ...] = (
+    "argparse",
+    "sys.argv",
+    "click.command",
+    "typer.",
+)
+
+
+def detect_artifact_category(
+    target_script: Optional[Any] = None,
+    target_exe: Optional[Any] = None,
+) -> str:
+    """워크플로 산출물의 카테고리를 휴리스틱으로 추정.
+
+    QA 도구 적용 시 stdin 기반 도구가 GUI event loop 에 무한 timeout 되는
+    구조적 미스매치를 사전에 차단하기 위함 (PR #50 — 10차 E2E 1차 실행 결과 도입).
+
+    Args:
+        target_script: Python source 의 Path-like (None 가능).
+        target_exe: 빌드 산출물 (.exe) 의 Path-like (None 가능).
+
+    Returns:
+        ``"gui"``: source 에 GUI 프레임워크 (tkinter / PyQt / PySide / wx /
+            kivy) import 발견, 또는 source 미발견 + .exe 만 존재 (보수적 추정).
+        ``"cli"``: source 에 ``argparse`` / ``sys.argv`` / ``click.command`` /
+            ``typer.`` 마커 발견.
+        ``"library"``: source 존재하나 GUI / CLI 마커 모두 없음.
+        ``"unknown"``: source / exe 모두 접근 불가.
+    """
+    if target_script is not None:
+        script_path = Path(target_script)
+        if script_path.exists() and script_path.is_file():
+            try:
+                content = script_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                content = ""
+            if content:
+                lower = content.lower()
+                if any(kw.lower() in lower for kw in _GUI_FRAMEWORK_KEYWORDS):
+                    return "gui"
+                if any(kw.lower() in lower for kw in _CLI_KEYWORDS):
+                    return "cli"
+                return "library"
+
+    if target_exe is not None:
+        exe_path = Path(target_exe)
+        if exe_path.exists() and exe_path.is_file():
+            return "gui"
+
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# SKIPPED 분류 — explicit flag + pytest exit=5 + GUI 카테고리 N/A
+# ---------------------------------------------------------------------------
+
+
+def _classify_skipped(
+    tool_name: str,
+    result: Any,
+    artifact_category: Optional[str],
+) -> tuple[bool, Optional[str]]:
+    """SKIPPED 여부 + 오버라이드 요약 라인 결정.
+
+    Returns:
+        ``(is_skipped, override_summary_line_or_None)``. override_summary_line
+        이 None 이면 호출 측이 ``result.summary_line()`` 로 fallback.
+    """
+    if bool(getattr(result, "skipped", False)):
+        return True, None
+
+    if tool_name == "code_qa":
+        pytest_obj = getattr(result, "pytest", None)
+        if pytest_obj is not None and getattr(pytest_obj, "exit_code", None) == 5:
+            return True, (
+                f"{tool_name}: [CODE_QA SKIPPED] pytest exit=5 (no tests collected) — "
+                "워크플로가 pytest 스위트를 생성하지 않음"
+            )
+
+    if artifact_category == "gui" and tool_name in ("functional", "robustness"):
+        return True, (
+            f"{tool_name}: [SKIPPED] GUI 산출물에 부적합 — "
+            "stdin 기반 검증이 GUI event loop 와 미스매치"
+        )
+
+    return False, None
+
+
 def evaluate_qa_results(
     results: dict[str, Any],
     retry_count: int = 0,
     max_retries: int = 3,
+    artifact_category: Optional[str] = None,
 ) -> QAFeedbackDecision:
     """QA 도구 결과 묶음을 합산해 재생성 결정 산출.
 
@@ -83,8 +198,13 @@ def evaluate_qa_results(
         results: ``{"tool_name": result_object_or_None}`` 형태. result 는 다음
             attr 만 있으면 됨: ``success: bool``, ``skipped: bool`` (선택),
             ``summary_line() -> str`` (선택). None 값은 *해당 도구 미실행* 로 간주.
+            ``code_qa`` 의 경우 ``result.pytest.exit_code`` 가 5 이면 (no tests
+            collected) 자동 SKIPPED 처리.
         retry_count: 현재까지의 재시도 횟수 (0=첫 실행).
         max_retries: 최대 재시도 횟수 (이후엔 budget exhausted).
+        artifact_category: ``detect_artifact_category()`` 산출 (선택). ``"gui"``
+            로 지정 시 ``functional`` / ``robustness`` 자동 SKIPPED — stdin
+            기반 검증과 GUI event loop 미스매치 회피.
 
     Returns:
         QAFeedbackDecision — overall_passed / should_retry / failed_qa_tools.
@@ -97,10 +217,14 @@ def evaluate_qa_results(
         if result is None:
             continue
 
-        is_skipped = bool(getattr(result, "skipped", False))
+        is_skipped, override_summary = _classify_skipped(
+            tool_name, result, artifact_category
+        )
         if is_skipped:
             skipped.append(tool_name)
-            if hasattr(result, "summary_line"):
+            if override_summary is not None:
+                summaries.append(override_summary)
+            elif hasattr(result, "summary_line"):
                 summaries.append(f"{tool_name}: {result.summary_line()}")
             continue
 
