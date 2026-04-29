@@ -1,13 +1,14 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-29 오전 (PR #51 — **10차 E2E DoD 7/7 ALL PASSED, M5+QA 풀체인 *구조* 완성**)
-> **현재 브랜치**: `qa/feedback-loop-artifact-category-pr50` (실 PR 번호 #51)
-> **테스트**: pytest **435 passed** (PR #50까지 418 + PR #51 신규 17, 회귀 0)
-> **최근 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md) ⭐ (오늘 오전)
+> **마지막 업데이트**: 2026-04-29 오후 (PR #52 — **pyautogui 정식 의존성 → gui_test ACTIVE 검증 (단독 PASS)**)
+> **현재 브랜치**: `qa/pyautogui-active-gui-pr52` (실 PR 번호 #52 후보)
+> **테스트**: pytest **435 passed** (회귀 0, pyautogui 0.9.54 설치 후 검증)
+> **최근 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md) ⭐ (오늘)
 > **이전 세션 로그**: [progress/session_log_20260428.md](./progress/session_log_20260428.md)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
-> **10차 E2E 검증**: [progress/e2e_10th_verification_post_pr51.md](./progress/e2e_10th_verification_post_pr51.md) ⭐
+> **10차 E2E 2차 (PASS)**: [progress/e2e_10th_verification_post_pr51.md](./progress/e2e_10th_verification_post_pr51.md)
+> **10차 E2E 3차 (부분)**: [progress/e2e_10th_verification_post_pr52.md](./progress/e2e_10th_verification_post_pr52.md) ⭐
 > **9차 E2E 검증**: [progress/e2e_9th_verification_post_pr39.md](./progress/e2e_9th_verification_post_pr39.md)
 
 ---
@@ -25,9 +26,10 @@
 | 🎯 본부 4 (품질 검증) 100% 완성 | ✅ 9명 + Convergence Judge (PR #42~#47) |
 | 🎯 자동 QA 피드백 루프 인프라 | ✅ 완성 (qa_feedback_loop, PR #48) |
 | **🎯 M5 + QA 풀체인 구조 검증 (10차 E2E)** | ✅ **DoD 7/7 ALL PASSED** (PR #51, 28.69분, 1회차 즉시 통과) ⭐ |
-| **🎯 산출물 카테고리 휴리스틱** | ✅ **detect_artifact_category()** (gui/cli/library/unknown, PR #51) ⭐ |
+| **🎯 산출물 카테고리 휴리스틱** | ✅ **detect_artifact_category()** (gui/cli/library/unknown, PR #51) |
 | 전체 구현률 | ✅ **30/46 (65%)** |
-| **active QA gating** | ⏳ 현재 0/4 도구 active — PR #52 (pyautogui 설치) 즉시 진행 예정 |
+| **active QA gating** | 🔵 **1/4 (gui_test)** ⭐ — pyautogui 0.9.54 정식 (PR #52), 단독 smoke `[GUI_TEST PASS] screenshots=1 (2.35s)` |
+| 10차 E2E 풀체인 3차 (M5+QA + active gui) | ❌ FAILED — Platform Tester 단계 LLM ConverterError (이슈 6 재발). 별도 PR 처리 |
 
 ---
 
@@ -330,12 +332,15 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 
 ### 다음 액션 (오늘/이번 주)
 
-31. **PR #52 (즉시 진행)** — pyautogui 설치 → gui_test 실 active 검증 → 10차 E2E 3차
-    - active QA gating 0/4 → 1/4 (gui)
-32. **(조건부) PR #53+** — 워크플로가 pytest 스위트 자동 생성 → code_qa active 화 (1/4 → 2/4)
-33. **(조건부) PR #54+** — `target_script_for_qa` CLI 진입점 별도 산출 → functional/robustness active 화
-34. **(조건부) Phase 6 착수** — Track B 시작 (Web Scraping / Desktop Auto / API / Data Parser / DevOps 5명)
-35. **(조건부) Update Checker 실 통합** — 산출 calculator.py 에 updater.py 임포트
+31. ~~PR #52 — pyautogui 정식 의존성 + gui_test ACTIVE 단독 검증~~ ✅ **달성** (active QA 0/4 → 1/4)
+    - 풀체인 3차는 상위 Platform Tester ConverterError 로 별도 fail (pyautogui 무관)
+32. **PR #53 (다음 PR 후보)** — Platform Tester LLM↔Pydantic 변환 안정화 (이슈 6 재발 fix)
+    - 어제 진단 처방: backstory 출력 형식 강화 + `_schemas.py` PlatformTester 모델 fallback + workflow retry 1→2
+    - 머지 후 10차 E2E 4차로 풀체인 + active gui_test 동시 PASS 시도
+33. **(조건부) PR #54+** — 워크플로가 pytest 스위트 자동 생성 → code_qa active 화 (1/4 → 2/4)
+34. **(조건부) PR #55+** — `target_script_for_qa` CLI 진입점 별도 산출 → functional/robustness active 화
+35. **(조건부) Phase 6 착수** — Track B 시작 (Web Scraping / Desktop Auto / API / Data Parser / DevOps 5명)
+36. **(조건부) Update Checker 실 통합** — 산출 calculator.py 에 updater.py 임포트
 
 ---
 

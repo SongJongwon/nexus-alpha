@@ -45,6 +45,12 @@ rich>=13.0.0
 # 6.20+ 부터 Python 3.13 안정 지원.
 pyinstaller>=6.20.0
 
+# QA 도구 (Phase 7 — PR #44 / PR #52)
+# GUI 자동화 + 스크린샷 캡처. gui_test_executor 가 GUI 산출물 검증에 사용.
+# 본 PR #52 에서 정식 의존성 화 — 미설치 시 graceful skip 되지만, GUI 풀체인의
+# active QA gating 을 위해 필수.
+pyautogui>=0.9.54
+
 # 개발/테스트 (Phase 2 — pytest 하네스)
 # 단위·통합 테스트 러너
 pytest>=8.0.0
