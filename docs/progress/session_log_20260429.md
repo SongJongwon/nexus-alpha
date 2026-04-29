@@ -254,3 +254,82 @@ QA ≥ 1 검증.
 
 *"어제: 1차 실패 (BUDGET_EXHAUSTED). 오늘 오전: 진단 → 구조 fix → 2차 통과 (28.69분).*
 *다음: pyautogui 설치 → 3차 실 active QA 검증."*
+
+---
+
+# 추가 — 2026-04-29 오후 (PR #52, pyautogui 정식 + 3차 시도)
+
+## 4️⃣ PR #52 — pyautogui 정식 의존성 (14:30~14:50)
+
+### 변경
+
+- `requirements.txt` 에 `pyautogui>=0.9.54` 추가 (Phase 7 — PR #44/#52 코멘트)
+- `.venv` 에 `pip install pyautogui==0.9.54` 실행 (자동 의존성: pyscreeze / pillow / pygetwindow / pyrect / pymsgbox / pyperclip / pytweening / mouseinfo)
+- `pytest -q`: **435 passed, 회귀 0**
+
+## 5️⃣ 10차 E2E 3차 시도 (14:49~15:09) — Platform Tester 단계 FAILED
+
+```
+Elapsed: 1185.62s (19.76 min)
+Status: FAILED
+[ERROR] ConverterError: Failed to convert text into a Pydantic model due to error:
+        Agent must be provided if converter_cls is not specified.
+
+[Crew Failure]
+  Agent: Senior Platform Tester (Built Executable Smoke Verification)
+```
+
+build_executor / publish / qa_feedback_loop 미도달 — DoD 6/7 ⏭ (None) / 5_executor_success ❌.
+
+**진단**: 어제 1차 10차 E2E 의 "이슈 6 LLM variance" 가 다른 에이전트 (Build Engineer
+→ Platform Tester) 에서 재발. **PR #51 / PR #52 양쪽 모두 무관** — 결함은 build_release
+본부 상위 에이전트의 LLM ↔ Pydantic 변환 로직 (CrewAI converter 의 ``Agent`` 인자
+누락 케이스).
+
+## 6️⃣ pyautogui 단독 active 검증 (15:10) — ✅ PASS
+
+풀체인이 상위 단계에서 죽어 QA 단계 미도달 → standalone smoke test 로 pyautogui
+활성화 자체를 증명.
+
+```python
+# 어제 산출 Calculator.exe (워크플로 132123) 로 단독 호출
+result = run_gui_test(
+    target_path=Path('outputs/workflow_20260429_132123/build_output/dist/Calculator.exe'),
+    output_dir=Path('outputs/_pr52_gui_test_smoke'),
+    wait_sec=2.0, num_screenshots=1, timeout_sec=15, skip_vision=True,
+)
+# success=True, skipped=False, screenshot_paths=['screenshot_01.png'],
+# process_terminated_by='terminated_after_capture', elapsed=2.35s
+# summary: [GUI_TEST PASS] screenshots=1 critical=0 ui_issues=0 (2.35s)
+```
+
+→ **active QA gating 도달 도구 수: 0/4 → 1/4** (gui_test) ⭐
+
+상세 보고서: [e2e_10th_verification_post_pr52.md](./e2e_10th_verification_post_pr52.md)
+
+## 🎓 추가 학습
+
+### 5. "이슈 6" 은 단일 에이전트 결함이 아닌 *공유 변환 로직 결함*
+
+어제는 Build Engineer, 오늘은 Platform Tester — 동일 ConverterError. CrewAI
+converter 가 `agent=None` 케이스에서 재귀 retry 후 raise 하는 패턴이 build_release
+본부 여러 에이전트에 공통. 단일 에이전트 backstory 강화로는 부족 — **converter
+호출 측에 명시적 fallback** 또는 **converter_cls 강제 지정** 이 본질 fix.
+
+### 6. PR 범위 좁게 유지 = standalone 검증 가능
+
+PR #52 는 풀체인 통과를 *보장하지 않음* — 단지 pyautogui 활성화 단독 검증. 풀체인
+실패가 있어도 본 PR 의 가치 (active QA gating 1/4 도달) 는 손상되지 않음.
+*범위 분리* 가 진척 가능성을 보존.
+
+## 🎯 다음 액션 (PR #53 후보)
+
+```
+1. Platform Tester backstory 강화 (Build Engineer 와 동일 패턴, 출력 형식 명시)
+2. _schemas.py 의 PlatformTester 모델에 fallback 케이스 추가
+3. workflow 에서 ConverterError 발생 시 retry 횟수 1 → 2 증가
+4. 또는 (더 본질적) CrewAI converter 호출 측에 converter_cls 명시 또는 agent 명시
+5. 10차 E2E 4차 시도 — 풀체인 + active gui_test 동시 PASS 목표
+```
+
+본 세션 (2026-04-29 오전+오후) 종료 시점의 *active QA gating*: **1/4 (gui_test)**.
