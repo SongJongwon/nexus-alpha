@@ -80,24 +80,51 @@ Download URLs:
 **상세**: [progress/session_log_20260427.md](./progress/session_log_20260427.md) +
 [progress/e2e_8th_verification_post_pr36.md](./progress/e2e_8th_verification_post_pr36.md)
 
-## 🎯 다음 마일스톤 — PR #41 9차 E2E (M5 published mode 검증)
+## 🎯 다음 작업 — 내일 (2026-04-29~) 시작 시
 
-M5 가 PR #39 smoke test 로 사실상 완성. 남은 검증: **풀체인 E2E 에서 자동 publish**.
+### 🔴 1순위 — 10차 E2E 재실행 (M5+QA DoD 7/7 통과 목표)
 
-### PR #41 (예정) — 9차 E2E (`enable_publish=True`)
-- **목적**: `enable_executor=True` + `enable_publish=True` 활성으로 자연어 → 다운로드 URL 풀체인 첫 자동 검증
-- **소요 예상**: ~30분 (E2E 27분 + publish 4초)
-- **측정**:
-  - `result.publish_result.success == True`
-  - `result.publish_result.release_url` 발급 확인
-  - `result.publish_result.download_urls` 2개 (.exe + .sha256.txt)
-  - GitHub UI 에서 draft release 확인 (인증 사용자만)
-- **결과 양호 시**: published mode 별도 옵션 추가 검토 (PR #41+)
+**현 상태 (2026-04-28 종료 시점)**:
+- ✅ PR #41~#49 모두 머지 (main pytest **418 passed**, 회귀 0)
+- ❌ 10차 E2E 1차 실 실행: **FAILED** (Build Engineer Pydantic ValidationError, 14.92분 후 종료)
+- 원인: 이슈 6 LLM variance (PR #34 7차 캡처율 94%의 잔여 6% 실패 케이스)
 
-### 후속 마일스톤
-- **PR #42** (조건부): Update Checker 실 통합 (산출 calculator.py 에 updater.py 임포트)
-- **PR #43** (조건부): CLI 경로 E2E 검증 (데이터 분석 시나리오)
-- **Phase 6 착수** (조건부): Track B 시작 (5명 추가 — Web Scraping / Desktop Auto / API / Data Parser / DevOps)
+**실행 명령**:
+```bash
+cd C:\projects\nexus-alpha
+.venv\Scripts\activate
+python scripts\run_e2e_10th_verification.py
+```
+
+**예상 시나리오**:
+- **A) 통과 (~94% 확률)**: LLM variance 자연 회복 → DoD 7/7 ALL PASSED
+  - [docs/progress/e2e_10th_verification_template.md](./progress/e2e_10th_verification_template.md) 갱신
+  - 새 commit `📊 10차 E2E 실 실행 결과 보고서 갱신`
+- **B) 다시 실패**: 이슈 6 회귀 가능성 → 디버깅
+  - 후보 1: Build Engineer backstory 강화 (Pydantic 출력 명시)
+  - 후보 2: `_schemas.py` BuildSpecOutput fallback 추가
+  - 후보 3: workflow retry 횟수 증가 (현 1회 → 2회)
+
+### 🟡 2순위 — Phase 6 착수 (Track B 시작)
+
+본부 3 (개발 본부) 미구현 5명 동시 추가:
+- Web Scraping Specialist (Playwright/Selenium)
+- Desktop Automation Specialist (PyAutoGUI/PyWinAuto)
+- API Integration Developer (REST/GraphQL/Webhook)
+- Data Parser Engineer (Excel/PDF/CSV/JSON)
+- DevOps Engineer (Docker/CI/CD)
+
+→ 본부 3: 3/9 (33%) → **8/9 (89%)** + 새 워크플로 `automate_workflow.py` (analyze_and_implement 와 병렬)
+
+→ 전체 구현률: 30/46 (65%) → **35/46 (76%)**
+
+### 🟢 3순위 — Update Checker 실 통합
+
+PR #21 의 Update Checker 사양을 산출 calculator.py 에 자동 임포트.
+
+### 🟢 4순위 — CLI 경로 E2E 검증
+
+데이터 분석 시나리오 (`매장별 월간 매출 Excel 분석 PDF 보고서`) 로 CLI 분기 검증.
 
 ---
 
@@ -265,23 +292,36 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 10. ~~PR #34 — 7차 E2E (94%, 이슈 6 close)~~ ✅
 11. ~~PR #35 — 세션 로그 정리~~ ✅
 
-### 2026-04-28 세션 (외부 도구 + M4.7 + M5)
+### 2026-04-28 오전 (외부 도구 + M4.7 + M5)
 
 12. ~~PR #36 — PyInstaller 실제 호출 (첫 .exe)~~ ✅ M4.5 달성
 13. ~~PR #37 — architecture 문서 v6 최신화~~ ✅
 14. ~~PR #38 — 8차 E2E (자연어 → .exe 풀체인 자동)~~ ✅ **M4.7 달성**
-15. ~~PR #39 — GitHub Release 자동 업로드~~ ✅ **M5 사실상 완성** ← **현재**
+15. ~~PR #39 — GitHub Release 자동 업로드~~ ✅ **M5 smoke test**
+16. ~~PR #40 — 세션 로그 (오전 분) + WORK_STATUS~~ ✅
 
-### 다음 작업 (PR #40 = 본 세션 로그 + PR #41~)
+### 2026-04-28 저녁 (M5 풀체인 + 본부 4 100% + 자동 QA 피드백 루프) ⭐
 
-16. ~~PR #40 — 세션 로그 (2026-04-28) + WORK_STATUS 정리~~ ✅ 본 PR
-17. **PR #41 — 9차 E2E (`enable_publish=True`, M5 풀체인 검증)** ← **다음**
-    - 자연어 → 다운로드 가능 setup.exe URL 첫 풀체인 자동 검증
-    - 소요 ~30분 (E2E 27분 + publish 4초)
-18. (조건부) **PR #42 — Update Checker 실 통합** (산출 calculator.py 에 updater.py 임포트)
-19. (조건부) **PR #43 — CLI 경로 E2E 검증** (데이터 분석 시나리오)
-20. (조건부) **Phase 6 착수** — Track B 시작 (5명 추가)
+17. ~~PR #41 — 9차 E2E (M5 DoD 5/5 ALL PASSED, 24:19)~~ ✅ **M5 풀체인 자동 검증**
+18. ~~PR #42 — Code QA Agent (pytest + ruff)~~ ✅
+19. ~~PR #43 — Functional Test Agent (엣지케이스)~~ ✅
+20. ~~PR #44 — GUI Test Agent (pyautogui + Vision)~~ ✅
+21. ~~PR #45 — Code Reviewer 실행 기반 업그레이드~~ ✅
+22. ~~PR #46 — Robustness Tester~~ ✅
+23. ~~PR #47 — Security/Performance/Compliance 3명 묶음~~ ✅
+24. ~~PR #48 — qa_feedback_loop + 조직도 v7 + WORK_STATUS~~ ✅ **본부 4 100%**
+25. ~~PR #49 — 10차 E2E 스크립트 (M5 + QA 풀체인)~~ ✅
+26. ~~PR #50 — 세션 로그 갱신 (저녁 분) + WORK_STATUS~~ ✅ ← **본 PR**
+
+### 다음 세션 (2026-04-29~)
+
+27. **10차 E2E 재실행** — 1차 실 실행 FAILED (이슈 6 LLM variance), 재실행 통과 확률 ~94%
+    - 통과 시: 보고서 갱신 commit (PR 없이 main 직접 또는 작은 PR)
+    - 실패 시: 이슈 6 회귀 디버깅 (Build Engineer backstory 강화 / schema fallback / retry 횟수 증가)
+28. **(조건부) Phase 6 착수** — Track B 시작 (Web Scraping / Desktop Auto / API / Data Parser / DevOps 5명)
+29. **(조건부) Update Checker 실 통합** — 산출 calculator.py 에 updater.py 임포트
+30. **(조건부) CLI 경로 E2E 검증** — 데이터 분석 시나리오
 
 ---
 
-*본 문서는 살아있는 대시보드 — 작업 상태가 바뀌면 직접 업데이트하거나 다음 세션 시작 시 Claude 에게 갱신 요청 가능. v6 통합 구성안과 짝을 이루어 "현재 어디에 있고 다음에 무엇을 할 것인가" 를 한 페이지로 보여줌.*
+*본 문서는 살아있는 대시보드 — 작업 상태가 바뀌면 직접 업데이트하거나 다음 세션 시작 시 Claude 에게 갱신 요청 가능. v7 조직도와 짝을 이루어 "현재 어디에 있고 다음에 무엇을 할 것인가" 를 한 페이지로 보여줌.*
