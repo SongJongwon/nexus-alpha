@@ -1,14 +1,15 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-29 오후 (PR #52 — **pyautogui 정식 의존성 → gui_test ACTIVE 검증 (단독 PASS)**)
-> **현재 브랜치**: `qa/pyautogui-active-gui-pr52` (실 PR 번호 #52 후보)
-> **테스트**: pytest **435 passed** (회귀 0, pyautogui 0.9.54 설치 후 검증)
-> **최근 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md) ⭐ (오늘)
+> **마지막 업데이트**: 2026-04-29 종료 (PR #53 — **rescue v2: ConverterError + ValidationError 흡수 → 10차 5차 fatal-free 30분 완주**)
+> **현재 브랜치**: `session/log-20260429-final` (세션 로그 PR 후보)
+> **테스트**: pytest **445 passed** (어제 418 → 오늘 +27, 회귀 0)
+> **최근 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md) ⭐ (오늘 전일)
 > **이전 세션 로그**: [progress/session_log_20260428.md](./progress/session_log_20260428.md)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
-> **10차 E2E 2차 (PASS)**: [progress/e2e_10th_verification_post_pr51.md](./progress/e2e_10th_verification_post_pr51.md)
-> **10차 E2E 3차 (부분)**: [progress/e2e_10th_verification_post_pr52.md](./progress/e2e_10th_verification_post_pr52.md) ⭐
+> **10차 E2E 2차 (PASS, 28분)**: [progress/e2e_10th_verification_post_pr51.md](./progress/e2e_10th_verification_post_pr51.md)
+> **10차 E2E 3차 (부분)**: [progress/e2e_10th_verification_post_pr52.md](./progress/e2e_10th_verification_post_pr52.md)
+> **10차 E2E 4·5차 (rescue 작동)**: [progress/e2e_10th_verification_post_pr53.md](./progress/e2e_10th_verification_post_pr53.md) ⭐
 > **9차 E2E 검증**: [progress/e2e_9th_verification_post_pr39.md](./progress/e2e_9th_verification_post_pr39.md)
 
 ---
@@ -27,9 +28,11 @@
 | 🎯 자동 QA 피드백 루프 인프라 | ✅ 완성 (qa_feedback_loop, PR #48) |
 | **🎯 M5 + QA 풀체인 구조 검증 (10차 E2E)** | ✅ **DoD 7/7 ALL PASSED** (PR #51, 28.69분, 1회차 즉시 통과) ⭐ |
 | **🎯 산출물 카테고리 휴리스틱** | ✅ **detect_artifact_category()** (gui/cli/library/unknown, PR #51) |
+| **🎯 workflow-level rescue (이슈 6 방어선 3)** | ✅ **ConverterError + ValidationError 둘 다 흡수** (PR #53) ⭐ |
 | 전체 구현률 | ✅ **30/46 (65%)** |
-| **active QA gating** | 🔵 **1/4 (gui_test)** ⭐ — pyautogui 0.9.54 정식 (PR #52), 단독 smoke `[GUI_TEST PASS] screenshots=1 (2.35s)` |
-| 10차 E2E 풀체인 3차 (M5+QA + active gui) | ❌ FAILED — Platform Tester 단계 LLM ConverterError (이슈 6 재발). 별도 PR 처리 |
+| **active QA gating** | 🔵 **1/4 (gui_test)** — pyautogui 0.9.54 정식 (PR #52), 단독 smoke `[GUI_TEST PASS] (2.35s)` |
+| 10차 E2E 풀체인 fatal-free | ✅ **30.34분 SUCCESS** (5차, PR #53 적용, rescue 실 발동 2회) ⭐ |
+| 10차 E2E 풀체인 + Calculator.exe 동시 산출 | ⚠️ 미달성 — rescue 후 LLM 출력 짧아져 코드 추출 실패. PR #54 후속 |
 
 ---
 
@@ -332,15 +335,23 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 
 ### 다음 액션 (오늘/이번 주)
 
-31. ~~PR #52 — pyautogui 정식 의존성 + gui_test ACTIVE 단독 검증~~ ✅ **달성** (active QA 0/4 → 1/4)
-    - 풀체인 3차는 상위 Platform Tester ConverterError 로 별도 fail (pyautogui 무관)
-32. **PR #53 (다음 PR 후보)** — Platform Tester LLM↔Pydantic 변환 안정화 (이슈 6 재발 fix)
-    - 어제 진단 처방: backstory 출력 형식 강화 + `_schemas.py` PlatformTester 모델 fallback + workflow retry 1→2
-    - 머지 후 10차 E2E 4차로 풀체인 + active gui_test 동시 PASS 시도
-33. **(조건부) PR #54+** — 워크플로가 pytest 스위트 자동 생성 → code_qa active 화 (1/4 → 2/4)
-34. **(조건부) PR #55+** — `target_script_for_qa` CLI 진입점 별도 산출 → functional/robustness active 화
-35. **(조건부) Phase 6 착수** — Track B 시작 (Web Scraping / Desktop Auto / API / Data Parser / DevOps 5명)
-36. **(조건부) Update Checker 실 통합** — 산출 calculator.py 에 updater.py 임포트
+31. ~~PR #52 — pyautogui 정식 의존성 + gui_test ACTIVE 단독 검증~~ ✅ (active QA 0/4 → 1/4)
+32. ~~PR #53 — workflow-level rescue (ConverterError + ValidationError)~~ ✅ ⭐ **머지 (bdb90ae)**
+    - 5차 실행: 30.34분 fatal-free 완주 (rescue 실 발동 2회, GUI Code Generator set literal)
+    - 부수효과: rescue 후 LLM 출력 짧아져 `code/` 빈 폴더 → .exe / publish 미생성
+33. ~~세션 로그 PR (본 PR) — session_log_20260429 + WORK_STATUS 갱신~~ ⏳ **본 PR 진행 중**
+
+### 내일 (2026-04-30~) 우선 순위
+
+34. 🔴 **1순위 — PR #54: rescue 후 짧은 출력 보완**
+    - 후보 A (권장): Capture-before-rescue — LLM raw 응답을 예외 발생 전 가로채 task.output 에 직접 주입 → 재 kickoff 불필요 → schema 만 잃고 본문 보존
+    - 후보 B: Backstory hardening — GUI Code Generator / Build Engineer / Installer Creator backstory 에 *항상* markdown 본문 길게 출력 강조
+    - 후보 C: 커스텀 converter_cls 주입
+35. 🟡 **2순위 — 10차 E2E 6차** (PR #54 머지 후): 풀체인 + Calculator.exe + Draft Release + active gui_test 동시 PASS 검증
+36. 🟢 **3순위 — PR #55+ (조건부)**: 워크플로가 pytest 스위트 자동 생성 → code_qa active (1/4 → 2/4)
+37. 🟢 **4순위 — PR #56+ (조건부)**: `target_script_for_qa` CLI 진입점 별도 산출 → functional/robustness active (4/4 도달)
+38. 🟢 **5순위 — Phase 6 착수 (조건부)**: Track B 5명 (Web Scraping / Desktop Auto / API / Data Parser / DevOps) → 본부 3 33% → 89%
+39. 🟢 **6순위 — Update Checker 실 통합 (조건부)**: 산출 calculator.py 에 updater.py 임포트
 
 ---
 
