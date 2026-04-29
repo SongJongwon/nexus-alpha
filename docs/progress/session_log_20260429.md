@@ -322,14 +322,293 @@ PR #52 는 풀체인 통과를 *보장하지 않음* — 단지 pyautogui 활성
 실패가 있어도 본 PR 의 가치 (active QA gating 1/4 도달) 는 손상되지 않음.
 *범위 분리* 가 진척 가능성을 보존.
 
-## 🎯 다음 액션 (PR #53 후보)
+## 🎯 다음 액션 (PR #53 후보) — 본 세션 후반에 즉시 진행
+
+본 세션 (2026-04-29 오전+오후 14:30 시점) 종료 시점의 *active QA gating*: **1/4 (gui_test)**.
+
+→ 그러나 사용자 지시로 마무리 안 하고 **PR #53 즉시 진행** (오후 14:30 ~ 17:30).
+
+---
+
+# 추가 — 2026-04-29 오후 후반 (PR #53, CrewAI converter rescue)
+
+## 7️⃣ 진단 (14:30~15:30) — CrewAI converter 의 두 가지 결정적 결함
+
+10차 E2E 3차 (PR #52 머지 직후) 가 **Platform Tester** 단계 ConverterError 로
+실패한 원인 추적. CrewAI 의 `Converter.to_pydantic()` 와 `handle_partial_json()`
+소스를 분석한 결과:
+
+### 결함 A — ConverterError 경로
+
+`Converter.to_pydantic()` (.venv/.../converter.py:85) 가
+`handle_partial_json(agent=None)` 을 **하드코딩**:
+
+```python
+result = handle_partial_json(
+    result=response,
+    model=self.model,
+    is_json_output=False,
+    agent=None,        # ← BUG: self.agent 가 있는데 None 으로 전달
+)
+```
+
+→ `convert_with_instructions(agent=None)` → `TypeError: Agent must be provided`
+→ 재귀 retry → `ConverterError` surface.
+
+### 결함 B — ValidationError 경로 (10차 4차에서 신규 발견)
+
+`handle_partial_json` (converter.py:260) 의 `_JSON_PATTERN = r"({.*})"`
+(DOTALL, greedy) 가 markdown 의 비-JSON `{...}` 블록 (e.g.,
+`{{8F3C2A91-4E7B-4D5F-9B1...}}` Inno Setup GUID, `{autodesktop}` placeholder,
+`{"+", "−", "×", "÷"}` Python set literal) 을 잘못 매칭 → `model_validate_json`
+ValidationError → `except ValidationError: raise` 로 **wrap 없이 escape**.
+
+두 결함 모두 LLM 의 markdown 출력을 JSON 강제 변환하려는 CrewAI converter 의
+부작용. **결정적** — LLM 같은 답이 또 와도 같은 결과 (variance 아님).
+
+## 8️⃣ rescue 헬퍼 v1 (15:30~16:00)
+
+`src/workflows/_common.py` 에 `kickoff_with_converter_rescue()` 신설:
+
+```python
+def kickoff_with_converter_rescue(crew, tasks, max_rescue=1):
+    try:
+        return crew.kickoff()
+    except ConverterError as e:
+        # 모든 task 의 output_pydantic 을 None 으로 벗기고 1회 재 kickoff
+        ...
+```
+
+7개 kickoff 사이트 처제: analyze_and_implement (4) + build_workflow (2) + release_workflow (1).
+iterative_loop (2) 는 `output_pydantic` 미사용 → rescue 불필요.
+
+테스트 7개 신규 (442 passed, 회귀 0).
+
+## 9️⃣ 10차 E2E 4차 (15:43~16:02) — 결함 B 신규 발견
 
 ```
-1. Platform Tester backstory 강화 (Build Engineer 와 동일 패턴, 출력 형식 명시)
-2. _schemas.py 의 PlatformTester 모델에 fallback 케이스 추가
-3. workflow 에서 ConverterError 발생 시 retry 횟수 1 → 2 증가
-4. 또는 (더 본질적) CrewAI converter 호출 측에 converter_cls 명시 또는 agent 명시
-5. 10차 E2E 4차 시도 — 풀체인 + active gui_test 동시 PASS 목표
+Elapsed: 18.71 min
+Status: FAILED
+[ERROR] ValidationError: 1 validation error for InstallerSpecOutput
+        Invalid JSON: key must be a string at line 1 column 2
+        [type=json_invalid, input_value='{{8F3C2A91-4E7B-4D5F-9B1...제 시 `{autodesktop}']
 ```
 
-본 세션 (2026-04-29 오전+오후) 종료 시점의 *active QA gating*: **1/4 (gui_test)**.
+→ rescue v1 의 `except ConverterError` 만으로는 raw ValidationError 흡수 불가.
+
+## 🔟 rescue 헬퍼 v2 (16:00~16:30) — ValidationError 도 흡수
+
+```python
+def _rescuable_exc_classes() -> tuple[type[BaseException], ...]:
+    """ConverterError ∪ Pydantic ValidationError"""
+    classes = []
+    if _ConverterError is not None: classes.append(_ConverterError)
+    if _PydanticValidationError is not None: classes.append(_PydanticValidationError)
+    return tuple(classes)
+```
+
+테스트 3개 추가 (445 passed, 회귀 0).
+
+## 1️⃣1️⃣ 10차 E2E 5차 (16:35~17:05) — fatal 0, 첫 완주 ⭐
+
+```
+Elapsed: 30.34 min
+Status: SUCCESS                    ← fatal 예외 0
+[converter rescue] ValidationError: tasks=[
+    'Senior GUI Designer', 'Senior Theme Designer',
+    'Senior GUI Code Generator', 'Senior Code Reviewer'
+]; output_pydantic stripped, retrying once.
+Original: '{"+", "−", "×", "÷"}... {self.engine.operator}'
+```
+
+→ rescue 가 **정확히 작동** (4 task 벗기고 재시도 통과). 모든 14+ 워크플로 .md
+산출. 30분 풀체인 완주.
+
+### 부수효과 발견
+
+`code/` 디렉터리가 **빈 폴더** — `13_gui_code_output.md` 가 71 byte
+(`framework=tkinter+customtkinter, files=1개, entry=python calculator.py` 한 줄).
+
+**원인**: rescue 후 `output_pydantic=None` 으로 재 kickoff 시 schema instruction
+부재 → LLM 이 backstory 의 *짧은 Final Answer* 패턴을 따름 → 코드 블록 추출 실패.
+
+**Trade-off 판단**: fatal abort (LLM 비용 0) 회피가 훨씬 큰 이득. 부분 산출은
+PR #54 후속 작업으로 분리.
+
+## 1️⃣2️⃣ PR #53 머지 (17:30 KST)
+
+| 시도 | 시간 | 결과 |
+|---|---|---|
+| 1차 (어제 16:50) | 14.92분 | FAILED (Build Engineer ConverterError) |
+| 2차 (오늘 13:21) | 28.69분 | ALL PASSED (PR #51 — 카테고리 fix) |
+| 3차 (오늘 14:49) | 19.76분 | FAILED (Platform Tester ConverterError) |
+| 4차 (오늘 15:43) | 18.71분 | FAILED (Installer Creator ValidationError, **신 패턴**) |
+| **5차 (오늘 16:35)** | **30.34분** | ✅ **SUCCESS** (fatal 0, rescue 실 발동 2회) ⭐ |
+
+상세 보고서: [e2e_10th_verification_post_pr53.md](./e2e_10th_verification_post_pr53.md)
+PR: https://github.com/SongJongwon/nexus-alpha/pull/53 (머지 완료, bdb90ae)
+
+---
+
+## 🎓 오늘 하루 (2026-04-29) 의 메타 학습
+
+### 1. "동일 N회 실패 = 결정적 결함" 검증됨
+
+- 어제 종료 시 가설: LLM variance ~94% 통과 예상
+- 실제: 4회 동일 실패 (1차 BUDGET_EXHAUSTED) → 진단 → 구조 fix (PR #51) → 통과
+- **이번 PR #53 도 같은 패턴**: 3차/4차 fatal 다음 즉시 구조 fix 적용 → 5차 fatal 0
+- 다음에는 *2회 동일 실패* 만으로도 구조 결함 의심 우선시 (재시도보다 분석 먼저)
+
+### 2. CrewAI converter 의 markdown ↔ JSON 강제 변환은 LLM-driven workflow 의 함정
+
+CrewAI 가 LLM 의 markdown 출력을 Pydantic JSON 으로 자동 변환하려 하지만
+실제 LLM 들은 markdown 친화적이라 자주 실패. 우리 케이스에서:
+- 어제 1차: Build Engineer markdown → ConverterError
+- 오늘 3차: Platform Tester markdown → ConverterError
+- 오늘 4차: Installer Creator markdown (Inno Setup GUID 포함) → ValidationError
+- 오늘 5차: GUI Code Generator markdown (Python set literal) → ValidationError
+
+각각 다른 에이전트지만 동일 메커니즘. workflow-level rescue 가 전사적 해결책.
+
+### 3. 부분 진척도 가치 있음 — fatal vs partial 의 비대칭
+
+5차 실행 결과:
+- ❌ .exe / publish 미생성 (코드 추출 실패)
+- ✅ 모든 14+ 마크다운 산출 (사람이 읽을 수 있는 결과 보존)
+- ✅ 30분 LLM 비용 회수 (이전 4번은 fatal 로 비용 손실)
+
+**fatal abort = 100% 손실, partial = 30% 손실**. 본 PR 의 가치는 100→30 변환에 있음.
+
+### 4. 단일 세션 8시간 productivity
+
+| 시간 | 단계 | 산출 |
+|---|---|---|
+| 09:20~11:18 | 1차 재실행 (재현) | 118분 — 어제 가설 기각 |
+| 11:18~12:30 | 진단 + PR #51 코드 + 테스트 | 1시간 |
+| 12:30~13:50 | 2차 재실행 + 보고서 | 30분 + 30분 |
+| 13:50~14:30 | PR #50/#51 머지 + 정리 | 40분 |
+| 14:30~15:30 | PR #52 (pyautogui) + 3차 시도 (실패) + standalone 검증 | 1시간 |
+| 15:30~16:30 | PR #53 진단 + rescue v1 + 4차 (실패 — 신 패턴) + v2 | 1시간 |
+| 16:30~17:30 | 5차 실행 + 분석 + PR #53 머지 + 세션 마무리 | 1시간 |
+
+**3 PR 머지, 5 E2E 시도, 17개 신규 테스트, pytest 418 → 445 (+27, 회귀 0)**.
+
+---
+
+## 🚦 오늘 종료 시점의 시스템 상태
+
+| 영역 | 상태 |
+|---|---|
+| 풀체인 fatal 회피 | ✅ ConverterError + ValidationError 둘 다 흡수 (PR #53) |
+| 풀체인 30분 완주 | ✅ 5차에서 SUCCESS 확정 (fatal 0) |
+| Calculator.exe 산출 | ⚠️ 5차에서 미생성 (rescue 부수효과) |
+| Publish (Draft Release) | ⚠️ 동상 |
+| active QA gating | 🔵 1/4 (gui_test, PR #52) |
+| Total PR merged | 53 |
+| Total tests | 445 passed, 회귀 0 |
+| Active branch | `session/log-20260429-final` (본 commit) |
+
+---
+
+## 🌅 내일 (2026-04-30~) 우선 순위
+
+### 🔴 1순위 — PR #54: rescue 후 짧은 출력 보완
+
+**목적**: 5차에서 발견된 부수효과 (rescue 후 LLM 이 `Final Answer:` 한 줄만 출력 →
+코드 추출 실패) 해결. 풀체인 30분 완주가 *완전한 산출* 까지 이어지도록.
+
+**처방 후보 (우선순위 순)**:
+
+#### A. Capture-before-rescue (가장 깔끔)
+
+CrewAI converter 가 raise 하기 *전* LLM 의 raw 응답을 가로채 task.output 에
+직접 주입 → rescue 시 재 kickoff 불필요 → schema 만 잃고 본문 보존.
+
+구현: `kickoff_with_converter_rescue` 에서 예외의 `__cause__` 또는 task 의
+`agent.llm` 을 monkey-patch 해 raw 응답 stash.
+
+#### B. Backstory hardening
+
+GUI Code Generator / Build Engineer / Installer Creator backstory 에 *항상*
+markdown 본문을 길게 출력하도록 강조 (`Final Answer:` 한 줄만 제출 절대 금지).
+rescue 후에도 짧아지지 않도록 LLM 행동 안정화.
+
+#### C. Custom converter_cls 주입
+
+CrewAI Task 에 `converter_cls=` 로 우리만의 Converter 를 주입. 가장 본질적이지만
+CrewAI 내부 의존이 강해 유지보수 부담 큼.
+
+**권장**: A 우선 시도 (1~2시간 예상), 실패 시 B 로 폴백 (backstory 수정 30분).
+
+### 🟡 2순위 — 10차 E2E 6차 (M5+QA + active gui_test 동시 PASS)
+
+PR #54 머지 후 다음 검증:
+```bash
+python scripts/run_e2e_10th_verification.py
+```
+
+**목표 DoD**:
+- ✅ DoD 7/7 ALL PASSED (5차 동일)
+- ✅ Calculator.exe 산출 (5차 미생성 → 6차 생성 목표)
+- ✅ Draft Release publish (5차 미생성 → 6차 생성)
+- ✅ active QA gating ≥ 1 (gui_test 활성)
+- ✅ qa_decision.overall_passed = True 가 *vacuous* 가 아닌 *active* 검증 결과
+
+### 🟢 3순위 (조건부) — PR #55+: code_qa active 화
+
+워크플로가 pytest 스위트를 자동 생성하도록 → code_qa SKIPPED 해제 → active 2/4.
+
+### 🟢 4순위 (조건부) — PR #56+: functional/robustness CLI 진입점 별도 산출
+
+GUI 산출물에서도 CLI smoke 가능하도록 `target_script_for_qa` 별도 추출 →
+functional/robustness active → 4/4 도달.
+
+### 🟢 5순위 — Phase 6 착수 (Track B 5명)
+
+Web Scraping / Desktop Auto / API / Data Parser / DevOps. 본부 3 (개발) 33% → 89%.
+
+---
+
+## 📚 오늘 산출 문서 / 코드 (전체)
+
+### 코드 변경
+
+| 파일 | 변경 |
+|---|---|
+| `src/workflows/qa_feedback_loop.py` | PR #51 — `detect_artifact_category()` + GUI N/A skip |
+| `src/workflows/_common.py` | PR #53 — `kickoff_with_converter_rescue()` |
+| `src/workflows/analyze_and_implement.py` | PR #53 — 4 kickoff 사이트 처제 |
+| `src/workflows/build_workflow.py` | PR #53 — 2 kickoff 사이트 처제 |
+| `src/workflows/release_workflow.py` | PR #53 — 1 kickoff 사이트 처제 |
+| `src/tests/test_qa_feedback_loop.py` | PR #51 — 17 신규 테스트 |
+| `src/tests/test_workflow_common.py` | PR #53 — 10 신규 테스트 |
+| `src/tests/test_e2e_10th_script.py` | PR #51 — expected_keys 갱신 |
+| `scripts/run_e2e_10th_verification.py` | PR #51 — 카테고리 감지 통합 |
+| `requirements.txt` | PR #52 — pyautogui>=0.9.54 추가 |
+
+### 문서
+
+| 파일 | 내용 |
+|---|---|
+| `docs/progress/session_log_20260429.md` | 본 문서 (전일 세션 로그) |
+| `docs/progress/e2e_10th_verification_post_pr51.md` | 10차 2차 결과 (DoD 7/7 ALL PASSED) |
+| `docs/progress/e2e_10th_verification_post_pr52.md` | 10차 3차 + standalone gui_test |
+| `docs/progress/e2e_10th_verification_post_pr53.md` | 10차 4·5차 + rescue 작동 분석 |
+| `docs/WORK_STATUS.md` | 종합 갱신 (active QA 1/4 / fatal-free 풀체인 등) |
+
+### 산출 디렉터리 (참고)
+
+| 디렉터리 | 내용 |
+|---|---|
+| `outputs/workflow_20260429_092006` | 1차 재실행 (BUDGET_EXHAUSTED, 118분) |
+| `outputs/workflow_20260429_132115` | 2차 (PR #51 머지 후) — DoD 7/7 ALL PASSED, Calculator.exe 10.7MB |
+| `outputs/workflow_20260429_132123` | 동상 (calculator.py 추출) |
+| `outputs/_pr52_gui_test_smoke/` | PR #52 standalone gui_test (screenshot_01.png 163KB) |
+| `outputs/workflow_20260429_154328` | 4차 (Installer Creator ValidationError) |
+| `outputs/workflow_20260429_163544` | 5차 (rescue 작동, code/ 빈 폴더) |
+
+---
+
+*"오늘 핵심: 1차 실패 → 진단 → PR #51 카테고리 fix → 2차 PASS → PR #52 pyautogui →*
+*PR #53 rescue (ConverterError + ValidationError) → 5차 fatal-free 완주.*
+*내일: PR #54 rescue 후 출력 보강 → 6차에서 풀체인 + active QA 동시 PASS 목표."*
