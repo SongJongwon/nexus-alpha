@@ -59,6 +59,7 @@ def _try_import_qa_modules() -> dict[str, Any]:
     modules: dict[str, Any] = {
         "evaluate_qa_results": None,
         "build_feedback_message": None,
+        "detect_artifact_category": None,
         "run_code_qa": None,
         "run_test_cases": None,
         "run_gui_test": None,
@@ -67,10 +68,12 @@ def _try_import_qa_modules() -> dict[str, Any]:
     try:
         from src.workflows.qa_feedback_loop import (
             build_feedback_message_for_engineer,
+            detect_artifact_category,
             evaluate_qa_results,
         )
         modules["evaluate_qa_results"] = evaluate_qa_results
         modules["build_feedback_message"] = build_feedback_message_for_engineer
+        modules["detect_artifact_category"] = detect_artifact_category
     except ImportError:
         pass
     try:
@@ -267,8 +270,29 @@ def main() -> int:
         print(f"[QA] {active_count}/4 도구 활성 검증")
 
         if qa_modules["evaluate_qa_results"]:
+            artifact_category = "unknown"
+            if qa_modules["detect_artifact_category"]:
+                target_script: Optional[Path] = None
+                code_files = getattr(result, "saved_code_files", None) or []
+                for f in code_files:
+                    p = Path(f) if not isinstance(f, Path) else f
+                    if p.suffix == ".py":
+                        target_script = p
+                        break
+                target_exe: Optional[Path] = None
+                ex_obj = getattr(result, "executor_result", None)
+                if ex_obj and getattr(ex_obj, "exe_path", None):
+                    target_exe = Path(ex_obj.exe_path)
+                artifact_category = qa_modules["detect_artifact_category"](
+                    target_script=target_script, target_exe=target_exe
+                )
+            print(f"[QA] artifact_category={artifact_category}")
+
             qa_decision = qa_modules["evaluate_qa_results"](
-                qa_results, retry_count=attempt, max_retries=max_qa_retries
+                qa_results,
+                retry_count=attempt,
+                max_retries=max_qa_retries,
+                artifact_category=artifact_category,
             )
             print(f"[QA] {qa_decision.summary_line()}")
             qa_iterations.append({

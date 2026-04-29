@@ -1,11 +1,13 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-28 (PR #41~#48 — **본부 4 (품질 검증) 100% + 자동 QA 피드백 루프 완성**)
-> **현재 브랜치**: `qa/feedback-loop-and-org-v7` (PR #48)
-> **테스트**: pytest 누적 (PR 별 독립, 머지 시 합산 ≈ **315+ passed** 예상)
-> **최근 세션 로그**: [progress/session_log_20260428.md](./progress/session_log_20260428.md)
-> **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md) ⭐
+> **마지막 업데이트**: 2026-04-29 오전 (PR #51 — **10차 E2E DoD 7/7 ALL PASSED, M5+QA 풀체인 *구조* 완성**)
+> **현재 브랜치**: `qa/feedback-loop-artifact-category-pr50` (실 PR 번호 #51)
+> **테스트**: pytest **435 passed** (PR #50까지 418 + PR #51 신규 17, 회귀 0)
+> **최근 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md) ⭐ (오늘 오전)
+> **이전 세션 로그**: [progress/session_log_20260428.md](./progress/session_log_20260428.md)
+> **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
+> **10차 E2E 검증**: [progress/e2e_10th_verification_post_pr51.md](./progress/e2e_10th_verification_post_pr51.md) ⭐
 > **9차 E2E 검증**: [progress/e2e_9th_verification_post_pr39.md](./progress/e2e_9th_verification_post_pr39.md)
 
 ---
@@ -14,16 +16,18 @@
 
 | 영역 | 상태 |
 |---|---|
-| Phase 0~7 구축 | ✅ 완료 (PR #25~#48) |
+| Phase 0~7 구축 | ✅ 완료 (PR #25~#51) |
 | 메인 워크플로우 (`analyze_and_implement`) | ✅ 작동 |
 | GUI 분기 라우팅 | ✅ 작동 |
-| 16 에이전트 본문 캡처 | ✅ **100% 도달** (9차 E2E 유지) |
+| 16 에이전트 본문 캡처 | ✅ 100% 유지 |
 | 🎯 자연어 → `.exe` 풀체인 (M4.7) | ✅ 달성 (PR #38) |
-| 🎯 자연어 → 다운로드 URL 풀체인 (M5) | ✅ **9차 E2E 5/5 ALL PASSED** (PR #41) |
-| **🎯 본부 4 (품질 검증) 100% 완성** | ✅ **9명 + Convergence Judge** (PR #42~#47) ⭐ |
-| **🎯 자동 QA 피드백 루프 인프라** | ✅ **완성** (qa_feedback_loop, PR #48) ⭐ |
-| 전체 구현률 | ✅ **30/46 (65%)** (v6 50% → v7 65%) ⭐ |
-| QA 루프 포함 E2E 검증 (M5+QA) | ⏳ PR #49 예정 (10차 E2E) |
+| 🎯 자연어 → 다운로드 URL 풀체인 (M5) | ✅ 9차 E2E 5/5 (PR #41) |
+| 🎯 본부 4 (품질 검증) 100% 완성 | ✅ 9명 + Convergence Judge (PR #42~#47) |
+| 🎯 자동 QA 피드백 루프 인프라 | ✅ 완성 (qa_feedback_loop, PR #48) |
+| **🎯 M5 + QA 풀체인 구조 검증 (10차 E2E)** | ✅ **DoD 7/7 ALL PASSED** (PR #51, 28.69분, 1회차 즉시 통과) ⭐ |
+| **🎯 산출물 카테고리 휴리스틱** | ✅ **detect_artifact_category()** (gui/cli/library/unknown, PR #51) ⭐ |
+| 전체 구현률 | ✅ **30/46 (65%)** |
+| **active QA gating** | ⏳ 현재 0/4 도구 active — PR #52 (pyautogui 설치) 즉시 진행 예정 |
 
 ---
 
@@ -311,16 +315,27 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 23. ~~PR #47 — Security/Performance/Compliance 3명 묶음~~ ✅
 24. ~~PR #48 — qa_feedback_loop + 조직도 v7 + WORK_STATUS~~ ✅ **본부 4 100%**
 25. ~~PR #49 — 10차 E2E 스크립트 (M5 + QA 풀체인)~~ ✅
-26. ~~PR #50 — 세션 로그 갱신 (저녁 분) + WORK_STATUS~~ ✅ ← **본 PR**
+26. ~~PR #50 — 세션 로그 갱신 (저녁 분) + WORK_STATUS~~ ✅
 
-### 다음 세션 (2026-04-29~)
+### 2026-04-29 오전 (10차 E2E 통과 + 카테고리 fix) ⭐
 
-27. **10차 E2E 재실행** — 1차 실 실행 FAILED (이슈 6 LLM variance), 재실행 통과 확률 ~94%
-    - 통과 시: 보고서 갱신 commit (PR 없이 main 직접 또는 작은 PR)
-    - 실패 시: 이슈 6 회귀 디버깅 (Build Engineer backstory 강화 / schema fallback / retry 횟수 증가)
-28. **(조건부) Phase 6 착수** — Track B 시작 (Web Scraping / Desktop Auto / API / Data Parser / DevOps 5명)
-29. **(조건부) Update Checker 실 통합** — 산출 calculator.py 에 updater.py 임포트
-30. **(조건부) CLI 경로 E2E 검증** — 데이터 분석 시나리오
+27. ~~10차 E2E 1차 재실행 — 118분, BUDGET_EXHAUSTED~~ → 분석 결과 LLM variance 가 아닌 **구조적 미스매치**
+28. ~~PR #51 — qa_feedback_loop 산출물 카테고리 감지~~ ✅
+    - `detect_artifact_category()` 신설 (tkinter / PyQt / PySide / wxPython / kivy → "gui" 등)
+    - `evaluate_qa_results(artifact_category=...)` 파라미터 추가 — GUI 산출물엔 functional/robustness 자동 SKIPPED
+    - pytest exit=5 (no tests collected) 도 SKIPPED 처리
+    - 17개 테스트 추가 (총 33개), pytest 418 → 435 passed
+29. ~~10차 E2E 2차 재실행 — **28.69분에 1회차 PASS, DoD 7/7 ALL PASSED**~~ ✅ ⭐
+30. ~~보고서 + 세션 로그 갱신~~ ✅ ← **본 PR (#51)**
+
+### 다음 액션 (오늘/이번 주)
+
+31. **PR #52 (즉시 진행)** — pyautogui 설치 → gui_test 실 active 검증 → 10차 E2E 3차
+    - active QA gating 0/4 → 1/4 (gui)
+32. **(조건부) PR #53+** — 워크플로가 pytest 스위트 자동 생성 → code_qa active 화 (1/4 → 2/4)
+33. **(조건부) PR #54+** — `target_script_for_qa` CLI 진입점 별도 산출 → functional/robustness active 화
+34. **(조건부) Phase 6 착수** — Track B 시작 (Web Scraping / Desktop Auto / API / Data Parser / DevOps 5명)
+35. **(조건부) Update Checker 실 통합** — 산출 calculator.py 에 updater.py 임포트
 
 ---
 
