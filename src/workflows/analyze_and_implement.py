@@ -45,6 +45,7 @@ from src.agents.qa import create_code_reviewer_agent
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
     SUSPICIOUS_OUTPUT_THRESHOLD as _SUSPICIOUS_OUTPUT_THRESHOLD,
+    kickoff_with_converter_rescue,
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
@@ -580,13 +581,15 @@ def run_analyze_and_implement(
             # ─── 분기 1: Phase 4 활성 — UI/UX 먼저 실행 ────────────────────────
             ui_ux = create_uiux_analyst_agent(verbose=verbose)
             uiux_task = _build_uiux_task(user_request, ui_ux)
-            Crew(
+            _uiux_crew = Crew(
                 agents=[ui_ux],
                 tasks=[uiux_task],
                 process=Process.sequential,
                 verbose=verbose,
-            ).kickoff()
-            # 이슈 6 fix — LLM 이 본문 생략 시 자동 재시도
+            )
+            # 이슈 6 방어선 3 (PR #53) — ConverterError 시 output_pydantic 벗기고 재시도
+            kickoff_with_converter_rescue(_uiux_crew, [uiux_task])
+            # 이슈 6 방어선 1 (PR #29) — LLM 이 본문 생략 시 자동 재시도
             retry_short_tasks_in_chain([uiux_task])
             ui_spec = _task_output_text(uiux_task)
 
@@ -734,14 +737,17 @@ def _run_classic_chain(
     engineer_task = _build_engineer_task(engineer, cto_task, analyst_task)
     qa_review_task = _build_qa_task(reviewer, engineer_task)
 
-    crew_result = Crew(
+    _classic_tasks = [cto_task, analyst_task, engineer_task, qa_review_task]
+    _classic_crew = Crew(
         agents=[cto, analyst, engineer, reviewer],
-        tasks=[cto_task, analyst_task, engineer_task, qa_review_task],
+        tasks=_classic_tasks,
         process=Process.sequential,
         verbose=verbose,
-    ).kickoff()
-    # 이슈 6 fix — LLM 본문 누락 자동 재시도
-    retry_short_tasks_in_chain([cto_task, analyst_task, engineer_task, qa_review_task])
+    )
+    # 이슈 6 방어선 3 (PR #53) — ConverterError 시 output_pydantic 벗기고 재시도
+    crew_result = kickoff_with_converter_rescue(_classic_crew, _classic_tasks)
+    # 이슈 6 방어선 1 (PR #29) — LLM 본문 누락 자동 재시도
+    retry_short_tasks_in_chain(_classic_tasks)
 
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)
@@ -788,14 +794,17 @@ def _run_cli_branch_chain_with_ui_context(
     engineer_task = _build_engineer_task(engineer, cto_task, analyst_task)
     qa_review_task = _build_qa_task(reviewer, engineer_task)
 
-    crew_result = Crew(
+    _cli_tasks = [cto_task, analyst_task, engineer_task, qa_review_task]
+    _cli_crew = Crew(
         agents=[cto, analyst, engineer, reviewer],
-        tasks=[cto_task, analyst_task, engineer_task, qa_review_task],
+        tasks=_cli_tasks,
         process=Process.sequential,
         verbose=verbose,
-    ).kickoff()
-    # 이슈 6 fix — LLM 본문 누락 자동 재시도
-    retry_short_tasks_in_chain([cto_task, analyst_task, engineer_task, qa_review_task])
+    )
+    # 이슈 6 방어선 3 (PR #53) — ConverterError 시 output_pydantic 벗기고 재시도
+    crew_result = kickoff_with_converter_rescue(_cli_crew, _cli_tasks)
+    # 이슈 6 방어선 1 (PR #29) — LLM 본문 누락 자동 재시도
+    retry_short_tasks_in_chain(_cli_tasks)
 
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)
@@ -849,23 +858,24 @@ def _run_gui_branch_chain(
     code_gen_task = _build_gui_code_gen_task(coder, uiux_task, designer_task, theme_task)
     qa_review_task = _build_qa_task(reviewer, code_gen_task)
 
-    crew_result = Crew(
+    _gui_tasks = [
+        cto_task,
+        analyst_task,
+        designer_task,
+        theme_task,
+        code_gen_task,
+        qa_review_task,
+    ]
+    _gui_crew = Crew(
         agents=[cto, analyst, designer, theme, coder, reviewer],
-        tasks=[
-            cto_task,
-            analyst_task,
-            designer_task,
-            theme_task,
-            code_gen_task,
-            qa_review_task,
-        ],
+        tasks=_gui_tasks,
         process=Process.sequential,
         verbose=verbose,
-    ).kickoff()
-    # 이슈 6 fix — LLM 본문 누락 자동 재시도 (GUI 체인 6 task)
-    retry_short_tasks_in_chain([
-        cto_task, analyst_task, designer_task, theme_task, code_gen_task, qa_review_task,
-    ])
+    )
+    # 이슈 6 방어선 3 (PR #53) — ConverterError 시 output_pydantic 벗기고 재시도
+    crew_result = kickoff_with_converter_rescue(_gui_crew, _gui_tasks)
+    # 이슈 6 방어선 1 (PR #29) — LLM 본문 누락 자동 재시도 (GUI 체인 6 task)
+    retry_short_tasks_in_chain(_gui_tasks)
 
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)

@@ -60,6 +60,7 @@ from src.agents.build_release.build_executor import ExecuteResult, execute_pyins
 from src.agents.operations import run_python_package_in_sandbox
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
+    kickoff_with_converter_rescue,
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
@@ -486,14 +487,17 @@ def run_build_workflow(
             installer_agent, target_platform, user_request, build_task, asset_task
         )
 
-        Crew(
+        _build_chain_tasks = [dep_task, build_task, asset_task, installer_task]
+        _build_chain_crew = Crew(
             agents=[dep_agent, build_agent, asset_agent, installer_agent],
-            tasks=[dep_task, build_task, asset_task, installer_task],
+            tasks=_build_chain_tasks,
             process=Process.sequential,
             verbose=verbose,
-        ).kickoff()
-        # 이슈 6 fix — LLM 본문 누락 자동 재시도 (Build 4 task)
-        retry_short_tasks_in_chain([dep_task, build_task, asset_task, installer_task])
+        )
+        # 이슈 6 방어선 3 (PR #53) — ConverterError 시 output_pydantic 벗기고 1회 재시도
+        kickoff_with_converter_rescue(_build_chain_crew, _build_chain_tasks)
+        # 이슈 6 방어선 1 (PR #29) — LLM 본문 누락 자동 재시도 (Build 4 task)
+        retry_short_tasks_in_chain(_build_chain_tasks)
 
         dependency_report = _task_output_text(dep_task)
         build_spec = _task_output_text(build_task)
@@ -512,13 +516,15 @@ def run_build_workflow(
                 f"entry_hint={entry_hint}"
             )
             tester_task = _build_platform_tester_task(tester, sandbox_serialized, build_ctx)
-            Crew(
+            _tester_crew = Crew(
                 agents=[tester],
                 tasks=[tester_task],
                 process=Process.sequential,
                 verbose=verbose,
-            ).kickoff()
-            # 이슈 6 fix — Platform Tester 단독 task 재시도
+            )
+            # 이슈 6 방어선 3 (PR #53) — Platform Tester 가 어제 10차 E2E 3차에서 실패한 지점
+            kickoff_with_converter_rescue(_tester_crew, [tester_task])
+            # 이슈 6 방어선 1 (PR #29) — Platform Tester 단독 task 재시도
             retry_short_tasks_in_chain([tester_task])
             platform_test_report = _task_output_text(tester_task)
         else:
