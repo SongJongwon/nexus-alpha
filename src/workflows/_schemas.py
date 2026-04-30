@@ -727,3 +727,61 @@ class DistributionSpecOutput(BaseModel):
             f"### 4. Update Checker endpoint 권고\n\n{_strip_leading_section_header(self.update_endpoint_recommendation)}\n\n"
             f"### 5. 배포 노트\n\n{_strip_leading_section_header(self.distribution_notes)}\n"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Pytest Author — 테스트 스위트 3단 (전략 + 코드 블록 + 의도/한계) [PR #59]
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 배경: PR #58 (10차 E2E 7차) 에서 Pytest Author 가 backstory 의 "Final Answer
+# 다음 본문" 출력 규약을 무시하고 한 줄 요약만 출력 (30바이트, ```python```
+# 블록 0개) → test_*.py 추출 실패 → code_qa SKIPPED 정체.
+#
+# PR #59 처방 — 방어선 2 (output_pydantic schema 강제):
+#   CrewAI 가 LLM 에게 schema 를 강제 → 모든 필드 채워야 task 완료. 누락 시
+#   ConverterError / ValidationError 가 PR #55 capture-before-rescue 로 흡수.
+#   동시에 backstory + description 강화 (PR #59 옵션 A) 로 LLM 행동 안정화.
+
+
+class PytestSuiteOutput(BaseModel):
+    """Pytest Author — 산출 코드의 테스트 스위트 3단 구조."""
+
+    summary: str = Field(
+        description=(
+            "한 줄 요약. 형식: 'test_<entry>.py N scenarios' (예: "
+            "'test_calculator.py 8 scenarios')"
+        ),
+    )
+    test_strategy: str = Field(
+        description=(
+            "### 1. 테스트 전략 본문. entry 파일명 + 검증 패턴 (module-level "
+            "함수 직접 호출 / GUI 클래스 monkeypatch / 부분 검증) + 시나리오 "
+            "수. 섹션 헤더 없이 본문만 (수치·근거 포함, 최소 100자)"
+        ),
+    )
+    test_code_block: str = Field(
+        description=(
+            "### 2. 실 테스트 코드 본문. **반드시 ```python ... ``` 코드 블록** "
+            "을 1개 이상 포함하고, 첫 줄에 `# file: test_<entry>.py` 헤더 주석. "
+            "절대 규칙 5개 모두 준수: pytest standalone / GUI 윈도우 미표시 "
+            "(monkeypatch __init__/mainloop) / sys.path.insert / 결정론적 "
+            "assertion (예상값 박아넣음) / 최소 5개 시나리오 (happy + edge + "
+            "error). 섹션 헤더 없이 본문만 (코드 분량 최소 30줄)"
+        ),
+    )
+    intent_and_limits: str = Field(
+        description=(
+            "### 3. 검증 의도 + 한계 본문. 시나리오별 검증 의도 1줄씩 + 검증 "
+            "못한 부분 (분량 / GUI event loop / 외부 의존 등). 섹션 헤더 없이 "
+            "본문만 (최소 80자)"
+        ),
+    )
+
+    def to_markdown(self) -> str:
+        return (
+            f"{self.summary}\n\n"
+            f"## 테스트 스위트\n\n"
+            f"### 1. 테스트 전략\n\n{_strip_leading_section_header(self.test_strategy)}\n\n"
+            f"### 2. 실 테스트 코드\n\n{_strip_leading_section_header(self.test_code_block)}\n\n"
+            f"### 3. 검증 의도 + 한계\n\n{_strip_leading_section_header(self.intent_and_limits)}\n"
+        )
