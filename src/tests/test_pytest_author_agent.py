@@ -80,9 +80,10 @@ def test_backstory_mentions_deterministic_assertion() -> None:
     assert "vacuous" in PYTEST_AUTHOR_BACKSTORY
 
 
-def test_backstory_requires_minimum_5_scenarios() -> None:
-    """최소 5개 시나리오 — happy + edge + error 커버리지 보장 (절대 규칙 #5)."""
-    assert "5개 시나리오" in PYTEST_AUTHOR_BACKSTORY or "최소 5개" in PYTEST_AUTHOR_BACKSTORY
+def test_backstory_requires_minimum_10_scenarios() -> None:
+    """최소 10개 시나리오 — 4 카테고리 (happy/edge/load/error) 분포 강제 (PR #61)."""
+    # PR #61 에서 5개 → 10개로 강화. 5개 이하 표현은 vacuous 로 간주.
+    assert "최소 10개" in PYTEST_AUTHOR_BACKSTORY
 
 
 def test_backstory_requires_final_answer_pattern() -> None:
@@ -117,11 +118,11 @@ def test_build_pytest_author_task_returns_task_with_code_context() -> None:
     assert isinstance(task, Task)
     assert code_task in (task.context or [])
     assert task.agent is pytest_author
-    # description 에 절대 규칙 핵심 키워드 포함
+    # description 에 절대 규칙 핵심 키워드 포함 (PR #61: 5개 → 10개 임계 강화)
     assert "monkeypatch" in task.description
     assert "sys.path.insert" in task.description
     assert "결정론적" in task.description
-    assert "최소 5개" in task.description
+    assert "최소 10개" in task.description
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +339,7 @@ def test_build_pytest_author_task_attaches_schema_outside_pytest(monkeypatch) ->
 
 
 def test_build_pytest_author_task_description_mentions_minimum_size_threshold() -> None:
-    """description 에 본문 분량 임계 (최소 800자, 코드 30줄 등) 명시 — PR #58 7차 회귀 차단."""
+    """description 에 본문 분량 임계 명시 — PR #58 7차 회귀 차단 + PR #61 강화."""
     from crewai import Task
 
     from src.workflows.analyze_and_implement import _build_pytest_author_task
@@ -347,16 +348,17 @@ def test_build_pytest_author_task_description_mentions_minimum_size_threshold() 
     pytest_author = create_pytest_author_agent(verbose=False)
     task = _build_pytest_author_task(pytest_author, code_task)
 
-    # 분량 임계 키워드
-    assert "800자" in task.description, "전체 출력 800자 임계 누락"
-    assert "5개" in task.description, "def test_* 5개 임계 누락"
+    # 분량 임계 키워드 (PR #61: 800자 → 1200자, 5개 → 10개)
+    assert "1200자" in task.description, "전체 출력 1200자 임계 누락"
+    assert "최소 10개" in task.description, "def test_* 10개 임계 누락"
     assert "PytestSuiteOutput" in task.description or "output_pydantic" in task.description
 
 
 def test_backstory_explicitly_warns_against_one_line_only_output() -> None:
     """PR #58 7차 회귀 (Final Answer 한 줄 30바이트) 를 backstory 가 명시적으로 경고."""
     assert "한 줄 요약만" in PYTEST_AUTHOR_BACKSTORY or "절대 반복 금지" in PYTEST_AUTHOR_BACKSTORY
-    assert "최소 800자" in PYTEST_AUTHOR_BACKSTORY
+    # PR #61: 800자 → 1200자 강화
+    assert "최소 1200자" in PYTEST_AUTHOR_BACKSTORY
     # PR #58 7차 사례 인용 (회귀 추적용)
     assert "PR #58" in PYTEST_AUTHOR_BACKSTORY or "30바이트" in PYTEST_AUTHOR_BACKSTORY
 
@@ -367,3 +369,78 @@ def test_backstory_documents_output_pydantic_schema() -> None:
     assert "PytestSuiteOutput" in PYTEST_AUTHOR_BACKSTORY
     for field in ("summary", "test_strategy", "test_code_block", "intent_and_limits"):
         assert field in PYTEST_AUTHOR_BACKSTORY, f"backstory 에 schema 필드 누락: {field}"
+
+
+# ---------------------------------------------------------------------------
+# PR #61 — 4 카테고리 (happy/edge/load/error) 분포 강제 + 분량 임계 강화
+#
+# 배경: 8차 (PR #59) 에서 active 1/4 → 2/4 도달했으나, functional/robustness
+# executor 가 GUI 산출물에서 SKIPPED 유지. 본 PR 은 그 *의미* 를 pytest 안에
+# 흡수 — Pytest Author 가 부하/엣지 시나리오를 강제 포함하도록 backstory 강화.
+# 도구 레벨 active 4/4 추구 대신 의미적 4/4 (code_qa 안에 흡수) 가 본 PR 의 가치.
+# ---------------------------------------------------------------------------
+
+
+def test_backstory_requires_minimum_10_scenarios_for_load_edge_absorption() -> None:
+    """8차 5개 기준 → PR #61 10개 (4 카테고리 분포) 강화."""
+    assert "최소 10개" in PYTEST_AUTHOR_BACKSTORY, (
+        "PR #61 에서 시나리오 임계가 10개로 강화되지 않음 — 회귀"
+    )
+    # 4 카테고리 분포 명시
+    for category in ("Happy path", "Edge cases", "Robustness/load", "Error handling"):
+        assert category in PYTEST_AUTHOR_BACKSTORY, f"카테고리 누락: {category}"
+
+
+def test_backstory_mentions_load_scenario_keywords() -> None:
+    """robustness 흡수 — 1000회 / 긴 chain / rapid_repeat 키워드."""
+    assert "1000회" in PYTEST_AUTHOR_BACKSTORY
+    assert "rapid_repeat" in PYTEST_AUTHOR_BACKSTORY
+    assert "for _ in range(1000)" in PYTEST_AUTHOR_BACKSTORY
+
+
+def test_backstory_mentions_edge_case_keywords() -> None:
+    """functional 흡수 — 0 / 음수 / 매우 큰 수 / 유니코드 / 비-수치 입력."""
+    for kw in ("음수", "유니코드", "이모지", "10**15", "비-수치"):
+        assert kw in PYTEST_AUTHOR_BACKSTORY, f"edge case 키워드 누락: {kw}"
+
+
+def test_backstory_mentions_function_name_prefixes() -> None:
+    """카테고리별 함수명 prefix 권장 — test_happy_* / test_edge_* / test_load_* / test_error_*."""
+    for prefix in ("test_happy_", "test_edge_", "test_load_", "test_error_"):
+        assert prefix in PYTEST_AUTHOR_BACKSTORY, f"함수명 prefix 누락: {prefix}"
+
+
+def test_backstory_threshold_increased_to_1200_chars() -> None:
+    """전체 출력 임계 800자 → 1200자 강화."""
+    assert "최소 1200자" in PYTEST_AUTHOR_BACKSTORY
+    # 800자 임계는 더 이상 backstory 에 등장 안 해야 (혼란 방지)
+    # → '800자' 가 backstory 에 없는지 확인
+    assert "800자" not in PYTEST_AUTHOR_BACKSTORY, (
+        "이전 800자 임계가 잔존 — PR #61 강화 후 1200자로 통일 필요"
+    )
+
+
+def test_description_requires_4_category_distribution() -> None:
+    """description 에 4 카테고리 분포 명시 (1200자 / 10개 임계와 함께)."""
+    from crewai import Task
+
+    from src.workflows.analyze_and_implement import _build_pytest_author_task
+
+    code_task = Task(description="dummy", expected_output="x")
+    pytest_author = create_pytest_author_agent(verbose=False)
+    task = _build_pytest_author_task(pytest_author, code_task)
+
+    assert "1200자" in task.description, "description 에 1200자 임계 누락"
+    assert "최소 10개" in task.description, "description 에 10개 임계 누락"
+    for category in ("Happy path", "Edge cases", "Robustness/load", "Error handling"):
+        assert category in task.description, f"description 에 카테고리 누락: {category}"
+
+
+def test_pytest_suite_output_test_strategy_field_mentions_4_categories() -> None:
+    """schema field description 에 4 카테고리 분포 명시 (LLM 이 schema 통해 인지)."""
+    from src.workflows._schemas import PytestSuiteOutput
+
+    test_strategy_desc = PytestSuiteOutput.model_fields["test_strategy"].description
+    assert "4 카테고리" in test_strategy_desc, (
+        "PytestSuiteOutput.test_strategy description 에 4 카테고리 분포 누락"
+    )

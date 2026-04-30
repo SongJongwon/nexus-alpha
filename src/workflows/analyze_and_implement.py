@@ -336,11 +336,13 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
     """Pytest Author Task — code_task (Engineer 또는 GUI Code Generator) 의 산출
     코드를 컨텍스트로 받아 같은 디렉터리 배치 가능한 ``test_*.py`` 작성.
 
-    PR #58 추가, PR #59 강화:
-        - output_pydantic=PytestSuiteOutput 으로 schema 강제 (방어선 2)
-        - description 에 본문 분량 임계 (총 800자, 코드 30줄, 5 def test_*)
-          명시 → LLM 이 한 줄 요약만 출력하는 회귀 차단
+    PR #58 추가, PR #59 schema, PR #61 부하/엣지 시나리오 강제:
+        - output_pydantic=PytestSuiteOutput 으로 schema 강제 (방어선 2, PR #59)
+        - description 에 본문 분량 임계 (총 1200자, 코드 60줄, 10 def test_*)
+          명시 + 4 카테고리 (happy/edge/load/error) 분포 강제 (PR #61)
         - pytest 환경에선 output_pydantic 미적용 (FakeProvider 호환)
+        - 의도: functional/robustness executor 가 GUI 산출물에서 SKIPPED 되므로
+          그 *의미* 를 pytest 안에 흡수 → code_qa 안에 부하/엣지 검증 포함
     """
     import sys
 
@@ -349,11 +351,22 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
             "이전 컨텍스트의 산출 코드 (`<entry>.py`) 를 읽고 같은 디렉터리에 "
             "배치 가능한 ``test_<entry>.py`` 를 백스토리에 명시된 3단 구조"
             "(테스트 전략 / 실 코드 / 검증 의도+한계)로 작성하세요.\n\n"
-            "## 분량 임계 (PR #59 회귀 방지) 🚨\n"
-            "  - 전체 출력 **최소 800자** — Final Answer 한 줄만 출력하면 task 실패로 간주\n"
+            "## 분량 임계 (PR #61 강화) 🚨\n"
+            "  - 전체 출력 **최소 1200자** — Final Answer 한 줄만 출력하면 task 실패로 간주\n"
             "  - ``test_code_block`` 안에 ```python``` 블록 **반드시 1개 이상**, "
             "    첫 줄 ``# file: test_<entry>.py`` 헤더\n"
-            "  - 코드 블록 안에 ``def test_*`` **최소 5개**\n\n"
+            "  - 코드 블록 안에 ``def test_*`` **최소 10개** (4 카테고리 분포)\n\n"
+            "## 4 카테고리 분포 강제 (PR #61) — functional/robustness 의미 흡수\n"
+            "GUI 산출물의 경우 functional/robustness executor 가 SKIPPED 되므로, "
+            "본 pytest 가 그 *의미* 를 모두 흡수해야 합니다:\n"
+            "  a) **Happy path** ≥ 3개: 기본 사칙연산, 결과 누적 등\n"
+            "  b) **Edge cases** ≥ 4개 (functional 흡수): 0, 음수, 매우 큰 수 "
+            "(10**15+), 빈 입력, 유니코드 (한글/이모지), 비-수치 입력\n"
+            "  c) **Robustness/load** ≥ 3개 (robustness 흡수): 1000회 연속 호출 "
+            "(`for _ in range(1000): ...`), 긴 표현식 chain (10+ 연산자), "
+            "rapid_repeat (인스턴스 5회 재생성 후 idempotency)\n"
+            "  d) **Error handling** ≥ 1개: ZeroDivisionError, OverflowError, "
+            "ValueError 등 `with pytest.raises(...):` 패턴\n\n"
             "## 절대 규칙\n"
             "  1. ``pytest <code_dir>`` 만으로 standalone 실행 가능\n"
             "  2. GUI 윈도우 절대 미표시 (tkinter/customtkinter/PyQt 등은 "
@@ -361,7 +374,8 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
             "  3. import 경로 보정: 테스트 상단에 ``sys.path.insert(0, str("
             "Path(__file__).parent))``\n"
             "  4. 결정론적 assertion (예상값을 코드에 박아넣음 — truthy-only 금지)\n"
-            "  5. 최소 5개 시나리오 (happy + edge + error)\n\n"
+            "  5. 함수명 prefix 권장: ``test_happy_*`` / ``test_edge_*`` / "
+            "``test_load_*`` / ``test_error_*``\n\n"
             "## output_pydantic 강제\n"
             "본 task 는 ``PytestSuiteOutput`` schema 로 4개 필드 (summary / "
             "test_strategy / test_code_block / intent_and_limits) 모두 채워져야 "
@@ -369,9 +383,9 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
             "capture-before-rescue 로 raw 보존.\n"
         ),
         expected_output=(
-            "PytestSuiteOutput schema 4 필드 모두 채워진 마크다운 (전체 800자+, "
-            "```python``` 블록 1개+, def test_* 5개+). 마지막 줄 `Final Answer: "
-            "test_<entry>.py N scenarios`."
+            "PytestSuiteOutput schema 4 필드 모두 채워진 마크다운 (전체 1200자+, "
+            "```python``` 블록 1개+, def test_* 10개+ — happy/edge/load/error 4 "
+            "카테고리 분포). 마지막 줄 `Final Answer: test_<entry>.py N scenarios`."
         ),
         agent=pytest_author,
         context=[code_task],
