@@ -189,6 +189,38 @@ def _collect_qa_results(
     return results
 
 
+# ---------------------------------------------------------------------------
+# M5 + QA DoD 판정 규칙 — display marker 와 all_passed 의 single source of truth.
+# PR #57: PR #51~#55 까지는 marker (display) 와 all_passed (judgment) 가 별도
+# 표현이라 정수 카운트 키 (3_download_urls_count) 가 ❌ 로 표시되는 cosmetic
+# bug 발생 (10차 E2E 6차 출력에서 관찰). 본 PR 에서 단일 dict 로 통합.
+# 규칙 추가/변경 시 본 PASS_RULES 만 수정하면 marker 와 all_passed 가 함께 갱신.
+# ---------------------------------------------------------------------------
+DOD_PASS_RULES: dict[str, Any] = {
+    "1_publish_success": lambda v: v is True,
+    "2_release_url_issued": lambda v: v is True,
+    "3_download_urls_count": lambda v: v == 2,
+    "4_is_draft": lambda v: v is True,
+    "5_executor_success": lambda v: v is True,
+    "6_qa_overall_passed": lambda v: v in (True, None),
+    "7_qa_iterations_within_budget": lambda v: v in (True, None),
+}
+
+
+def _dod_marker(key: str, val: Any) -> str:
+    """DoD 체크 항목 한 칸을 ✅/⏭️/❌ 중 하나로 표시.
+
+    None → ⏭️ (skip / 미수행), 그 외엔 DOD_PASS_RULES 기준으로 판정.
+    """
+    if val is None:
+        return "⏭️"
+    rule = DOD_PASS_RULES.get(key)
+    if rule is None:
+        # 알 수 없는 키 — 보수적으로 ❌ (실수 방지)
+        return "❌"
+    return "✅" if rule(val) else "❌"
+
+
 def _dump_safely(obj: Any) -> Any:
     if obj is None:
         return None
@@ -362,14 +394,8 @@ def main() -> int:
                 qa_decision.retry_count <= max_qa_retries
             )
 
-    m5_qa_checks["all_passed"] = (
-        m5_qa_checks["1_publish_success"]
-        and m5_qa_checks["2_release_url_issued"]
-        and m5_qa_checks["3_download_urls_count"] == 2
-        and m5_qa_checks["4_is_draft"] is True
-        and m5_qa_checks["5_executor_success"]
-        and (m5_qa_checks["6_qa_overall_passed"] in (True, None))
-        and (m5_qa_checks["7_qa_iterations_within_budget"] in (True, None))
+    m5_qa_checks["all_passed"] = all(
+        DOD_PASS_RULES[k](m5_qa_checks[k]) for k in DOD_PASS_RULES
     )
 
     summary = {
@@ -401,7 +427,7 @@ def main() -> int:
     for key, val in m5_qa_checks.items():
         if key == "all_passed":
             continue
-        marker = "✅" if val in (True,) else ("⏭️" if val is None else "❌")
+        marker = _dod_marker(key, val)
         print(f"  {key:30s}: {marker} ({val})")
     print(
         f"  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
