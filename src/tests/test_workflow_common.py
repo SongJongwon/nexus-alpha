@@ -431,3 +431,210 @@ def test_rescuable_exc_classes_includes_both_when_available() -> None:
     from pydantic import ValidationError
 
     assert ValidationError in classes
+
+
+# ---------------------------------------------------------------------------
+# PR #54 — Capture-before-rescue (A안)
+#
+# 핵심: Task._export_output(result) 가 raise 하면 그 task 의 output_pydantic 만
+# in-place 로 None 처리한 뒤 *같은 raw* 로 재호출 → schema 만 잃고 본문 보존,
+# crew 재 kickoff 불필요. 5차 E2E 의 부수효과 (rescue 후 짧은 출력) 해결.
+# ---------------------------------------------------------------------------
+
+
+class _ExportingFakeCrew:
+    """kickoff() 가 등록된 task 들의 ``_export_output(raw)`` 를 호출 — A안의
+    클래스 레벨 patch 가 실제로 발동되는 시나리오 시뮬레이션.
+
+    실 라이브러리에선 Crew 내부에서 task 별로 _export_output 이 호출됨. 본 fake
+    는 그 호출 흐름만 흉내 — 첫 kickoff 에서 task 별 raw 를 _export_output 에
+    전달, 두 번째 kickoff (만약 일어나면) 도 동일.
+    """
+
+    def __init__(self, tasks_and_raws):
+        self.pairs = list(tasks_and_raws)
+        self.kickoff_calls = 0
+
+    def kickoff(self):
+        self.kickoff_calls += 1
+        for task, raw in self.pairs:
+            task._export_output(raw)
+        return f"kickoff#{self.kickoff_calls}"
+
+
+def test_capture_strips_per_task_in_place_no_re_kickoff() -> None:
+    """A안 핵심 — _export_output 안에서 ValidationError raise → 그 task 의
+    output_pydantic 만 None 으로 in-place strip → 같은 raw 로 재호출 →
+    crew.kickoff() 는 1회만 (재 kickoff 없음, 본문 보존)."""
+    from crewai.task import Task as _CrewTask
+
+    task1 = _make_task()
+    task2 = _make_task()
+    object.__setattr__(task1, "output_pydantic", _DummySchema)
+    object.__setattr__(task2, "output_pydantic", _DummySchema)
+
+    call_log: list[tuple[int, object, str]] = []
+
+    def fake_export(self, result):
+        call_log.append((id(self), self.output_pydantic, result))
+        if self.output_pydantic is not None:
+            # 첫 호출 — schema 강제 시 ValidationError raise (5차 사례 재현)
+            raise _validation_error()
+        # 두 번째 호출 (strip 후) — 정상 반환 (raw 가 task.output 에 들어감)
+        return (None, None)
+
+    original = _CrewTask._export_output
+    _CrewTask._export_output = fake_export
+    try:
+        crew = _ExportingFakeCrew(
+            [(task1, "RAW BODY 1 (long markdown)"), (task2, "RAW BODY 2 (long markdown)")]
+        )
+
+        result = kickoff_with_converter_rescue(crew, [task1, task2])
+
+        assert result == "kickoff#1"  # ⭐ 재 kickoff 안 함 — A안 핵심
+        assert crew.kickoff_calls == 1
+        # 두 task 모두 strip 됨
+        assert task1.output_pydantic is None
+        assert task2.output_pydantic is None
+        # 각 task 는 2회 호출됨 (실패 + strip 후 재호출)
+        assert len(call_log) == 4
+        # 두 번째 호출들은 모두 output_pydantic=None 으로 들어감
+        assert call_log[1][1] is None  # task1 second
+        assert call_log[3][1] is None  # task2 second
+        # raw 본문이 두 호출 모두에 동일하게 전달됨 (보존)
+        assert call_log[0][2] == call_log[1][2] == "RAW BODY 1 (long markdown)"
+        assert call_log[2][2] == call_log[3][2] == "RAW BODY 2 (long markdown)"
+    finally:
+        _CrewTask._export_output = original
+
+
+def test_capture_strips_on_converter_error_too() -> None:
+    """ConverterError 도 동일하게 capture-and-strip."""
+    if _ConverterError is None:
+        import pytest
+
+        pytest.skip("CrewAI ConverterError 미가용 환경")
+
+    from crewai.task import Task as _CrewTask
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+
+    def fake_export(self, result):
+        if self.output_pydantic is not None:
+            raise _converter_error("Agent must be provided")
+        return (None, None)
+
+    original = _CrewTask._export_output
+    _CrewTask._export_output = fake_export
+    try:
+        crew = _ExportingFakeCrew([(task, "RAW")])
+        result = kickoff_with_converter_rescue(crew, [task])
+        assert result == "kickoff#1"
+        assert crew.kickoff_calls == 1
+        assert task.output_pydantic is None
+    finally:
+        _CrewTask._export_output = original
+
+
+def test_capture_skips_when_task_has_no_pydantic() -> None:
+    """output_pydantic 없는 task 에서 raise 시 capture 가 처리 못 하므로 원 예외 raise."""
+    from crewai.task import Task as _CrewTask
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", None)
+
+    def fake_export(self, result):
+        # output_pydantic 없는데도 어떤 이유로든 ValidationError raise — 매우 드물지만
+        raise _validation_error()
+
+    original = _CrewTask._export_output
+    _CrewTask._export_output = fake_export
+    try:
+        crew = _ExportingFakeCrew([(task, "RAW")])
+        # output_pydantic 이 None 이므로 capture 가 strip 할 게 없음 → ValidationError
+        # 가 _export_output 밖으로 escape → kickoff() 가 raise → fallback 시도 →
+        # fallback 도 strip 대상 없어 결국 raise
+        from pydantic import ValidationError
+
+        import pytest
+
+        with pytest.raises(ValidationError):
+            kickoff_with_converter_rescue(crew, [task])
+        assert crew.kickoff_calls == 1  # 재 kickoff 시도조차 못 함 (strip 대상 없음)
+    finally:
+        _CrewTask._export_output = original
+
+
+def test_capture_preserves_kickoff_return_when_no_exception() -> None:
+    """예외 없을 때 kickoff_with_converter_rescue 가 kickoff() 결과를 그대로 반환."""
+    from crewai.task import Task as _CrewTask
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+
+    def fake_export(self, result):
+        # 정상 — 변환 성공 시뮬레이션
+        return (None, None)
+
+    original = _CrewTask._export_output
+    _CrewTask._export_output = fake_export
+    try:
+        crew = _ExportingFakeCrew([(task, "RAW")])
+        result = kickoff_with_converter_rescue(crew, [task])
+        assert result == "kickoff#1"
+        assert crew.kickoff_calls == 1
+        # output_pydantic 손대지 않음 (capture 발동 안 됨)
+        assert task.output_pydantic is _DummySchema
+    finally:
+        _CrewTask._export_output = original
+
+
+def test_capture_restores_original_export_after_completion() -> None:
+    """rescue 종료 후 Task._export_output 가 원본으로 복원되는지 (다른 워크플로 영향 차단)."""
+    from crewai.task import Task as _CrewTask
+
+    pre_export = _CrewTask._export_output
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", _DummySchema)
+
+    def fake_export(self, result):
+        return (None, None)
+
+    _CrewTask._export_output = fake_export
+    try:
+        crew = _ExportingFakeCrew([(task, "RAW")])
+        kickoff_with_converter_rescue(crew, [task])
+        # 우리가 set 한 fake_export 가 그대로 남아 있어야 함 (rescue 가 finally 에서 복원)
+        assert _CrewTask._export_output is fake_export
+    finally:
+        _CrewTask._export_output = pre_export
+
+
+def test_capture_restores_export_even_when_exception_propagates() -> None:
+    """예외가 외부로 propagate 해도 finally 에서 _export_output 복원."""
+    from crewai.task import Task as _CrewTask
+
+    sentinel_export = _CrewTask._export_output
+
+    task = _make_task()
+    object.__setattr__(task, "output_pydantic", None)  # capture 가 처리 못 함
+
+    def fake_export(self, result):
+        raise _validation_error()
+
+    _CrewTask._export_output = fake_export
+    try:
+        crew = _ExportingFakeCrew([(task, "RAW")])
+        from pydantic import ValidationError
+
+        import pytest
+
+        with pytest.raises(ValidationError):
+            kickoff_with_converter_rescue(crew, [task])
+        # 예외 후에도 우리가 set 한 fake_export 가 남아 있어야 (rescue 의 finally 가 복원)
+        assert _CrewTask._export_output is fake_export
+    finally:
+        _CrewTask._export_output = sentinel_export
