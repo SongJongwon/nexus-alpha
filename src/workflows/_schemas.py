@@ -755,25 +755,29 @@ class PytestSuiteOutput(BaseModel):
     test_strategy: str = Field(
         description=(
             "### 1. 테스트 전략 본문. entry 파일명 + 검증 패턴 (module-level "
-            "함수 직접 호출 / GUI 클래스 monkeypatch / 부분 검증) + 시나리오 "
-            "수. 섹션 헤더 없이 본문만 (수치·근거 포함, 최소 100자)"
+            "함수 직접 호출 / GUI 클래스 monkeypatch / 부분 검증) + **4 카테고리 "
+            "분포** (happy ≥3 / edge ≥4 / load ≥3 / error ≥1) 명시. 섹션 헤더 "
+            "없이 본문만 (수치·근거 포함, 최소 150자) [PR #61 강화]"
         ),
     )
     test_code_block: str = Field(
         description=(
             "### 2. 실 테스트 코드 본문. **반드시 ```python ... ``` 코드 블록** "
             "을 1개 이상 포함하고, 첫 줄에 `# file: test_<entry>.py` 헤더 주석. "
-            "절대 규칙 5개 모두 준수: pytest standalone / GUI 윈도우 미표시 "
+            "절대 규칙 6개 모두 준수: pytest standalone / GUI 윈도우 미표시 "
             "(monkeypatch __init__/mainloop) / sys.path.insert / 결정론적 "
-            "assertion (예상값 박아넣음) / 최소 5개 시나리오 (happy + edge + "
-            "error). 섹션 헤더 없이 본문만 (코드 분량 최소 30줄)"
+            "assertion (예상값 박아넣음) / **최소 10개 시나리오 — 4 카테고리 "
+            "(happy/edge/load/error) 분포 강제 — functional/robustness 의미 "
+            "흡수** / 함수명 prefix 권장 (test_happy_* / test_edge_* / "
+            "test_load_* / test_error_*). 섹션 헤더 없이 본문만 (코드 분량 "
+            "최소 60줄) [PR #61 강화]"
         ),
     )
     intent_and_limits: str = Field(
         description=(
-            "### 3. 검증 의도 + 한계 본문. 시나리오별 검증 의도 1줄씩 + 검증 "
-            "못한 부분 (분량 / GUI event loop / 외부 의존 등). 섹션 헤더 없이 "
-            "본문만 (최소 80자)"
+            "### 3. 검증 의도 + 한계 본문. 시나리오별 검증 의도 1줄씩 (10+) + "
+            "검증 못한 부분 (분량 / GUI event loop / 외부 의존 등). 섹션 헤더 "
+            "없이 본문만 (최소 120자) [PR #61 강화]"
         ),
     )
 
