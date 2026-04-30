@@ -1,13 +1,14 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-30 (PR #55 — **capture-before-rescue → 10차 6차 DoD 7/7 ALL PASSED + Calculator.exe + Draft Release + active gui_test 동시 달성**) ⭐
-> **현재 브랜치**: `main` (PR #55 머지 완료, 49f077b)
-> **테스트**: pytest **451 passed** (어제 445 → 오늘 +6, 회귀 0)
-> **최근 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md) (어제 전일)
-> **이전 세션 로그**: [progress/session_log_20260428.md](./progress/session_log_20260428.md)
+> **마지막 업데이트**: 2026-04-30 후반 (PR #58 + #59 — **Pytest Author 신설 + schema 강화 → 10차 8차 active QA 1/4 → 2/4 도달 + qa_feedback_loop 첫 실 활용**) ⭐⭐
+> **현재 브랜치**: `main` (PR #59 머지 완료)
+> **테스트**: pytest **483 passed** (오전 445 → 오후 +38, 회귀 0)
+> **최근 세션 로그**: [progress/session_log_20260430.md](./progress/session_log_20260430.md) (오전, PR #55 머지)
+> **이전 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
-> **10차 E2E 6차 (PASS, 26.90분, 완전 산출)**: [progress/e2e_10th_verification_post_pr55.md](./progress/e2e_10th_verification_post_pr55.md) ⭐⭐
+> **10차 E2E 7·8차 (PR #58/#59, active 2/4 도달)**: [progress/e2e_10th_verification_post_pr59.md](./progress/e2e_10th_verification_post_pr59.md) ⭐⭐
+> **10차 E2E 6차 (PASS, 26.90분, 완전 산출)**: [progress/e2e_10th_verification_post_pr55.md](./progress/e2e_10th_verification_post_pr55.md)
 > **10차 E2E 4·5차 (rescue 작동, 5차 빈 코드)**: [progress/e2e_10th_verification_post_pr53.md](./progress/e2e_10th_verification_post_pr53.md)
 > **10차 E2E 3차 (부분)**: [progress/e2e_10th_verification_post_pr52.md](./progress/e2e_10th_verification_post_pr52.md)
 > **10차 E2E 2차 (PASS, 28분)**: [progress/e2e_10th_verification_post_pr51.md](./progress/e2e_10th_verification_post_pr51.md)
@@ -30,11 +31,13 @@
 | **🎯 M5 + QA 풀체인 구조 검증 (10차 E2E)** | ✅ **DoD 7/7 ALL PASSED** (PR #51, 28.69분, 1회차 즉시 통과) ⭐ |
 | **🎯 산출물 카테고리 휴리스틱** | ✅ **detect_artifact_category()** (gui/cli/library/unknown, PR #51) |
 | **🎯 workflow-level rescue (이슈 6 방어선 3)** | ✅ **ConverterError + ValidationError 둘 다 흡수** (PR #53) |
-| **🎯 capture-before-rescue (이슈 6 방어선 3 강화)** | ✅ **Task._export_output 클래스 패치 + in-place strip + 같은 raw 재호출** (PR #55) ⭐ |
-| 전체 구현률 | ✅ **31/46 (67%)** |
-| **active QA gating** | 🔵 **1/4 (gui_test)** — 6차 풀체인에서 `[GUI_TEST PASS] (2.47s)` ACTIVE 검증 ⭐ |
-| 10차 E2E 풀체인 fatal-free | ✅ **26.90분 SUCCESS** (6차, PR #55 적용, rescue 실 발동 0회) ⭐ |
-| **10차 E2E 풀체인 + Calculator.exe 동시 산출** | ✅ **달성** — 11.18 MB, sha256=`15c13896d8...e7be3428`, Draft Release publish 동반 (6차) ⭐⭐ |
+| **🎯 capture-before-rescue (이슈 6 방어선 3 강화)** | ✅ **Task._export_output 클래스 패치 + in-place strip + 같은 raw 재호출** (PR #55) |
+| **🎯 Pytest Author 에이전트** | ✅ **workflow chain 통합 + PytestSuiteOutput schema 강제** (PR #58 + #59) ⭐ |
+| 전체 구현률 | ✅ **33/46 (72%)** |
+| **active QA gating** | 🟢 **2/4 (gui_test + code_qa)** — 8차 풀체인에서 `[CODE_QA PASS] passed=15` (PR #59) ⭐⭐ |
+| 10차 E2E 풀체인 fatal-free | ✅ **59.46분 SUCCESS** (8차, PR #59 적용, qa_feedback_loop 자동 보정 retry=1) |
+| **10차 E2E 풀체인 + Calculator.exe 동시 산출** | ✅ **달성** — Draft Release publish 동반 (6,7,8차 안정 재현) |
+| **qa_feedback_loop 첫 실 활용** | ✅ **8차에서 1차 fail → 자동 보정 → 2차 pass** (PR #48 인프라 12일 만 활용) ⭐ |
 
 ---
 
@@ -353,13 +356,23 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - rescue 발동 0회 (A안의 안전망 역할만)
     - 보고서: [progress/e2e_10th_verification_post_pr55.md](./progress/e2e_10th_verification_post_pr55.md)
 
+### 2026-04-30 후반 진행 (오후)
+
+36. ~~PR #56 — 어제 세션 로그~~ ✅ 머지
+37. ~~PR #57 — DoD marker cosmetic fix (DOD_PASS_RULES single source of truth)~~ ✅ 머지
+38. ~~PR #58 — Pytest Author 에이전트 chain 통합 (3개 분기)~~ ✅ 머지
+39. ~~10차 E2E 7차 — chain 통합 ✅, BUT LLM 본문 누락 (30 bytes) → active 미도달~~ ⚠️
+40. ~~PR #59 — Pytest Author 강화 (PytestSuiteOutput schema + backstory/description 분량 임계)~~ ✅ 머지 ⭐
+41. ~~10차 E2E 8차 — **active code_qa PASS (15 tests, retry=1) → 1/4 → 2/4 도달**~~ ⭐⭐
+    - pytest_suite 6,102 bytes (7차 30 bytes의 200×)
+    - qa_feedback_loop 첫 실 활용 (1차 fail → 2차 pass)
+    - 보고서: [progress/e2e_10th_verification_post_pr59.md](./progress/e2e_10th_verification_post_pr59.md)
+
 ### 다음 액션 (조건부 우선순위)
 
-36. 🟢 **PR #56 (작은 fix) — cosmetic bug**: `run_e2e_10th_verification.py` 의 marker 로직 분리 (정수 카운트 ❌ 표시 → ✅) — 10분
-37. 🟢 **PR #57+ (조건부) — code_qa active 화**: 워크플로가 pytest 스위트 자동 생성 → code_qa SKIPPED 해제 → active 2/4
-38. 🟢 **PR #58+ (조건부) — functional/robustness CLI 진입점**: GUI 산출물에서 `target_script_for_qa` 별도 추출 → active 4/4 도달
-39. 🟢 **Phase 6 착수 (조건부)**: Track B 5명 (Web Scraping / Desktop Auto / API / Data Parser / DevOps) → 본부 3 33% → 89%
-40. 🟢 **Update Checker 실 통합 (조건부)**: 산출 calculator.py 에 updater.py 임포트
+42. 🟡 **PR #60 (1순위) — Pytest Author 가 functional/robustness 시나리오도 생성**: GUI 친화 사용자 입력 시뮬레이션 + 부하 패턴 → active 4/4 도달 가능
+43. 🟢 **Phase 6 착수 (조건부)**: Track B 5명 (Web Scraping / Desktop Auto / API / Data Parser / DevOps) → 본부 3 33% → 89%
+44. 🟢 **Update Checker 실 통합 (조건부)**: 산출 calculator.py 에 updater.py 임포트
 
 ---
 
