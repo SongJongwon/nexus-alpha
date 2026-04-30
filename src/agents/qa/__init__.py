@@ -84,6 +84,13 @@ from .performance_engineer import (
     PERFORMANCE_ENGINEER_ROLE,
     create_performance_engineer_agent,
 )
+from .pytest_author import (
+    PYTEST_AUTHOR_BACKSTORY,
+    PYTEST_AUTHOR_GOAL,
+    PYTEST_AUTHOR_NAME,
+    PYTEST_AUTHOR_ROLE,
+    create_pytest_author_agent,
+)
 from .robustness_executor import (
     DEFAULT_SCENARIOS,
     RobustnessResult,
@@ -182,6 +189,12 @@ __all__ = [
     "PERFORMANCE_ENGINEER_NAME",
     "PERFORMANCE_ENGINEER_ROLE",
     "create_performance_engineer_agent",
+    # Pytest Author (workflow 내 테스트 스위트 생성, PR #58)
+    "PYTEST_AUTHOR_BACKSTORY",
+    "PYTEST_AUTHOR_GOAL",
+    "PYTEST_AUTHOR_NAME",
+    "PYTEST_AUTHOR_ROLE",
+    "create_pytest_author_agent",
     # Compliance Officer (Phase 7 정책, PR #47)
     "COMPLIANCE_OFFICER_BACKSTORY",
     "COMPLIANCE_OFFICER_GOAL",
