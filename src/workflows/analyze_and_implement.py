@@ -41,7 +41,7 @@ from src.agents.design import (
 )
 from src.agents.engineering import create_python_engineer_agent
 from src.agents.planning import create_uiux_analyst_agent
-from src.agents.qa import create_code_reviewer_agent
+from src.agents.qa import create_code_reviewer_agent, create_pytest_author_agent
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
     SUSPICIOUS_OUTPUT_THRESHOLD as _SUSPICIOUS_OUTPUT_THRESHOLD,
@@ -97,6 +97,12 @@ class WorkflowResult:
         changelog_entry: Changelog Generator Keep a Changelog 항목.
         update_module_spec: Update Checker 자동 업데이트 모듈 사양.
         distribution_spec: Distribution Agent 배포 사양 (채널/URL/SHA256).
+
+    PR #58 추가 필드 (backward compat — 기본 빈 문자열):
+        pytest_suite: Pytest Author 산출 — workflow 안에서 entry 코드를 읽고
+            ``test_<entry>.py`` 를 작성한 마크다운. ```python``` 블록은 같은
+            ``code/`` 디렉터리에 ``test_*.py`` 로 저장되어 후속
+            ``run_code_qa(target_dir=code/)`` 가 SKIPPED → ACTIVE 가 된다.
     """
 
     user_request: str
@@ -123,6 +129,8 @@ class WorkflowResult:
     changelog_entry: str = ""
     update_module_spec: str = ""
     distribution_spec: str = ""
+    # PR #58 — Pytest Author 산출 (active code_qa 도달용)
+    pytest_suite: str = ""
     # PR #36/#37 — PyInstaller executor 결과 (enable_executor=True 시만)
     executor_result: object = None  # ExecuteResult | None — circular import 회피용 object
     # PR #39 — GitHub Release publish 결과 (enable_publish=True 시만)
@@ -323,6 +331,37 @@ def _build_engineer_task(engineer, cto_task: Task, analyst_task: Task) -> Task:
     )
 
 
+def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
+    """Pytest Author Task — code_task (Engineer 또는 GUI Code Generator) 의 산출
+    코드를 컨텍스트로 받아 같은 디렉터리 배치 가능한 ``test_*.py`` 작성.
+
+    PR #58 추가. ``output_pydantic`` 미사용 — markdown + ```python``` 블록만
+    안전하게 출력하면 ``_extract_code_blocks`` 가 ``code/`` 디렉터리에 저장.
+    """
+    return Task(
+        description=(
+            "이전 컨텍스트의 산출 코드 (`<entry>.py`) 를 읽고 같은 디렉터리에 "
+            "배치 가능한 ``test_<entry>.py`` 를 백스토리에 명시된 3단 구조"
+            "(테스트 전략 한 줄 요약 / 실 코드 / 검증 의도+한계)로 작성하세요.\n\n"
+            "절대 규칙:\n"
+            "  1. ``pytest <code_dir>`` 만으로 standalone 실행 가능\n"
+            "  2. GUI 윈도우 절대 미표시 (tkinter/customtkinter/PyQt 등은 "
+            "     ``monkeypatch`` 로 ``__init__`` / ``mainloop`` no-op)\n"
+            "  3. import 경로 보정: 테스트 상단에 ``sys.path.insert(0, str("
+            "Path(__file__).parent))``\n"
+            "  4. 결정론적 assertion (예상값을 코드에 박아넣음 — truthy-only 금지)\n"
+            "  5. 최소 5개 시나리오 (happy + edge + error)\n\n"
+            "출력은 ```python\\n# file: test_<entry>.py\\n...\\n``` 블록으로."
+        ),
+        expected_output=(
+            "테스트 전략 + ```python``` 블록 (# file: test_<entry>.py 헤더) + "
+            "검증 의도/한계. 마지막 줄 `Final Answer: test_<entry>.py N scenarios`."
+        ),
+        agent=pytest_author,
+        context=[code_task],
+    )
+
+
 def _build_qa_task(reviewer, code_task: Task) -> Task:
     """Code Reviewer Task — code_task (Engineer 또는 GUI Code Generator) 컨텍스트로."""
     import sys
@@ -459,14 +498,24 @@ def _save_classic_artifacts(
     analyst_brief: str,
     engineer_output: str,
     qa_review: str,
+    pytest_suite: str = "",
 ) -> list[Path]:
-    """기존 4-agent 산출물 저장 (00~04 + code/). 반환은 추출된 .py 파일 목록."""
+    """기존 4-agent 산출물 저장 (00~04 + code/). 반환은 추출된 .py 파일 목록.
+
+    PR #58: ``pytest_suite`` 가 비지 않으면 ``05_pytest_suite.md`` 로 저장하고
+    ```python``` 블록을 같은 ``code/`` 디렉터리에 ``test_*.py`` 로 추출 →
+    반환 목록에 합산.
+    """
     (workflow_dir / "00_user_request.txt").write_text(user_request, encoding="utf-8")
     (workflow_dir / "01_cto_strategy.md").write_text(cto_strategy, encoding="utf-8")
     (workflow_dir / "02_analyst_brief.md").write_text(analyst_brief, encoding="utf-8")
     (workflow_dir / "03_engineer_output.md").write_text(engineer_output, encoding="utf-8")
     (workflow_dir / "04_qa_review.md").write_text(qa_review, encoding="utf-8")
-    return _extract_code_blocks(engineer_output, workflow_dir / "code")
+    code_paths = _extract_code_blocks(engineer_output, workflow_dir / "code")
+    if pytest_suite:
+        (workflow_dir / "05_pytest_suite.md").write_text(pytest_suite, encoding="utf-8")
+        code_paths += _extract_code_blocks(pytest_suite, workflow_dir / "code")
+    return code_paths
 
 
 # ---------------------------------------------------------------------------
@@ -726,20 +775,28 @@ def _run_classic_chain(
     *,
     verbose: bool,
 ) -> WorkflowResult:
-    """`enable_gui_branch=False` (기본) 경로. 기존 동작 그대로 보존."""
+    """`enable_gui_branch=False` (기본) 경로. 기존 동작 그대로 보존 + PR #58 Pytest Author."""
     cto = create_cto_agent(verbose=verbose)
     analyst = create_data_analyst_agent(verbose=verbose)
     engineer = create_python_engineer_agent(verbose=verbose)
+    pytest_author = create_pytest_author_agent(verbose=verbose)
     reviewer = create_code_reviewer_agent(verbose=verbose)
 
     cto_task = _build_cto_task(user_request, cto)
     analyst_task = _build_analyst_task(analyst, cto_task)
     engineer_task = _build_engineer_task(engineer, cto_task, analyst_task)
+    pytest_author_task = _build_pytest_author_task(pytest_author, engineer_task)
     qa_review_task = _build_qa_task(reviewer, engineer_task)
 
-    _classic_tasks = [cto_task, analyst_task, engineer_task, qa_review_task]
+    _classic_tasks = [
+        cto_task,
+        analyst_task,
+        engineer_task,
+        pytest_author_task,
+        qa_review_task,
+    ]
     _classic_crew = Crew(
-        agents=[cto, analyst, engineer, reviewer],
+        agents=[cto, analyst, engineer, pytest_author, reviewer],
         tasks=_classic_tasks,
         process=Process.sequential,
         verbose=verbose,
@@ -752,12 +809,19 @@ def _run_classic_chain(
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)
     engineer_output = _task_output_text(engineer_task)
+    pytest_suite = _task_output_text(pytest_author_task)
     qa_review = _task_output_text(qa_review_task) or (
         getattr(crew_result, "raw", None) or str(crew_result)
     )
 
     code_paths = _save_classic_artifacts(
-        workflow_dir, user_request, cto_strategy, analyst_brief, engineer_output, qa_review
+        workflow_dir,
+        user_request,
+        cto_strategy,
+        analyst_brief,
+        engineer_output,
+        qa_review,
+        pytest_suite=pytest_suite,
     )
 
     return WorkflowResult(
@@ -768,6 +832,7 @@ def _run_classic_chain(
         qa_review=qa_review,
         saved_dir=workflow_dir,
         saved_code_files=code_paths,
+        pytest_suite=pytest_suite,
         # Phase 4 필드는 기본값 (빈 문자열) — backward compat
     )
 
@@ -783,20 +848,28 @@ def _run_cli_branch_chain_with_ui_context(
     *,
     verbose: bool,
 ) -> WorkflowResult:
-    """UI/UX 가 GUI 가 아니라고 판정한 경로. Engineer 그대로 + UI/UX context 만 추가."""
+    """UI/UX 가 GUI 가 아니라고 판정한 경로. Engineer 그대로 + UI/UX context 만 추가 + PR #58 Pytest Author."""
     cto = create_cto_agent(verbose=verbose)
     analyst = create_data_analyst_agent(verbose=verbose)
     engineer = create_python_engineer_agent(verbose=verbose)
+    pytest_author = create_pytest_author_agent(verbose=verbose)
     reviewer = create_code_reviewer_agent(verbose=verbose)
 
     cto_task = _build_cto_task(user_request, cto, ui_spec_context=uiux_task)
     analyst_task = _build_analyst_task(analyst, cto_task)
     engineer_task = _build_engineer_task(engineer, cto_task, analyst_task)
+    pytest_author_task = _build_pytest_author_task(pytest_author, engineer_task)
     qa_review_task = _build_qa_task(reviewer, engineer_task)
 
-    _cli_tasks = [cto_task, analyst_task, engineer_task, qa_review_task]
+    _cli_tasks = [
+        cto_task,
+        analyst_task,
+        engineer_task,
+        pytest_author_task,
+        qa_review_task,
+    ]
     _cli_crew = Crew(
-        agents=[cto, analyst, engineer, reviewer],
+        agents=[cto, analyst, engineer, pytest_author, reviewer],
         tasks=_cli_tasks,
         process=Process.sequential,
         verbose=verbose,
@@ -809,12 +882,19 @@ def _run_cli_branch_chain_with_ui_context(
     cto_strategy = _task_output_text(cto_task)
     analyst_brief = _task_output_text(analyst_task)
     engineer_output = _task_output_text(engineer_task)
+    pytest_suite = _task_output_text(pytest_author_task)
     qa_review = _task_output_text(qa_review_task) or (
         getattr(crew_result, "raw", None) or str(crew_result)
     )
 
     code_paths = _save_classic_artifacts(
-        workflow_dir, user_request, cto_strategy, analyst_brief, engineer_output, qa_review
+        workflow_dir,
+        user_request,
+        cto_strategy,
+        analyst_brief,
+        engineer_output,
+        qa_review,
+        pytest_suite=pytest_suite,
     )
     # Phase 4 활성 시 추가 산출
     (workflow_dir / "10_ui_ux_spec.md").write_text(ui_spec, encoding="utf-8")
@@ -827,6 +907,7 @@ def _run_cli_branch_chain_with_ui_context(
         qa_review=qa_review,
         saved_dir=workflow_dir,
         saved_code_files=code_paths,
+        pytest_suite=pytest_suite,
         chosen_path="cli",
         ui_spec=ui_spec,
     )
@@ -843,12 +924,13 @@ def _run_gui_branch_chain(
     *,
     verbose: bool,
 ) -> WorkflowResult:
-    """UI/UX 가 GUI 라고 판정한 경로. Engineer 자리를 디자인 본부 3명이 대체."""
+    """UI/UX 가 GUI 라고 판정한 경로. Engineer 자리를 디자인 본부 3명이 대체 + PR #58 Pytest Author."""
     cto = create_cto_agent(verbose=verbose)
     analyst = create_data_analyst_agent(verbose=verbose)
     designer = create_gui_designer_agent(verbose=verbose)
     theme = create_theme_designer_agent(verbose=verbose)
     coder = create_gui_code_generator_agent(verbose=verbose)
+    pytest_author = create_pytest_author_agent(verbose=verbose)
     reviewer = create_code_reviewer_agent(verbose=verbose)
 
     cto_task = _build_cto_task(user_request, cto, ui_spec_context=uiux_task)
@@ -856,6 +938,7 @@ def _run_gui_branch_chain(
     designer_task = _build_gui_designer_task(designer, uiux_task)
     theme_task = _build_theme_task(theme, uiux_task, designer_task)
     code_gen_task = _build_gui_code_gen_task(coder, uiux_task, designer_task, theme_task)
+    pytest_author_task = _build_pytest_author_task(pytest_author, code_gen_task)
     qa_review_task = _build_qa_task(reviewer, code_gen_task)
 
     _gui_tasks = [
@@ -864,10 +947,11 @@ def _run_gui_branch_chain(
         designer_task,
         theme_task,
         code_gen_task,
+        pytest_author_task,
         qa_review_task,
     ]
     _gui_crew = Crew(
-        agents=[cto, analyst, designer, theme, coder, reviewer],
+        agents=[cto, analyst, designer, theme, coder, pytest_author, reviewer],
         tasks=_gui_tasks,
         process=Process.sequential,
         verbose=verbose,
@@ -882,6 +966,7 @@ def _run_gui_branch_chain(
     gui_design = _task_output_text(designer_task)
     design_tokens = _task_output_text(theme_task)
     gui_code_output = _task_output_text(code_gen_task)
+    pytest_suite = _task_output_text(pytest_author_task)
     qa_review = _task_output_text(qa_review_task) or (
         getattr(crew_result, "raw", None) or str(crew_result)
     )
@@ -901,9 +986,13 @@ def _run_gui_branch_chain(
     (workflow_dir / "11_gui_design.md").write_text(gui_design, encoding="utf-8")
     (workflow_dir / "12_design_tokens.md").write_text(design_tokens, encoding="utf-8")
     (workflow_dir / "13_gui_code_output.md").write_text(gui_code_output, encoding="utf-8")
+    if pytest_suite:
+        (workflow_dir / "14_pytest_suite.md").write_text(pytest_suite, encoding="utf-8")
 
-    # 코드 추출은 GUI Code Generator 산출 기준
+    # 코드 추출 — GUI Code Generator 산출 + (PR #58) Pytest Author 산출 합산
     code_paths = _extract_code_blocks(gui_code_output, workflow_dir / "code")
+    if pytest_suite:
+        code_paths += _extract_code_blocks(pytest_suite, workflow_dir / "code")
 
     return WorkflowResult(
         user_request=user_request,
@@ -913,6 +1002,7 @@ def _run_gui_branch_chain(
         qa_review=qa_review,
         saved_dir=workflow_dir,
         saved_code_files=code_paths,
+        pytest_suite=pytest_suite,
         chosen_path="gui",
         ui_spec=ui_spec,
         gui_design=gui_design,
