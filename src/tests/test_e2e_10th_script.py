@@ -126,3 +126,126 @@ def test_dump_safely_handles_basic_types() -> None:
         assert mod._dump_safely(Path("/tmp/x")) == str(Path("/tmp/x"))
     finally:
         sys.path.remove(str(PROJECT_ROOT / "scripts"))
+
+
+# ---------------------------------------------------------------------------
+# PR #57 — DOD_PASS_RULES + _dod_marker single source of truth
+#
+# 10차 E2E 6차 출력에서 발견된 cosmetic bug:
+#   `3_download_urls_count: ❌ (2)` — 정수 카운트가 ❌ 로 표시됨.
+#   원인: marker 로직이 `val in (True,)` 만 ✅ 처리 → 정수 2 가 ❌ 로 떨어짐.
+#   영향: 종합 판정 (all_passed) 은 정상이라 실 동작 무관 — 콘솔 표시만.
+# 본 PR fix:
+#   DOD_PASS_RULES dict 가 marker (display) 와 all_passed (judgment) 의 single
+#   source of truth. 향후 키 추가/변경 시 본 dict 만 수정.
+# ---------------------------------------------------------------------------
+
+
+def _load_script_module():
+    """importlib 로 스크립트를 모듈처럼 로드 (main() 자동 실행 안 됨)."""
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "run_e2e_10th_verification", SCRIPT_PATH
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    finally:
+        sys.path.remove(str(PROJECT_ROOT / "scripts"))
+
+
+def test_dod_pass_rules_covers_all_seven_dod_keys() -> None:
+    """DOD_PASS_RULES 가 7개 DoD 키를 모두 포함 — main() 의 m5_qa_checks 와 키 일치."""
+    mod = _load_script_module()
+    expected = {
+        "1_publish_success",
+        "2_release_url_issued",
+        "3_download_urls_count",
+        "4_is_draft",
+        "5_executor_success",
+        "6_qa_overall_passed",
+        "7_qa_iterations_within_budget",
+    }
+    assert set(mod.DOD_PASS_RULES.keys()) == expected
+
+
+def test_dod_marker_handles_6th_e2e_all_pass_pattern() -> None:
+    """10차 E2E 6차 (PR #55) 실 값 — 모두 ✅ 여야 cosmetic bug fix 검증."""
+    mod = _load_script_module()
+    sixth_checks = {
+        "1_publish_success": True,
+        "2_release_url_issued": True,
+        "3_download_urls_count": 2,  # ⭐ 핵심 — 정수 카운트가 ✅ 로 표시
+        "4_is_draft": True,
+        "5_executor_success": True,
+        "6_qa_overall_passed": True,
+        "7_qa_iterations_within_budget": True,
+    }
+    for key, val in sixth_checks.items():
+        assert mod._dod_marker(key, val) == "✅", (
+            f"6차 패턴: {key}={val!r} 가 ✅ 가 아님 — cosmetic bug 회귀"
+        )
+
+
+def test_dod_marker_returns_skipped_for_none() -> None:
+    """None 은 ⏭️ (skip) 로 표시 — 미수행 항목 구분."""
+    mod = _load_script_module()
+    for key in mod.DOD_PASS_RULES:
+        assert mod._dod_marker(key, None) == "⏭️"
+
+
+def test_dod_marker_returns_x_for_failure_patterns() -> None:
+    """실패 값들은 ❌."""
+    mod = _load_script_module()
+    failures = {
+        "1_publish_success": False,
+        "2_release_url_issued": False,
+        "3_download_urls_count": 0,  # 0개 → ❌
+        "4_is_draft": False,
+        "5_executor_success": False,
+        "6_qa_overall_passed": False,
+        "7_qa_iterations_within_budget": False,
+    }
+    for key, val in failures.items():
+        assert mod._dod_marker(key, val) == "❌", (
+            f"실패 패턴: {key}={val!r} 가 ❌ 가 아님"
+        )
+
+
+def test_dod_marker_unknown_key_returns_x_conservatively() -> None:
+    """규칙 등록 안 된 키는 보수적으로 ❌ — 미정의 키가 silent ✅ 표시되는 사고 방지."""
+    mod = _load_script_module()
+    assert mod._dod_marker("99_unknown_future_check", True) == "❌"
+
+
+def test_download_urls_count_must_be_exactly_two() -> None:
+    """3_download_urls_count 는 .exe + .sha256.txt 두 자산만 PASS — 1개나 3개는 ❌."""
+    mod = _load_script_module()
+    rule = mod.DOD_PASS_RULES["3_download_urls_count"]
+    assert rule(2) is True
+    assert rule(0) is False
+    assert rule(1) is False
+    assert rule(3) is False
+
+
+def test_qa_keys_treat_none_as_pass_for_optional_qa_modules() -> None:
+    """6_qa_overall_passed / 7_qa_iterations_within_budget 는 None 도 PASS — QA 모듈
+    부재 환경에서 풀체인 그 자체는 통과로 간주 (호환성)."""
+    mod = _load_script_module()
+    for key in ("6_qa_overall_passed", "7_qa_iterations_within_budget"):
+        rule = mod.DOD_PASS_RULES[key]
+        assert rule(True) is True
+        assert rule(None) is True
+        assert rule(False) is False
+
+
+def test_all_passed_uses_dod_pass_rules_directly() -> None:
+    """all_passed 계산이 DOD_PASS_RULES 를 사용하는지 (single source of truth 보장)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    # main() 안에서 all_passed 계산이 DOD_PASS_RULES 를 직접 참조
+    assert "DOD_PASS_RULES[k]" in source or "DOD_PASS_RULES.items()" in source, (
+        "all_passed 가 DOD_PASS_RULES 를 사용하지 않음 — single source of truth 깨짐"
+    )
