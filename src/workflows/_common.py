@@ -5,8 +5,9 @@
   - task_output_text: CrewAI Task 출력 안전 추출 + 짧은 출력 경고
   - retry_task_if_short: 짧은 출력 감지 시 동일 task 재실행 (이슈 6 fix)
   - retry_short_tasks_in_chain: production 헬퍼 (pytest 환경 skip)
-  - kickoff_with_converter_rescue: ConverterError 시 output_pydantic 벗기고
-    재시도 (이슈 6 방어선 3 — PR #53)
+  - kickoff_with_converter_rescue: ConverterError/ValidationError 시 본문(raw)
+    보존하고 task.output_pydantic 만 in-place 벗긴 뒤 같은 raw 로 _export_output
+    재호출 — 재 kickoff 불필요, LLM 본문 100% 보존 (이슈 6 방어선 3 — PR #53/#54)
 """
 
 from __future__ import annotations
@@ -179,7 +180,7 @@ def retry_short_tasks_in_chain(
 
 
 # ---------------------------------------------------------------------------
-# 이슈 6 방어선 3 (PR #53) — ConverterError rescue
+# 이슈 6 방어선 3 — Capture-before-rescue (PR #53 → PR #54)
 # ---------------------------------------------------------------------------
 
 
@@ -188,32 +189,46 @@ def kickoff_with_converter_rescue(
     tasks: Sequence[Task],
     max_rescue: int = 1,
 ) -> object:
-    """``crew.kickoff()`` 를 호출. **CrewAI converter 에서 raise 되는** 예외
-    (``ConverterError`` 또는 ``pydantic.ValidationError``) 시 모든 task 의
-    ``output_pydantic`` 을 벗기고 1회 재시도.
+    """``crew.kickoff()`` 를 호출. CrewAI converter 가 raise 하는 rescuable
+    예외 (``ConverterError`` 또는 ``pydantic.ValidationError``) 발생 시
+    **그 task 의 ``output_pydantic`` 만 in-place 로 벗기고 같은 raw 로
+    ``_export_output`` 을 재호출** — 본문(raw) 100% 보존, crew 재 kickoff 불필요.
 
-    배경 (PR #53 진단 — 두 가지 결함 모두 처리):
+    배경 (PR #53 진단 — 두 가지 결함):
         1. ``ConverterError`` (10차 E2E 1·3차 — Build Engineer / Platform Tester):
            CrewAI ``Converter.to_pydantic()`` 의 ``handle_partial_json(agent=None)``
            하드코딩 (converter.py:85) → ``convert_with_instructions(agent=None)``
            → ``"Agent must be provided"`` ``TypeError`` → ConverterError surface.
         2. ``ValidationError`` (10차 E2E 4차 — Installer Creator):
            CrewAI ``handle_partial_json`` 의 ``_JSON_PATTERN = r"({.*})"`` (DOTALL,
-           greedy) 가 markdown 의 ``{{guid}}`` / ``{autodesktop}`` 등 비-JSON
-           ``{...}`` 블록을 잘못 매칭 → ``model_validate_json`` ValidationError 가
-           ``except ValidationError: raise`` (converter.py:266) 로 wrap 없이 escape.
+           greedy) 가 markdown 의 ``{{guid}}`` / ``{autodesktop}`` / Python set
+           literal 등 비-JSON ``{...}`` 블록을 잘못 매칭 → ``model_validate_json``
+           ValidationError 가 ``except ValidationError: raise`` (converter.py:266)
+           로 wrap 없이 escape.
         두 결함 모두 LLM 의 markdown 출력을 JSON 으로 강제 변환하려는 CrewAI
         converter 의 부작용. 결정적 — LLM 같은 답을 또 내도 같은 결과.
 
-    처방:
-        rescuable 예외 (``ConverterError`` ∪ ``ValidationError``) raise 시 모든
-        task 의 ``output_pydantic`` 을 ``None`` 으로 벗긴 뒤 같은 ``crew`` 를 1회
-        재실행. 산출물의 schema 보장은 잃지만 raw 텍스트는 보존되고 workflow
-        진행 가능 (``task_output_text`` 가 raw 출력 짧음/누락 별도 감지).
+    PR #54 — Capture-before-rescue (A안):
+        v1/v2 (PR #53) 의 처방은 "전체 task 의 output_pydantic 벗기고 crew 재
+        kickoff" 였으나, 10차 E2E 5차 (2026-04-29) 에서 부수효과 발견:
+        rescue 후 재 kickoff 시 LLM 이 schema instruction 부재 상태에서 backstory
+        의 ``Final Answer:`` 한 줄 패턴을 따라 본문이 짧아짐 → GUI Code Generator
+        의 ``code/`` 빈 폴더 → .exe 미생성.
+
+        본 PR 의 A안: ``Task._export_output(result)`` 를 *클래스 레벨* 로 wrap.
+        rescuable 예외 raise 시 그 task 의 ``output_pydantic`` 을 ``None`` 으로
+        in-place 벗긴 뒤 **같은 raw result 로 ``_export_output`` 재호출** —
+        schema 변환만 skip 되고 raw 본문은 그대로 ``task.output.raw`` 에 들어감.
+        crew 재 kickoff 불필요 → 첫 kickoff 의 긴 raw 가 보존됨 → 코드 추출 성공.
+
+        만약 ``_export_output`` 외부에서 rescuable 예외가 raise 되는 경우
+        (예: Crew 자체 로직, 호출 순서 차이 등) 는 v2 fallback 으로 전체 task
+        ``output_pydantic`` 벗기고 1회 재 kickoff (호환성).
 
     Args:
         crew: ``kickoff()`` 할 Crew 인스턴스.
-        tasks: 해당 crew 의 task 시퀀스 — rescue 시 ``output_pydantic`` 벗길 대상.
+        tasks: 해당 crew 의 task 시퀀스 — fallback rescue 시 ``output_pydantic``
+            벗길 대상.
         max_rescue: rescue 시도 최대 횟수 (기본 1, 0 이면 rescue 비활성).
 
     Returns:
@@ -228,37 +243,83 @@ def kickoff_with_converter_rescue(
         # CrewAI / Pydantic 미가용 — 기본 kickoff 만 (rescue 불가)
         return crew.kickoff()
 
-    try:
+    if max_rescue <= 0:
+        # rescue 비활성 — patch 도 fallback 도 적용하지 않음
         return crew.kickoff()
-    except rescuable as e:
-        if max_rescue <= 0:
-            raise
 
-        rescued: list[str] = []
-        for task in tasks:
-            if getattr(task, "output_pydantic", None) is not None:
+    # ----- A안: Task._export_output 클래스 레벨 patch (capture-before-rescue) -----
+    try:
+        from crewai.task import Task as _CrewTask  # type: ignore[import-not-found]
+    except Exception:
+        _CrewTask = None  # type: ignore[assignment]
+
+    captured: list[tuple[str, str]] = []  # (agent_role, exc_type)
+    original_export = None
+
+    if _CrewTask is not None and hasattr(_CrewTask, "_export_output"):
+        original_export = _CrewTask._export_output
+
+        def _patched_export(self, result):  # type: ignore[no-untyped-def]
+            try:
+                return original_export(self, result)
+            except rescuable as exc:
+                # 그 task 만 schema 벗기고 같은 raw 로 재호출 — 본문 보존
+                if getattr(self, "output_pydantic", None) is None:
+                    raise
                 try:
-                    # CrewAI Task 는 Pydantic v2 BaseModel — 기본 mutable.
-                    task.output_pydantic = None
-                    role = getattr(getattr(task, "agent", None), "role", "unknown")
-                    rescued.append(role)
+                    self.output_pydantic = None
                 except Exception:
-                    # Pydantic frozen 등 mutate 실패 — graceful skip
-                    pass
+                    raise exc  # mutate 실패 — 원 예외 surface
+                role = getattr(getattr(self, "agent", None), "role", "unknown")
+                captured.append((role, type(exc).__name__))
+                # 두 번째 호출 — output_pydantic=None 이라 convert_to_model skip,
+                # raw 가 task.output 에 그대로 들어감
+                return original_export(self, result)
 
-        if not rescued:
-            raise
+        _CrewTask._export_output = _patched_export  # type: ignore[assignment]
 
+    try:
+        try:
+            result = crew.kickoff()
+        except rescuable as e:
+            # _export_output 외부 (Crew 내부 로직) 에서 raise 된 케이스 — v2 fallback
+            rescued: list[str] = []
+            for task in tasks:
+                if getattr(task, "output_pydantic", None) is not None:
+                    try:
+                        task.output_pydantic = None
+                        role = getattr(getattr(task, "agent", None), "role", "unknown")
+                        rescued.append(role)
+                    except Exception:
+                        pass
+            if not rescued:
+                raise
+
+            import sys
+
+            if "pytest" not in sys.modules:
+                warnings.warn(
+                    f"[converter rescue v2 fallback] {type(e).__name__}: "
+                    f"tasks={rescued}; output_pydantic stripped, retrying once. "
+                    f"Original: {e}",
+                    stacklevel=2,
+                )
+
+            # fallback 재 kickoff — patched 는 여전히 활성 상태
+            result = crew.kickoff()
+    finally:
+        if original_export is not None and _CrewTask is not None:
+            _CrewTask._export_output = original_export  # type: ignore[assignment]
+
+    if captured:
         import sys
 
         if "pytest" not in sys.modules:
+            roles = [r for r, _ in captured]
             warnings.warn(
-                f"[converter rescue] {type(e).__name__}: tasks={rescued}; "
-                f"output_pydantic stripped, retrying once. Original: {e}",
+                f"[converter rescue capture] tasks={roles}; output_pydantic "
+                f"stripped per-task in-place, raw preserved (no re-kickoff).",
                 stacklevel=2,
             )
 
-        # 1회 재시도 (max_rescue=1 이면 마지막 기회)
-        if max_rescue > 1:
-            return kickoff_with_converter_rescue(crew, tasks, max_rescue=max_rescue - 1)
-        return crew.kickoff()
+    return result
