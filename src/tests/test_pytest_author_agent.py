@@ -261,3 +261,109 @@ def test_workflow_result_can_be_constructed_without_pytest_suite() -> None:
         saved_dir=Path("/tmp/x"),
     )
     assert result.pytest_suite == ""
+
+
+# ---------------------------------------------------------------------------
+# PR #59 — output_pydantic schema (PytestSuiteOutput) + backstory 강화
+#
+# 배경: 10차 E2E 7차 (PR #58) 에서 Pytest Author 가 backstory 의 출력 규약을
+# 무시하고 Final Answer 한 줄(30바이트)만 출력 → test_*.py 추출 실패.
+# 처방: schema 강제 (방어선 2) + backstory/description 분량 임계 명시.
+# ---------------------------------------------------------------------------
+
+
+def test_pytest_suite_output_schema_has_four_required_fields() -> None:
+    """PytestSuiteOutput 이 4개 필드 (summary / test_strategy / test_code_block /
+    intent_and_limits) 모두 정의 — LLM 이 어느 하나라도 누락 시 task 미완료."""
+    from src.workflows._schemas import PytestSuiteOutput
+
+    fields = set(PytestSuiteOutput.model_fields.keys())
+    expected = {"summary", "test_strategy", "test_code_block", "intent_and_limits"}
+    assert fields == expected, f"필드 차이: 누락={expected-fields}, 잉여={fields-expected}"
+
+
+def test_pytest_suite_output_to_markdown_renders_three_sections() -> None:
+    """``to_markdown()`` 이 PR #58 산출 파일 형식과 호환 (## 테스트 스위트 + ### 1~3)."""
+    from src.workflows._schemas import PytestSuiteOutput
+
+    m = PytestSuiteOutput(
+        summary="test_calculator.py 5 scenarios",
+        test_strategy="entry calculator.py 의 _on_press 메서드를 monkeypatch CTk.__init__ 후 직접 호출하는 패턴으로 5개 시나리오 작성. happy path 1 + edge case (0 / 음수 / 큰수) 3 + ZeroDivision error 1.",
+        test_code_block="```python\n# file: test_calculator.py\nimport sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).parent))\n\ndef test_add(): assert 1 + 1 == 2\ndef test_sub(): assert 5 - 3 == 2\ndef test_mul(): assert 4 * 3 == 12\ndef test_div(): assert 10 / 2 == 5\ndef test_div_zero():\n    import pytest\n    with pytest.raises(ZeroDivisionError):\n        1/0\n```",
+        intent_and_limits="시나리오 #1~5 모두 결정론적 assertion. GUI event loop 자체와 키보드 이벤트는 미검증 (별도 gui_test 가 담당).",
+    )
+    md = m.to_markdown()
+    assert "## 테스트 스위트" in md
+    assert "### 1. 테스트 전략" in md
+    assert "### 2. 실 테스트 코드" in md
+    assert "### 3. 검증 의도 + 한계" in md
+    # ```python``` 블록 보존
+    assert "```python" in md
+    assert "# file: test_calculator.py" in md
+
+
+def test_build_pytest_author_task_skips_output_pydantic_under_pytest() -> None:
+    """pytest 환경에선 output_pydantic 미적용 — FakeProvider 호환 (다른 task 빌더와 동일 패턴)."""
+    from crewai import Task
+
+    from src.workflows.analyze_and_implement import _build_pytest_author_task
+
+    code_task = Task(description="dummy", expected_output="x")
+    pytest_author = create_pytest_author_agent(verbose=False)
+
+    task = _build_pytest_author_task(pytest_author, code_task)
+    # pytest 환경 ⇒ output_pydantic 은 None 유지
+    assert task.output_pydantic is None
+
+
+def test_build_pytest_author_task_attaches_schema_outside_pytest(monkeypatch) -> None:
+    """pytest 모듈을 임시 제거한 환경 시뮬레이션 — output_pydantic=PytestSuiteOutput 적용."""
+    import sys as _sys
+
+    from crewai import Task
+
+    from src.workflows._schemas import PytestSuiteOutput
+    from src.workflows.analyze_and_implement import _build_pytest_author_task
+
+    # sys.modules 에서 pytest 만 임시 제거 (FakeProvider 호환 분기 우회)
+    saved_pytest = _sys.modules.pop("pytest", None)
+    try:
+        code_task = Task(description="dummy", expected_output="x")
+        pytest_author = create_pytest_author_agent(verbose=False)
+        task = _build_pytest_author_task(pytest_author, code_task)
+        assert task.output_pydantic is PytestSuiteOutput
+    finally:
+        if saved_pytest is not None:
+            _sys.modules["pytest"] = saved_pytest
+
+
+def test_build_pytest_author_task_description_mentions_minimum_size_threshold() -> None:
+    """description 에 본문 분량 임계 (최소 800자, 코드 30줄 등) 명시 — PR #58 7차 회귀 차단."""
+    from crewai import Task
+
+    from src.workflows.analyze_and_implement import _build_pytest_author_task
+
+    code_task = Task(description="dummy", expected_output="x")
+    pytest_author = create_pytest_author_agent(verbose=False)
+    task = _build_pytest_author_task(pytest_author, code_task)
+
+    # 분량 임계 키워드
+    assert "800자" in task.description, "전체 출력 800자 임계 누락"
+    assert "5개" in task.description, "def test_* 5개 임계 누락"
+    assert "PytestSuiteOutput" in task.description or "output_pydantic" in task.description
+
+
+def test_backstory_explicitly_warns_against_one_line_only_output() -> None:
+    """PR #58 7차 회귀 (Final Answer 한 줄 30바이트) 를 backstory 가 명시적으로 경고."""
+    assert "한 줄 요약만" in PYTEST_AUTHOR_BACKSTORY or "절대 반복 금지" in PYTEST_AUTHOR_BACKSTORY
+    assert "최소 800자" in PYTEST_AUTHOR_BACKSTORY
+    # PR #58 7차 사례 인용 (회귀 추적용)
+    assert "PR #58" in PYTEST_AUTHOR_BACKSTORY or "30바이트" in PYTEST_AUTHOR_BACKSTORY
+
+
+def test_backstory_documents_output_pydantic_schema() -> None:
+    """backstory 가 output_pydantic 강제와 4 필드 명시 — LLM 이 schema 인지."""
+    assert "output_pydantic" in PYTEST_AUTHOR_BACKSTORY
+    assert "PytestSuiteOutput" in PYTEST_AUTHOR_BACKSTORY
+    for field in ("summary", "test_strategy", "test_code_block", "intent_and_limits"):
+        assert field in PYTEST_AUTHOR_BACKSTORY, f"backstory 에 schema 필드 누락: {field}"

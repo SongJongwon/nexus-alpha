@@ -53,6 +53,7 @@ from src.workflows._schemas import (
     CodeReviewOutput,
     GUICodeOutput,
     GUIDesignOutput,
+    PytestSuiteOutput,
     ThemeTokensOutput,
     UIUXSpecOutput,
 )
@@ -335,15 +336,25 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
     """Pytest Author Task — code_task (Engineer 또는 GUI Code Generator) 의 산출
     코드를 컨텍스트로 받아 같은 디렉터리 배치 가능한 ``test_*.py`` 작성.
 
-    PR #58 추가. ``output_pydantic`` 미사용 — markdown + ```python``` 블록만
-    안전하게 출력하면 ``_extract_code_blocks`` 가 ``code/`` 디렉터리에 저장.
+    PR #58 추가, PR #59 강화:
+        - output_pydantic=PytestSuiteOutput 으로 schema 강제 (방어선 2)
+        - description 에 본문 분량 임계 (총 800자, 코드 30줄, 5 def test_*)
+          명시 → LLM 이 한 줄 요약만 출력하는 회귀 차단
+        - pytest 환경에선 output_pydantic 미적용 (FakeProvider 호환)
     """
-    return Task(
+    import sys
+
+    kwargs: dict = dict(
         description=(
             "이전 컨텍스트의 산출 코드 (`<entry>.py`) 를 읽고 같은 디렉터리에 "
             "배치 가능한 ``test_<entry>.py`` 를 백스토리에 명시된 3단 구조"
-            "(테스트 전략 한 줄 요약 / 실 코드 / 검증 의도+한계)로 작성하세요.\n\n"
-            "절대 규칙:\n"
+            "(테스트 전략 / 실 코드 / 검증 의도+한계)로 작성하세요.\n\n"
+            "## 분량 임계 (PR #59 회귀 방지) 🚨\n"
+            "  - 전체 출력 **최소 800자** — Final Answer 한 줄만 출력하면 task 실패로 간주\n"
+            "  - ``test_code_block`` 안에 ```python``` 블록 **반드시 1개 이상**, "
+            "    첫 줄 ``# file: test_<entry>.py`` 헤더\n"
+            "  - 코드 블록 안에 ``def test_*`` **최소 5개**\n\n"
+            "## 절대 규칙\n"
             "  1. ``pytest <code_dir>`` 만으로 standalone 실행 가능\n"
             "  2. GUI 윈도우 절대 미표시 (tkinter/customtkinter/PyQt 등은 "
             "     ``monkeypatch`` 로 ``__init__`` / ``mainloop`` no-op)\n"
@@ -351,15 +362,23 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
             "Path(__file__).parent))``\n"
             "  4. 결정론적 assertion (예상값을 코드에 박아넣음 — truthy-only 금지)\n"
             "  5. 최소 5개 시나리오 (happy + edge + error)\n\n"
-            "출력은 ```python\\n# file: test_<entry>.py\\n...\\n``` 블록으로."
+            "## output_pydantic 강제\n"
+            "본 task 는 ``PytestSuiteOutput`` schema 로 4개 필드 (summary / "
+            "test_strategy / test_code_block / intent_and_limits) 모두 채워져야 "
+            "완료됩니다. 누락 시 CrewAI 가 재호출 → 그래도 실패 시 PR #55 "
+            "capture-before-rescue 로 raw 보존.\n"
         ),
         expected_output=(
-            "테스트 전략 + ```python``` 블록 (# file: test_<entry>.py 헤더) + "
-            "검증 의도/한계. 마지막 줄 `Final Answer: test_<entry>.py N scenarios`."
+            "PytestSuiteOutput schema 4 필드 모두 채워진 마크다운 (전체 800자+, "
+            "```python``` 블록 1개+, def test_* 5개+). 마지막 줄 `Final Answer: "
+            "test_<entry>.py N scenarios`."
         ),
         agent=pytest_author,
         context=[code_task],
     )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = PytestSuiteOutput
+    return Task(**kwargs)
 
 
 def _build_qa_task(reviewer, code_task: Task) -> Task:
