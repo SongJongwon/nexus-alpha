@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 # ══════════════════════════════════════════════════════════════════════════
 
 _LEADING_HEADER_RE = re.compile(r"^#{2,4}\s+\d+\.\s+[^\n]+\n+", re.MULTILINE)
+_PYTHON_FENCE_RE = re.compile(r"```python\b", re.IGNORECASE)
 
 
 def _strip_leading_section_header(text: str) -> str:
@@ -43,6 +44,31 @@ def _strip_leading_section_header(text: str) -> str:
     if match:
         return stripped[match.end():].lstrip()
     return text
+
+
+def _ensure_python_fence(text: str) -> str:
+    """Pytest Author 의 ``test_code_block`` 본문에 ```python``` 코드 펜스 보장 (PR #64).
+
+    배경 (10차 E2E 9차 회귀 — PR #61 효과 검증):
+        PR #61 backstory 강화는 4 카테고리 분포 100% 효과적 (12 시나리오) 였으나,
+        LLM 이 ```python\\n...\\n``` 펜스 마커를 *생략* 한 채 raw 코드만 출력 →
+        ``_extract_code_blocks`` 의 정규식 ``r"```python\\s*\\n(.*?)\\n```"``
+        매치 실패 → ``code/test_*.py`` 추출 0개 → ``code_qa SKIPPED`` →
+        active QA gating 2/4 → **1/4 회귀**.
+
+    처방 (방어선 4 — deterministic schema-level 보강):
+        backstory 의 자연어 지시만으로는 LLM 행동 100% 보장 불가. ``to_markdown()``
+        호출 시점에 결정형 보정 — ```python``` 펜스가 이미 있으면 그대로 두고,
+        없으면 본문 전체를 통째로 감싼다. ``# file: <name>`` 헤더 주석은 보존.
+    """
+    if not text:
+        return text
+    if _PYTHON_FENCE_RE.search(text):
+        return text
+    stripped = text.strip()
+    if not stripped:
+        return text
+    return f"```python\n{stripped}\n```"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -762,15 +788,17 @@ class PytestSuiteOutput(BaseModel):
     )
     test_code_block: str = Field(
         description=(
-            "### 2. 실 테스트 코드 본문. **반드시 ```python ... ``` 코드 블록** "
-            "을 1개 이상 포함하고, 첫 줄에 `# file: test_<entry>.py` 헤더 주석. "
-            "절대 규칙 6개 모두 준수: pytest standalone / GUI 윈도우 미표시 "
-            "(monkeypatch __init__/mainloop) / sys.path.insert / 결정론적 "
-            "assertion (예상값 박아넣음) / **최소 10개 시나리오 — 4 카테고리 "
-            "(happy/edge/load/error) 분포 강제 — functional/robustness 의미 "
-            "흡수** / 함수명 prefix 권장 (test_happy_* / test_edge_* / "
-            "test_load_* / test_error_*). 섹션 헤더 없이 본문만 (코드 분량 "
-            "최소 60줄) [PR #61 강화]"
+            "### 2. 실 테스트 코드 본문. **fence 마커 ```python\\n...\\n``` 반드시 "
+            "포함** [PR #64 강화] — fence 누락 시 ``_extract_code_blocks`` 정규식 "
+            "매치 실패로 ``test_*.py`` 추출 안 됨. 코드 블록 1개 이상, 첫 줄에 "
+            "`# file: test_<entry>.py` 헤더 주석. 절대 규칙 6개 모두 준수: "
+            "pytest standalone / GUI 윈도우 미표시 (monkeypatch __init__/mainloop) "
+            "/ sys.path.insert / 결정론적 assertion (예상값 박아넣음) / "
+            "**최소 10개 시나리오 — 4 카테고리 (happy/edge/load/error) 분포 강제 "
+            "— functional/robustness 의미 흡수** / 함수명 prefix 권장 "
+            "(test_happy_* / test_edge_* / test_load_* / test_error_*). "
+            "섹션 헤더 없이 본문만 (코드 분량 최소 60줄) [PR #61 강화 + PR #64 "
+            "fence 마커 명시]"
         ),
     )
     intent_and_limits: str = Field(
@@ -782,10 +810,14 @@ class PytestSuiteOutput(BaseModel):
     )
 
     def to_markdown(self) -> str:
+        # PR #64: LLM 이 ```python``` 펜스를 누락한 raw 코드를 자동 감싸기.
+        # fence 가 이미 있으면 그대로, 없으면 통째로 감싸서 ``_extract_code_blocks``
+        # 의 정규식이 매치 가능하도록 보장 — 9차 E2E 회귀 (active 2/4 → 1/4) 차단.
+        test_code = _ensure_python_fence(_strip_leading_section_header(self.test_code_block))
         return (
             f"{self.summary}\n\n"
             f"## 테스트 스위트\n\n"
             f"### 1. 테스트 전략\n\n{_strip_leading_section_header(self.test_strategy)}\n\n"
-            f"### 2. 실 테스트 코드\n\n{_strip_leading_section_header(self.test_code_block)}\n\n"
+            f"### 2. 실 테스트 코드\n\n{test_code}\n\n"
             f"### 3. 검증 의도 + 한계\n\n{_strip_leading_section_header(self.intent_and_limits)}\n"
         )
