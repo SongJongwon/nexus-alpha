@@ -1,20 +1,20 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-30 종료 (PR #61 — **4 카테고리 시나리오 강제로 functional/robustness 의미 흡수, 10차 9차 검증 진행 중**) ⭐⭐
-> **현재 브랜치**: `main` (PR #61 머지 완료, 다음은 본 세션 마무리 PR)
+> **마지막 업데이트**: 2026-04-30 완전 종료 (10차 E2E 9차 완료 — backstory 강화 ✅ BUT ```python``` fence 마커 누락으로 active 2/4 → 1/4 회귀) ⚠️
+> **현재 브랜치**: `main` (PR #61 + #62 머지 완료, 본 PR 은 9차 결과 docs)
 > **테스트**: pytest **490 passed** (어제 445 → 오늘 +45, 회귀 0)
-> **머지된 PR**: 53 → **61** (오늘 +8: #54 어제 로그 + #55 capture + #56 오전 로그 + #57 cosmetic + #58 Pytest Author + #59 schema + #60 오후 로그 + #61 4 카테고리)
-> **active QA gating**: 0/4 → **2/4** (gui + code_qa) ⭐⭐
-> **전체 구현률**: 30/46 → **34/46 (74%)**
-> **백그라운드 task**: `bcu5ljwpp` 10차 E2E 9차 (17:23 시작, 다음 세션에서 결과 분석)
-> **최신 세션 로그**: [progress/session_log_20260430.md](./progress/session_log_20260430.md) (오늘 전일 통합) ⭐
+> **머지된 PR**: 53 → **62** (오늘 +9: #54~#62)
+> **active QA gating**: 0/4 → 2/4 (8차) → **1/4 회귀** (9차) ⚠️
+> **전체 구현률**: **34/46 (74%)**
+> **다음 1순위**: PR #63 옵션 Z (`PytestSuiteOutput.to_markdown()` fence 자동 감싸기 + schema description 강제)
+> **최신 세션 로그**: [progress/session_log_20260430.md](./progress/session_log_20260430.md) (오늘 전일 통합 — 9차 결과 포함) ⭐
 > **이전 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
+> **10차 E2E 9차 보고서 (PR #61 부분 회귀)**: [progress/e2e_10th_verification_post_pr61.md](./progress/e2e_10th_verification_post_pr61.md) ⚠️
 > **10차 E2E 7·8차 (PR #58/#59, active 2/4 도달)**: [progress/e2e_10th_verification_post_pr59.md](./progress/e2e_10th_verification_post_pr59.md)
 > **10차 E2E 6차 (PASS, 26.90분, 완전 산출)**: [progress/e2e_10th_verification_post_pr55.md](./progress/e2e_10th_verification_post_pr55.md)
 > **10차 E2E 4·5차 (rescue 작동, 5차 빈 코드)**: [progress/e2e_10th_verification_post_pr53.md](./progress/e2e_10th_verification_post_pr53.md)
-> **10차 E2E 9차 보고서 (PR #61 효과)**: 다음 세션에서 작성 예정 (`progress/e2e_10th_verification_post_pr61.md`)
 
 ---
 
@@ -38,12 +38,12 @@
 | **🎯 4 카테고리 시나리오 강제 (functional/robustness 의미 흡수)** | ✅ **Pytest Author backstory 강화 — Happy/Edge/Load/Error 분포 + 10개 임계** (PR #61) ⭐ |
 | **🎯 DoD marker single source of truth** | ✅ **DOD_PASS_RULES dict 통합** (PR #57) |
 | 전체 구현률 | ✅ **34/46 (74%)** |
-| **active QA gating** | 🟢 **2/4 (gui_test + code_qa)** — 8차 풀체인에서 `[CODE_QA PASS] passed=15` (PR #59) ⭐⭐ |
-| **의미적 QA 4/4 흡수** | 🔄 **9차에서 검증 중** — code_qa 안에 functional + robustness 시나리오 흡수 (PR #61) |
-| 10차 E2E 풀체인 fatal-free | ✅ **59.46분 SUCCESS** (8차, PR #59 적용, qa_feedback_loop 자동 보정 retry=1) |
-| **10차 E2E 풀체인 + Calculator.exe 동시 산출** | ✅ **달성** — Draft Release publish 동반 (6,7,8차 안정 재현) |
+| **active QA gating** | ⚠️ **1/4 (gui_test 만)** — 9차에서 ```python``` 마커 누락으로 회귀 (8차는 2/4 도달했었음) |
+| **의미적 QA 4/4 흡수** | ⚠️ **본문은 OK** (9차 4 카테고리 12 시나리오) BUT 추출 실패 — PR #63 fix 필요 |
+| 10차 E2E 풀체인 fatal-free | ✅ **30.81분 SUCCESS** (9차, retry 0회) — 시간 줄어듦 ≠ 더 좋음 (vacuous PASS) |
+| **10차 E2E 풀체인 + Calculator.exe 동시 산출** | ✅ **달성** — Draft Release publish 동반 (6,7,8,9차 안정 재현) |
 | **qa_feedback_loop 첫 실 활용** | ✅ **8차에서 1차 fail → 자동 보정 → 2차 pass** (PR #48 인프라 12일 만 활용) ⭐ |
-| **10차 E2E 9차 (PR #61)** | 🔄 **백그라운드 진행 중** (`bcu5ljwpp`, 17:23 시작) — 다음 세션 결과 분석 |
+| **10차 E2E 9차 (PR #61) 결과** | ⚠️ **backstory 강화 100% 효과** (4 카테고리 12 시나리오) **BUT** ```python``` fence 마커 누락 → active 회귀 |
 
 ---
 
@@ -378,39 +378,45 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - functional/robustness executor 의 *의미* 를 code_qa 안에 흡수
     - 분량 임계: 800자 → 1200자, def test_* 5개 → 10개
     - pytest 483 → 490 (회귀 0)
-44. 🔄 **10차 E2E 9차 — 백그라운드 진행 중** (`bcu5ljwpp`, 17:23 시작)
-    - PR #61 효과 검증: code_qa test 수 15 → 25+ (4 카테고리 분포) 목표
-    - 다음 세션에서 결과 분석 + `progress/e2e_10th_verification_post_pr61.md` 작성
-45. ~~본 PR (전일 통합 세션 로그) commit~~ ⏳ 본 PR 진행 중
+44. ~~10차 E2E 9차 (PR #61 효과 검증) — 30.81분 SUCCESS, BUT ```python``` 마커 누락 회귀~~ ⚠️
+    - backstory 강화 100% 효과 (4 카테고리 12 시나리오 분포 정확)
+    - `_extract_code_blocks` 정규식 매치 실패 → `code/test_calculator.py` 미생성
+    - active QA: 2/4 → 1/4 회귀
+    - 보고서: [progress/e2e_10th_verification_post_pr61.md](./progress/e2e_10th_verification_post_pr61.md)
+45. ~~PR #62 (전일 통합 세션 로그) 머지~~ ✅
+46. ⏳ **본 PR (9차 결과 docs)** — e2e_10th_verification_post_pr61.md + session_log + WORK_STATUS 갱신
 
 ---
 
 ## 🌅 내일 (2026-05-01~) 우선 순위
 
-### 🔴 1순위 — 9차 E2E 결과 분석 + 보고서 (즉시)
+### 🔴 1순위 — PR #63: ```python``` fence 마커 자동 보장 (옵션 Z, 15분)
 
-**작업**:
-1. `outputs/_e2e_10th_9th_pr61_log.txt` + 최신 `outputs/e2e_10th_verification_*/summary.json` 분석
-2. PR #61 효과 정량 검증:
-   - `code_qa` test 수 (8차 15 → 9차 **25+** 목표)
-   - 함수명 prefix 분포 (`test_happy_*` / `test_edge_*` / `test_load_*` / `test_error_*`)
-   - `pytest_suite` 분량 (8차 6,102 bytes → 더 증가)
-   - 4 카테고리 의미 흡수 검증
-3. 보고서: `docs/progress/e2e_10th_verification_post_pr61.md`
-4. WORK_STATUS 9차 결과 반영 (본 섹션 갱신)
+9차 회귀 fix. 작은 변경으로 active 2/4 회복 + 의미적 4/4 도달.
+
+**변경**:
+1. `src/workflows/_schemas.py` — `PytestSuiteOutput.to_markdown()` 에서
+   `test_code_block` 이 ```python``` 으로 시작 안 하면 *자동 감싸기*
+2. `src/workflows/_schemas.py` — `test_code_block` 필드 description 에
+   "**fence 마커 ```python\\n...\\n``` 반드시 포함**" 명시 강화
+3. `src/agents/qa/pytest_author.py` — backstory "출력 규약" fence 강제
+4. `src/workflows/analyze_and_implement.py` — description 동일 강화
+5. 신규 테스트 (자동 감싸기 + fence 키워드 검증)
+
+**검증**: 10차 E2E 10차 재실행 → active 2/4 회복 + 12 시나리오 4 카테고리
+분포 동시 달성.
 
 **시작 명령**:
 ```bash
 cd C:\projects\nexus-alpha
 git checkout main && git pull
-ls outputs/e2e_10th_verification_2026* | tail -1
-tail -30 outputs/_e2e_10th_9th_pr61_log.txt
+git checkout -b qa/python-fence-marker-pr63
+# 위 5단계 변경 후
+.venv/Scripts/python.exe -m pytest src/tests/test_pytest_author_agent.py -q
+.venv/Scripts/python.exe -m pytest -q
+git commit + push + PR + 머지
+.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py 2>&1 | tee outputs/_e2e_10th_10th_pr63_log.txt
 ```
-
-**예상 시나리오**:
-- A) PASS + 25+ tests + 4 카테고리 분포 → PR #61 효과 입증, 다음 단계 진행
-- B) PASS + 15~24 tests → 부분 효과, PR #62 추가 보강
-- C) FAIL → 진단 후 PR #62 (분량 임계 더 강화 또는 schema 갱신)
 
 ### 🟢 2순위 — Update Checker 실 통합 (조건부)
 

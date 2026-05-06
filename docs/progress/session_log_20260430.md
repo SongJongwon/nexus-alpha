@@ -156,29 +156,32 @@ PR #48 (4-28 머지) 의 자동 QA 피드백 루프 인프라가 *수동 검증*
 
 ---
 
-## 5️⃣ 9차 E2E — 진행 중 (다음 세션 분석)
+## 5️⃣ 9차 E2E — 부분 회귀 발견 (17:55 완료)
 
-### 시작
-2026-04-30 17:23 백그라운드 실행 (작업 ID `bcu5ljwpp`)
-로그: `outputs/_e2e_10th_9th_pr61_log.txt`
-종료 예상: 17:50~18:30 (8차 59분 기준)
+### 결과
+- Elapsed **30.81분** (8차 59.46분 대비 **-48%**, retry 0)
+- DoD 7/7 ALL PASSED (표면)
+- `pytest_suite` 4,534 bytes — backstory 강화 효과 입증 (12 시나리오, 4 카테고리 분포: happy 4 / edge 4 / load 3 / error 1)
+- ⚠️ ```python``` fence 마커 누락 → `code/test_calculator.py` 미생성 → pytest exit=5
+- **active QA gating: 2/4 → 1/4 회귀** (gui 만)
 
-### 검증 핵심 지표 (PR #61 효과)
+### 진단
 
-| 지표 | 8차 (PR #59) | 9차 (PR #61) 목표 |
+LLM 이 PR #61 의 4 카테고리 분포 + 12 시나리오 + monkeypatch + 결정론적
+assertion 모두 정확히 인지 (**backstory 강화는 100% 효과적**). 그러나
+`PytestSuiteOutput.test_code_block` 필드에 *코드만* 출력하고 ```python```
+fence 마커를 누락 → `_extract_code_blocks` 의 정규식 매치 실패 → 회귀.
+
+### 핵심 학습 — "빠른 시간 = 회귀의 신호"
+
+| 회차 | Elapsed | 진짜 의미 |
 |---|---|---|
-| `code_qa` test 수 | 15 | **25+** (4 카테고리 분포) |
-| 함수명 prefix 분포 | (없음) | `test_happy_*/test_edge_*/test_load_*/test_error_*` |
-| `pytest_suite` 분량 | 6,102 bytes | 더 증가 (1200자 임계 + 60줄 코드) |
-| DoD 7/7 | ✅ | ✅ (유지 목표) |
-| Calculator.exe | ✅ 11.18MB | ✅ (유지 목표) |
-| active QA | 2/4 (gui + code_qa) | **2/4 유지** (의도 — functional/robustness SKIPPED 옳음) |
-| 의미적 4/4 | code_qa에 일부 흡수 | **code_qa에 4 카테고리 모두 흡수** ⭐ |
+| 8차 | **59.46분** + retry=1 | qa_feedback_loop 자동 보정 (진짜 검증의 비용) |
+| **9차** | **30.81분** + retry=0 | code_qa SKIPPED 회피 → vacuous PASS 가벼움 |
 
-### 다음 세션 첫 작업
-1. `bcu5ljwpp` 결과 확인 → 보고서 작성
-2. 본 세션의 PR #61 효과 정량 검증 (test 수 / 카테고리 분포)
-3. WORK_STATUS 9차 결과 반영
+시간 줄어듦 ≠ 더 좋아짐. 8차 retry=1 자동 보정이 *진짜 검증* 의 비용.
+
+상세 보고서: [e2e_10th_verification_post_pr61.md](./e2e_10th_verification_post_pr61.md)
 
 ---
 
@@ -251,30 +254,40 @@ PR #48 (4-28 머지) 인프라가 수동 검증이 아닌 *자동 회복* 을 �
 
 ## 🌅 내일 (2026-05-01~) 우선 순위
 
-### 🔴 1순위 — 9차 E2E 결과 분석 + 보고서 (즉시)
+### 🔴 1순위 — PR #63: ```python``` fence 마커 자동 보장 (옵션 Z)
 
-**작업**:
-1. `outputs/_e2e_10th_9th_pr61_log.txt` + `outputs/e2e_10th_verification_*/summary.json` 분석
-2. PR #61 효과 정량 검증:
-   - `code_qa` test 수 (8차 15 → 9차 25+ 목표)
-   - 함수명 prefix 분포 (`test_happy_*` / `test_edge_*` / `test_load_*` / `test_error_*`)
-   - `pytest_suite` 분량 (6,102 bytes → 더 증가)
-   - 4 카테고리 의미 흡수 검증
-3. 보고서 작성: `docs/progress/e2e_10th_verification_post_pr61.md`
-4. WORK_STATUS 9차 결과 반영
+9차 결과 진단으로 명확한 회귀 — backstory는 효과적이나 fence 마커가 LLM의
+자유 영역으로 남아 누락. 작은 변경 (15분) 으로 active 2/4 회복 + 의미적 4/4
+도달 가능.
+
+**변경**:
+1. `src/workflows/_schemas.py` — `PytestSuiteOutput.to_markdown()` 에서
+   `test_code_block` 이 ```python``` 으로 시작 안 하면 *자동 감싸기*
+2. `src/workflows/_schemas.py` — `test_code_block` 필드 description 에
+   "**fence 마커 ```python\\n...\\n``` 반드시 포함**" 명시 강화
+3. `src/agents/qa/pytest_author.py` — backstory "출력 규약" 섹션 갱신
+   (예시 코드에 fence 마커 명시)
+4. `src/workflows/analyze_and_implement.py` — `_build_pytest_author_task`
+   description 에 동일 강화
+5. 신규 테스트:
+   - `to_markdown()` 자동 감싸기 (마커 없는 입력 → 마커 포함 출력)
+   - schema description "fence" 키워드 검증
+   - backstory ```python``` 예시 검증
+
+**검증**: 10차 E2E 10차 재실행 → 8차 패턴 (active 2/4 + 12 시나리오 4 카테고리
+분포) 동시 달성.
 
 **시작 명령**:
 ```bash
 cd C:\projects\nexus-alpha
 git checkout main && git pull
-ls outputs/e2e_10th_verification_2026* | tail -1   # 최신 9차 결과 디렉터리
-tail -30 outputs/_e2e_10th_9th_pr61_log.txt
+git checkout -b qa/python-fence-marker-pr63
+# 위 5단계 변경 후
+.venv/Scripts/python.exe -m pytest src/tests/test_pytest_author_agent.py -q
+.venv/Scripts/python.exe -m pytest -q
+git commit + push + PR + 머지
+.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py 2>&1 | tee outputs/_e2e_10th_10th_pr63_log.txt
 ```
-
-**예상 시나리오**:
-- A) PASS + 25+ tests + 4 카테고리 분포 → PR #61 효과 입증, 다음 단계 진행
-- B) PASS + 15~24 tests → backstory 강화 부분적 효과, PR #62 추가 보강
-- C) FAIL (LLM 10개 시나리오 작성 실패 등) → 진단 후 PR #62 (분량 임계 더 강화 또는 schema 갱신)
 
 ### 🟢 2순위 — Update Checker 실 통합
 
