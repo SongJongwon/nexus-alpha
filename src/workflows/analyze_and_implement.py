@@ -168,6 +168,78 @@ def _extract_code_blocks(markdown: str, code_dir: Path) -> list[Path]:
     return saved
 
 
+# PR #66 — Update Checker 실 통합 (방어선 4 패턴 재사용)
+_UPDATER_AUTOINJECT_MARKER = "# Auto-injected by Nexus Alpha PR #66 — Update Checker integration"
+_UPDATER_AUTOINJECT_SNIPPET = (
+    "\n\n" + _UPDATER_AUTOINJECT_MARKER + "\n"
+    "# updater.py 가 같은 디렉터리에 있으면 import + start() 호출 시도.\n"
+    "# silent failure (보안 7원칙 — 업데이트 체크 실패는 앱 동작과 독립).\n"
+    "try:\n"
+    "    import updater  # type: ignore[import-not-found]\n"
+    "    if hasattr(updater, 'start'):\n"
+    "        updater.start()\n"
+    "except Exception:  # noqa: BLE001 — silent\n"
+    "    pass\n"
+)
+
+
+def _ensure_updater_import_in_entry(code_dir: Path, extracted: list[Path]) -> list[Path]:
+    """``code_dir`` 의 entry .py 파일에 ``import updater`` + ``updater.start()``
+    호출 라인을 결정형으로 자동 삽입 (PR #66 — Update Checker 실 통합).
+
+    배경:
+        Update Checker 가 ``code/updater.py`` 를 산출하더라도 entry (calculator.py
+        등) 가 그것을 *import* 하지 않으면 .exe 안에 포함은 되지만 실제 호출은 안 됨.
+        GUI Code Generator backstory 에 LLM 지시로 처리하면 PR #61 fence 마커 회귀
+        와 같은 비결정적 회귀 위험.
+
+    처방 (방어선 4 패턴):
+        deterministic 후처리. ``updater.py`` 가 ``extracted`` 에 있으면, 같은
+        디렉터리의 *entry candidate* 파일들에 try/import 스니펫을 *파일 끝* 에
+        추가. 이미 마커가 있으면 skip (idempotent). ``test_*.py`` / ``updater.py``
+        는 후보에서 제외.
+
+    Args:
+        code_dir: ``code/`` 디렉터리 경로.
+        extracted: ``_extract_code_blocks`` 가 반환한 추출 파일 목록.
+
+    Returns:
+        실제로 수정된 entry 파일 목록 (변경 없으면 빈 리스트).
+    """
+    if not any(p.name == "updater.py" for p in extracted):
+        return []  # updater.py 미산출 → skip
+    entry_candidates = [
+        p for p in code_dir.glob("*.py")
+        if p.name != "updater.py" and not p.name.startswith("test_")
+    ]
+    modified: list[Path] = []
+    for entry in entry_candidates:
+        content = entry.read_text(encoding="utf-8")
+        if _UPDATER_AUTOINJECT_MARKER in content:
+            continue  # 이미 주입됨 — idempotent
+        entry.write_text(content + _UPDATER_AUTOINJECT_SNIPPET, encoding="utf-8")
+        modified.append(entry)
+    return modified
+
+
+def _integrate_update_checker(workflow_dir: Path, update_module_spec: str) -> list[Path]:
+    """``release_result.update_module_spec`` 의 ```python``` 블록을 ``code/`` 로
+    추출하고, 산출 entry 파일들에 자동 import 라인을 삽입 (PR #66).
+
+    Returns:
+        새로 생성된 ``code/updater.py`` (있으면) + 수정된 entry 파일 목록.
+        ``update_module_spec`` 이 비거나 추출 실패 시 빈 리스트.
+    """
+    if not update_module_spec:
+        return []
+    code_dir = workflow_dir / "code"
+    extracted = _extract_code_blocks(update_module_spec, code_dir)
+    if not extracted:
+        return []
+    modified = _ensure_updater_import_in_entry(code_dir, extracted)
+    return extracted + modified
+
+
 _GUI_FORM_FACTORS = ("single_window", "multi_window", "wizard", "dashboard")
 
 
@@ -795,6 +867,21 @@ def run_analyze_and_implement(
             # PR #39 — publish 결과 (있을 때만)
             if release_result.publish_result is not None:
                 result.publish_result = release_result.publish_result
+            # PR #66 — Update Checker 실 통합 (방어선 4 패턴)
+            #   release_result.update_module_spec 의 ```python``` 블록을
+            #   code/ 로 추출 → code/updater.py 자동 생성 → entry (.py) 에
+            #   try/import 라인 자동 삽입. saved_code_files 에 합산.
+            if result.saved_dir is not None and release_result.update_module_spec:
+                integrated = _integrate_update_checker(
+                    result.saved_dir, release_result.update_module_spec
+                )
+                # _extract_code_blocks 가 반환하는 path 와 modified entry 합산
+                # (modified 는 이미 saved_code_files 에 들어있을 수 있어 dedup)
+                seen = {p.resolve() for p in result.saved_code_files}
+                for p in integrated:
+                    if p.resolve() not in seen:
+                        result.saved_code_files.append(p)
+                        seen.add(p.resolve())
 
         return result
 

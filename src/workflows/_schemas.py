@@ -71,6 +71,39 @@ def _ensure_python_fence(text: str) -> str:
     return f"```python\n{stripped}\n```"
 
 
+def _ensure_file_header_in_python_block(text: str, expected_filename: str) -> str:
+    """``test_code_block`` 또는 ``updater_py_reference`` 의 첫 ```python``` 블록에
+    ``# file: <expected_filename>`` 헤더 주석을 자동 보장 (PR #66).
+
+    배경 (Update Checker 실 통합 — PR #66):
+        ``_extract_code_blocks`` 는 코드 블록 첫 줄의 ``# file: <name>`` 헤더로
+        파일명을 결정. 헤더가 없으면 ``block01.py``, ``block02.py`` 자동 번호로
+        떨어져서 ``calculator.py`` 와 충돌하거나 import 가 깨질 수 있음.
+
+    처방 (방어선 4 패턴 — deterministic):
+        ``to_markdown()`` 호출 시점에 첫 ```python``` 블록의 첫 라인을 확인.
+        ``# file:`` 헤더 부재 시 ``# file: <expected_filename>`` 자동 삽입.
+        이미 있으면 그대로 (LLM 결정 존중).
+    """
+    if not text:
+        return text
+    fence_match = re.search(r"```python\s*\n", text)
+    if not fence_match:
+        return text
+    block_start = fence_match.end()
+    # 블록 첫 라인 추출
+    rest = text[block_start:]
+    first_newline = rest.find("\n")
+    if first_newline == -1:
+        return text
+    first_line = rest[:first_newline]
+    if re.match(r"#\s*file:\s*\S+\.py", first_line):
+        return text  # 헤더 이미 있음 — idempotent
+    # 헤더 부재 → 첫 줄 위에 헤더 삽입
+    header_line = f"# file: {expected_filename}\n"
+    return text[:block_start] + header_line + text[block_start:]
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Build Engineer — 빌드 사양 5단 구조
 # ══════════════════════════════════════════════════════════════════════════
@@ -664,8 +697,12 @@ class UpdateModuleSpecOutput(BaseModel):
     )
     updater_py_reference: str = Field(
         description=(
-            "### 2. updater.py 참조 구현 본문. ```python ... ``` 안에 실제 사용 가능한 "
-            "구현 (requests + sha256 검증). 섹션 헤더 없이 본문만"
+            "### 2. updater.py 참조 구현 본문. **```python``` 블록 첫 줄에 "
+            "`# file: updater.py` 헤더 주석 반드시 포함** [PR #66 실 통합] — "
+            "이 헤더로 ``_extract_code_blocks`` 가 ``code/updater.py`` 로 추출 → "
+            "산출 entry 가 실제 import 가능. 구현은 requests + sha256 검증 + "
+            "보안 5원칙 (HTTPS / TLS / 화이트리스트 / sha256 / 자동 적용 금지) 준수. "
+            "섹션 헤더 없이 본문만"
         ),
     )
     gui_integration: str = Field(
@@ -689,10 +726,16 @@ class UpdateModuleSpecOutput(BaseModel):
     )
 
     def to_markdown(self) -> str:
+        # PR #66: updater_py_reference 본문에 ```python``` 펜스 + `# file: updater.py`
+        # 헤더 자동 보장 (방어선 4 — deterministic). LLM 이 둘 중 하나라도 누락하면
+        # `_extract_code_blocks` 매치 실패로 ``code/updater.py`` 미산출 → 실 통합 실패.
+        updater_ref = _strip_leading_section_header(self.updater_py_reference)
+        updater_ref = _ensure_python_fence(updater_ref)
+        updater_ref = _ensure_file_header_in_python_block(updater_ref, "updater.py")
         return (
             f"{self.summary}\n\n"
             f"### 1. 모듈 설계\n\n{_strip_leading_section_header(self.module_design)}\n\n"
-            f"### 2. updater.py 참조 구현\n\n{_strip_leading_section_header(self.updater_py_reference)}\n\n"
+            f"### 2. updater.py 참조 구현\n\n{updater_ref}\n\n"
             f"### 3. GUI 통합\n\n{_strip_leading_section_header(self.gui_integration)}\n\n"
             f"### 4. 보안 체크리스트\n\n{_strip_leading_section_header(self.security_checklist)}\n\n"
             f"### 5. 작성자 노트\n\n{_strip_leading_section_header(self.author_notes)}\n"
