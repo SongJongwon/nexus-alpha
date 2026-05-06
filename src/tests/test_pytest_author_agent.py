@@ -444,3 +444,147 @@ def test_pytest_suite_output_test_strategy_field_mentions_4_categories() -> None
     assert "4 카테고리" in test_strategy_desc, (
         "PytestSuiteOutput.test_strategy description 에 4 카테고리 분포 누락"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #64 — ```python``` fence 마커 자동 감싸기 (방어선 4)
+#
+# 배경: 10차 E2E 9차 (PR #61 효과 검증) 에서 backstory 의 4 카테고리 분포 지시는
+# 100% 효과적 (12 시나리오) 였으나, LLM 이 ```python``` 펜스 마커 누락 → raw
+# 코드만 출력 → ``_extract_code_blocks`` 정규식 매치 실패 → ``test_*.py``
+# 추출 0개 → ``code_qa SKIPPED`` → active QA 2/4 → 1/4 회귀.
+#
+# 처방: schema 의 ``to_markdown()`` 단계에서 deterministic 보강. fence 가
+# 이미 있으면 그대로, 없으면 통째로 감싼다.
+# ---------------------------------------------------------------------------
+
+
+def test_to_markdown_auto_wraps_raw_code_without_fence() -> None:
+    """``test_code_block`` 이 ```python 펜스 없이 raw 코드만 들어오면 자동 감싸기 (PR #64)."""
+    from src.workflows._schemas import PytestSuiteOutput
+
+    raw_code = (
+        "# file: test_calculator.py\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "sys.path.insert(0, str(Path(__file__).parent))\n"
+        "\n"
+        "def test_happy_add():\n"
+        "    assert 1 + 1 == 2\n"
+    )
+
+    m = PytestSuiteOutput(
+        summary="test_calculator.py 1 scenario",
+        test_strategy="entry calculator.py 의 단순 테스트.",
+        test_code_block=raw_code,  # fence 없음!
+        intent_and_limits="시나리오 #1: 기본 덧셈 검증.",
+    )
+    md = m.to_markdown()
+
+    # 자동 감싸기로 ```python ... ``` 추가됨
+    assert "```python" in md, "fence 마커 자동 감싸기 실패"
+    assert "```\n" in md, "닫는 펜스 누락"
+    # 원본 코드 내용은 보존
+    assert "# file: test_calculator.py" in md
+    assert "def test_happy_add" in md
+
+
+def test_to_markdown_preserves_existing_python_fence() -> None:
+    """``test_code_block`` 이 이미 ```python 펜스를 포함하면 두 번 감싸지 않음."""
+    from src.workflows._schemas import PytestSuiteOutput
+
+    fenced_code = (
+        "```python\n"
+        "# file: test_calculator.py\n"
+        "def test_happy_add():\n"
+        "    assert 1 + 1 == 2\n"
+        "```"
+    )
+
+    m = PytestSuiteOutput(
+        summary="test_calculator.py 1 scenario",
+        test_strategy="기본 테스트.",
+        test_code_block=fenced_code,
+        intent_and_limits="시나리오 #1: 덧셈 검증.",
+    )
+    md = m.to_markdown()
+
+    # ```python``` 정확히 1회만 등장 (자동 감싸기 미적용)
+    assert md.count("```python") == 1, (
+        f"이미 fence 가 있는데 두 번 감쌌음: count={md.count('```python')}"
+    )
+
+
+def test_to_markdown_handles_uppercase_python_fence() -> None:
+    """대소문자 다른 ```PYTHON``` 도 fence 로 인식 (case-insensitive)."""
+    from src.workflows._schemas import PytestSuiteOutput
+
+    m = PytestSuiteOutput(
+        summary="x",
+        test_strategy="x",
+        test_code_block="```PYTHON\ndef test_x(): pass\n```",
+        intent_and_limits="x",
+    )
+    md = m.to_markdown()
+    # 자동 감싸기 미적용 — 이미 fence 가 있다고 인식
+    assert md.count("```python") == 0  # original 은 PYTHON 대문자
+    assert "```PYTHON" in md  # 원본 보존
+
+
+def test_ensure_python_fence_helper_idempotent() -> None:
+    """``_ensure_python_fence`` 가 이미 감싼 코드를 다시 감싸지 않음 (idempotent)."""
+    from src.workflows._schemas import _ensure_python_fence
+
+    raw = "def test_x(): pass"
+    once = _ensure_python_fence(raw)
+    twice = _ensure_python_fence(once)
+    assert once == twice, "idempotent 보장 실패 — 두 번 감쌌음"
+    assert once.count("```python") == 1
+
+
+def test_ensure_python_fence_handles_empty_string() -> None:
+    """빈 문자열 / None-like 입력은 그대로 반환 — defensive."""
+    from src.workflows._schemas import _ensure_python_fence
+
+    assert _ensure_python_fence("") == ""
+    assert _ensure_python_fence("   ") == "   "  # whitespace-only 도 그대로
+
+
+def test_pytest_suite_output_test_code_block_field_mentions_fence_marker() -> None:
+    """schema field description 에 ```python``` fence 마커 명시 (PR #64)."""
+    from src.workflows._schemas import PytestSuiteOutput
+
+    test_code_desc = PytestSuiteOutput.model_fields["test_code_block"].description
+    assert "fence" in test_code_desc.lower() or "```python" in test_code_desc, (
+        "PytestSuiteOutput.test_code_block description 에 fence 마커 명시 누락"
+    )
+    # 9차 회귀 추적용 — PR #64 라벨 확인
+    assert "PR #64" in test_code_desc, "PR #64 강화 라벨 누락"
+
+
+def test_backstory_documents_python_fence_marker_requirement() -> None:
+    """backstory 가 ```python``` fence 마커 누락 회귀 사례 명시 (PR #64)."""
+    # 9차 회귀 사례 인용 (회귀 추적용)
+    assert "PR #64" in PYTEST_AUTHOR_BACKSTORY or "9차" in PYTEST_AUTHOR_BACKSTORY
+    # fence 마커 자체 키워드
+    assert "fence" in PYTEST_AUTHOR_BACKSTORY.lower() or "```python" in PYTEST_AUTHOR_BACKSTORY
+    # _extract_code_blocks 정규식 매치 실패 사례 명시 (인지 강화)
+    assert "_extract_code_blocks" in PYTEST_AUTHOR_BACKSTORY
+
+
+def test_description_mentions_python_fence_marker_requirement() -> None:
+    """description 에 ```python``` fence 마커 강제 명시 (PR #64)."""
+    from crewai import Task
+
+    from src.workflows.analyze_and_implement import _build_pytest_author_task
+
+    code_task = Task(description="dummy", expected_output="x")
+    pytest_author = create_pytest_author_agent(verbose=False)
+    task = _build_pytest_author_task(pytest_author, code_task)
+
+    # PR #64 라벨 또는 fence 마커 키워드
+    assert "PR #64" in task.description or "fence 마커" in task.description, (
+        "description 에 PR #64 fence 마커 강화 명시 누락"
+    )
+    # 9차 회귀 사례 인용
+    assert "9차" in task.description or "_extract_code_blocks" in task.description
