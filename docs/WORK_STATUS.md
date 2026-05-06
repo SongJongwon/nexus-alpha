@@ -1,17 +1,18 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-04-30 완전 종료 (10차 E2E 9차 완료 — backstory 강화 ✅ BUT ```python``` fence 마커 누락으로 active 2/4 → 1/4 회귀) ⚠️
-> **현재 브랜치**: `main` (PR #61 + #62 머지 완료, 본 PR 은 9차 결과 docs)
-> **테스트**: pytest **490 passed** (어제 445 → 오늘 +45, 회귀 0)
-> **머지된 PR**: 53 → **62** (오늘 +9: #54~#62)
-> **active QA gating**: 0/4 → 2/4 (8차) → **1/4 회귀** (9차) ⚠️
-> **전체 구현률**: **34/46 (74%)**
-> **다음 1순위**: PR #63 옵션 Z (`PytestSuiteOutput.to_markdown()` fence 자동 감싸기 + schema description 강제)
-> **최신 세션 로그**: [progress/session_log_20260430.md](./progress/session_log_20260430.md) (오늘 전일 통합 — 9차 결과 포함) ⭐
-> **이전 세션 로그**: [progress/session_log_20260429.md](./progress/session_log_20260429.md)
+> **마지막 업데이트**: 2026-05-06 (PR #64 ```python``` fence 자동 감싸기 → **10차 E2E 10차 active 2/4 완전 회복, retry=0 + 17 tests PASS, 29.64분 SUCCESS**) ⭐⭐
+> **현재 브랜치**: `docs/log-20260506-pr64-fence-fix` (PR #63 + #64 머지 완료, 본 PR 은 10차 결과 docs)
+> **테스트**: pytest **498 passed** (어제 490 → 오늘 +8, 회귀 0)
+> **머지된 PR**: 62 → **64** (오늘 +2: #63 9차 docs + #64 fence fix)
+> **active QA gating**: 0/4 → 2/4 (8차) → 1/4 회귀 (9차) → **2/4 완전 회복** (10차, retry=0) ⭐
+> **전체 구현률**: **34/46 (74%)** — 변동 없음 (active QA 회복은 *질적* 개선)
+> **다음 1순위**: Update Checker 실 통합 (조건부) — 풀체인 안정 도달, 외부 단계로 진입
+> **최신 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (오늘 — PR #63 + #64 + 10차 E2E 회복) ⭐
+> **이전 세션 로그**: [progress/session_log_20260430.md](./progress/session_log_20260430.md) (4/30 전일 통합 — 9차 결과 포함)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
-> **10차 E2E 9차 보고서 (PR #61 부분 회귀)**: [progress/e2e_10th_verification_post_pr61.md](./progress/e2e_10th_verification_post_pr61.md) ⚠️
+> **10차 E2E 10차 보고서 (PR #64 완전 회복)**: [progress/e2e_10th_verification_post_pr64.md](./progress/e2e_10th_verification_post_pr64.md) ⭐⭐
+> **10차 E2E 9차 보고서 (PR #61 부분 회귀)**: [progress/e2e_10th_verification_post_pr61.md](./progress/e2e_10th_verification_post_pr61.md)
 > **10차 E2E 7·8차 (PR #58/#59, active 2/4 도달)**: [progress/e2e_10th_verification_post_pr59.md](./progress/e2e_10th_verification_post_pr59.md)
 > **10차 E2E 6차 (PASS, 26.90분, 완전 산출)**: [progress/e2e_10th_verification_post_pr55.md](./progress/e2e_10th_verification_post_pr55.md)
 > **10차 E2E 4·5차 (rescue 작동, 5차 빈 코드)**: [progress/e2e_10th_verification_post_pr53.md](./progress/e2e_10th_verification_post_pr53.md)
@@ -35,15 +36,16 @@
 | **🎯 workflow-level rescue (이슈 6 방어선 3)** | ✅ **ConverterError + ValidationError 둘 다 흡수** (PR #53) |
 | **🎯 capture-before-rescue (이슈 6 방어선 3 강화)** | ✅ **Task._export_output 클래스 패치 + in-place strip + 같은 raw 재호출** (PR #55) |
 | **🎯 Pytest Author 에이전트** | ✅ **workflow chain 통합 + PytestSuiteOutput schema 강제** (PR #58 + #59) |
-| **🎯 4 카테고리 시나리오 강제 (functional/robustness 의미 흡수)** | ✅ **Pytest Author backstory 강화 — Happy/Edge/Load/Error 분포 + 10개 임계** (PR #61) ⭐ |
+| **🎯 4 카테고리 시나리오 강제 (functional/robustness 의미 흡수)** | ✅ **Pytest Author backstory 강화 — Happy/Edge/Load/Error 분포 + 10개 임계** (PR #61) |
+| **🎯 ```python``` fence 마커 자동 감싸기 (방어선 4)** | ✅ **`PytestSuiteOutput.to_markdown()` deterministic 보강** (PR #64) ⭐ |
 | **🎯 DoD marker single source of truth** | ✅ **DOD_PASS_RULES dict 통합** (PR #57) |
 | 전체 구현률 | ✅ **34/46 (74%)** |
-| **active QA gating** | ⚠️ **1/4 (gui_test 만)** — 9차에서 ```python``` 마커 누락으로 회귀 (8차는 2/4 도달했었음) |
-| **의미적 QA 4/4 흡수** | ⚠️ **본문은 OK** (9차 4 카테고리 12 시나리오) BUT 추출 실패 — PR #63 fix 필요 |
-| 10차 E2E 풀체인 fatal-free | ✅ **30.81분 SUCCESS** (9차, retry 0회) — 시간 줄어듦 ≠ 더 좋음 (vacuous PASS) |
-| **10차 E2E 풀체인 + Calculator.exe 동시 산출** | ✅ **달성** — Draft Release publish 동반 (6,7,8,9차 안정 재현) |
-| **qa_feedback_loop 첫 실 활용** | ✅ **8차에서 1차 fail → 자동 보정 → 2차 pass** (PR #48 인프라 12일 만 활용) ⭐ |
-| **10차 E2E 9차 (PR #61) 결과** | ⚠️ **backstory 강화 100% 효과** (4 카테고리 12 시나리오) **BUT** ```python``` fence 마커 누락 → active 회귀 |
+| **active QA gating** | ✅ **2/4 (code_qa + gui_test)** — 10차에서 retry=0 으로 *진짜 PASS* 도달 (PR #64) ⭐ |
+| **의미적 QA 4/4 흡수** | ✅ **17개 시나리오 4 카테고리 분포 + fence 마커 자동 보장** (10차 PR #64) |
+| 10차 E2E 풀체인 fatal-free | ✅ **29.64분 SUCCESS** (10차, retry 0회 + code_qa PASS — *vacuous 아닌 진짜* PASS) |
+| **10차 E2E 풀체인 + Calculator.exe 동시 산출** | ✅ **달성** — Draft Release publish 동반 (6,7,8,9,10차 안정 재현) |
+| **qa_feedback_loop 첫 실 활용** | ✅ **8차에서 1차 fail → 자동 보정 → 2차 pass** (PR #48 인프라 12일 만 활용) |
+| **10차 E2E 10차 (PR #64) 결과** | ✅ **active 1/4 → 2/4 완전 회복** + retry=0 + 17 tests PASS + 29.64분 (방어선 4 효과 입증) ⭐⭐ |
 
 ---
 
@@ -384,57 +386,58 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - active QA: 2/4 → 1/4 회귀
     - 보고서: [progress/e2e_10th_verification_post_pr61.md](./progress/e2e_10th_verification_post_pr61.md)
 45. ~~PR #62 (전일 통합 세션 로그) 머지~~ ✅
-46. ⏳ **본 PR (9차 결과 docs)** — e2e_10th_verification_post_pr61.md + session_log + WORK_STATUS 갱신
+46. ~~PR #63 (9차 결과 docs) 머지~~ ✅ `585ea98`
+
+### 2026-05-06 진행 (오늘) ⭐⭐
+
+47. ~~PR #64 — ```python``` fence 마커 자동 감싸기 (방어선 4, 5단계 변경)~~ ✅ 머지 `0938b9e`
+    - `_ensure_python_fence()` 헬퍼 + `PytestSuiteOutput.to_markdown()` deterministic 보강
+    - backstory + description 에 fence 강제 + 9차 회귀 사례 인용
+    - 신규 테스트 7개 (자동 감싸기 / idempotent / case-insensitive / schema / backstory / description)
+    - pytest 490 → **498 passed** (회귀 0)
+48. ~~10차 E2E 10차 재실행 — **active 1/4 → 2/4 완전 회복**~~ ✅ ⭐⭐
+    - **DoD 7/7 ALL PASSED + 29.64분 + retry=0 + 17 tests PASS**
+    - `pytest_suite` 8,674 bytes (9차 6,214 bytes 대비 +40%)
+    - `code/test_calculator.py` 정상 추출 (9차 미생성 → 회복)
+    - 보고서: [progress/e2e_10th_verification_post_pr64.md](./progress/e2e_10th_verification_post_pr64.md)
+49. ⏳ **본 PR (#65, 10차 결과 docs)** — e2e_10th_verification_post_pr64.md + session_log_20260506 + WORK_STATUS 갱신
 
 ---
 
-## 🌅 내일 (2026-05-01~) 우선 순위
+## 🛡️ 방어선 1~4 정리 (이슈 6 LLM 비결정성 흡수)
 
-### 🔴 1순위 — PR #63: ```python``` fence 마커 자동 보장 (옵션 Z, 15분)
+| 방어선 | PR | 메커니즘 | 효과 |
+|---|---|---|---|
+| 1 | #29 | auto-retry | 미미 |
+| 2 | #31~33, #59 | `output_pydantic` schema 강제 | schema 필드 보장 ✅ |
+| 3 | #53, #55 | capture-before-rescue | schema 실패 시 raw 보존 ✅ |
+| **4** | **#64** | **`to_markdown()` 자동 fence 감싸기** | **schema 통과 후에도 fence 마커 보장 ⭐** |
 
-9차 회귀 fix. 작은 변경으로 active 2/4 회복 + 의미적 4/4 도달.
+방어선이 *쌓일수록* LLM 행동의 비결정성이 점진적으로 흡수됨. 9차 회귀는 방어선 1~3 통과 후의 빈틈 — schema 가 필드를 보장하더라도 *필드 본문 내부의* fence 마커는 LLM 자유 영역. 방어선 4 가 이 빈틈을 deterministic 단계로 차단.
 
-**변경**:
-1. `src/workflows/_schemas.py` — `PytestSuiteOutput.to_markdown()` 에서
-   `test_code_block` 이 ```python``` 으로 시작 안 하면 *자동 감싸기*
-2. `src/workflows/_schemas.py` — `test_code_block` 필드 description 에
-   "**fence 마커 ```python\\n...\\n``` 반드시 포함**" 명시 강화
-3. `src/agents/qa/pytest_author.py` — backstory "출력 규약" fence 강제
-4. `src/workflows/analyze_and_implement.py` — description 동일 강화
-5. 신규 테스트 (자동 감싸기 + fence 키워드 검증)
+---
 
-**검증**: 10차 E2E 10차 재실행 → active 2/4 회복 + 12 시나리오 4 카테고리
-분포 동시 달성.
+## 🌅 다음 세션 (2026-05-07~) 우선 순위
 
-**시작 명령**:
-```bash
-cd C:\projects\nexus-alpha
-git checkout main && git pull
-git checkout -b qa/python-fence-marker-pr63
-# 위 5단계 변경 후
-.venv/Scripts/python.exe -m pytest src/tests/test_pytest_author_agent.py -q
-.venv/Scripts/python.exe -m pytest -q
-git commit + push + PR + 머지
-.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py 2>&1 | tee outputs/_e2e_10th_10th_pr63_log.txt
-```
+10차 E2E 시리즈 종료. 다음 단계는 **풀체인 외부** 로 진입.
 
-### 🟢 2순위 — Update Checker 실 통합 (조건부)
+### 🟢 1순위 — Update Checker 실 통합 (조건부)
 
-산출 calculator.py 에 `updater.py` 임포트 → 자동 업데이트 체커 동작 검증. 풀체인이 안정적으로 .exe + Draft Release 산출하므로 실 endpoint (`api.github.com/repos/SongJongwon/nexus-alpha/releases/latest`) 와 통합 가능.
+산출 `calculator.py` 에 `updater.py` 임포트 → 자동 업데이트 체커 동작 검증. 풀체인이 안정적으로 .exe + Draft Release 산출 (10차 시리즈 6번 연속 SUCCESS) — 실 endpoint (`api.github.com/repos/SongJongwon/nexus-alpha/releases/latest`) 와 통합 가능 시점.
 
 위치: [src/agents/build_release/](../src/agents/build_release/) + 새 통합 task
 
-### 🟢 3순위 — Phase 6 착수 (Track B 5명, 조건부)
+### 🟢 2순위 — Phase 6 착수 (Track B 5명)
 
 Web Scraping Specialist (Playwright) / Desktop Auto Specialist (PyAutoGUI) / API Integration Developer (REST/GraphQL) / Data Parser Engineer (Excel/PDF/CSV/JSON) / DevOps Engineer (Docker/CI/CD).
 
-본부 3 (개발) 3/9 (33%) → 8/9 (89%). 다양한 사용자 요청 지원 → CLI 풀체인 시 functional/robustness 자동 active 화.
+본부 3 (개발) 3/9 (33%) → **8/9 (89%)**. 전체 구현률 34/46 (74%) → **39/46 (85%)**.
 
-### 🟢 4순위 — CLI 풀체인 검증 (자연 active 4/4 도달 후보)
+### 🟢 3순위 — CLI 풀체인 검증 (자연 active 4/4 도달 후보)
 
-`'매장별 시간 매출 Excel 분석 PDF 보고서'` 같은 CLI 시나리오로 functional/robustness 가 자동 active 되는지 확인 → "도구 레벨 active 4/4" 가 *자연스럽게* 도달하는지 검증.
+`'매장별 월간 매출 Excel 분석 PDF 보고서'` 시나리오로 CLI 분기에서 functional/robustness 가 자동 active 되는지 확인 → "도구 레벨 active 4/4" 가 *자연스럽게* 도달하는지 검증.
 
-### 🟢 5순위 — Streamlit UI / Vector DB / Credential Vault 등 v1 기능
+### 🟢 4순위 — Streamlit UI / Vector DB / Credential Vault 등 v1 기능
 
 이전 세션 로그의 중장기 항목들. 풀체인 안정화 완료 후 가치 추가.
 
