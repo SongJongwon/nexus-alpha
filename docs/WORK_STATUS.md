@@ -1,14 +1,14 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-07 (PR #68 Phase 6 착수 — Track B 5명 동시 추가 → **본부 3 1/9 → 6/9, 전체 구현률 34/46 (74%) → 39/46 (85%)**) ⭐⭐⭐
-> **현재 브랜치**: `docs/log-20260507-pr68-phase6` (PR #63 ~ #68 머지 완료, 본 PR 은 Phase 6 결과 docs)
-> **테스트**: pytest **538 passed** (5/6 518 → 5/7 +20, 회귀 0)
-> **머지된 PR**: 62 → **68** (오늘 +1: #68 Phase 6 Track B 5명)
-> **active QA gating**: 0/4 → 2/4 (8차) → 1/4 회귀 (9차) → **2/4 안정** (10·11차 연속)
-> **풀체인 외부 통합**: ✅ **Update Checker 첫 실 통합** (PR #66, 11차 E2E 검증)
+> **마지막 업데이트**: 2026-05-07 (PR #68~#72 — Phase 6 Track B 5명 + 워크플로 통합 + E2E 스크립트 fix + CLI 검증 → **본부 3 1/9 → 6/9, 전체 구현률 34/46 (74%) → 39/46 (85%), pytest 538 → 562 passed**) ⭐⭐⭐
+> **현재 브랜치**: `docs/log-20260507-final-pr68-71` (PR #63 ~ #71 머지 완료, 본 PR 은 최종 docs)
+> **테스트**: pytest **562 passed** (5/6 518 → 5/7 +44, 회귀 0)
+> **머지된 PR**: 62 → **71** (오늘 +4: #68 Phase 6 + #69 docs + #70 옵션 6.B + #71 script fix)
+> **active QA gating**: 0/4 → 2/4 (8차) → 1/4 회귀 (9차) → **2/4 안정** (10·11·12차 연속)
+> **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 워크플로** (PR #70)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **다음 1순위**: 옵션 6.B — Track B 워크플로 통합 (`automate_workflow.py` 신설)
+> **다음 1순위**: active 4/4 자연 도달 (옵션 A `--force-cli` 권장)
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -42,7 +42,9 @@
 | **🎯 4 카테고리 시나리오 강제 (functional/robustness 의미 흡수)** | ✅ **Pytest Author backstory 강화 — Happy/Edge/Load/Error 분포 + 10개 임계** (PR #61) |
 | **🎯 ```python``` fence 마커 자동 감싸기 (방어선 4)** | ✅ **`PytestSuiteOutput.to_markdown()` deterministic 보강** (PR #64) |
 | **🎯 Update Checker 실 통합 (방어선 4 패턴 재사용)** | ✅ **`UpdateModuleSpecOutput.to_markdown()` fence + 헤더 자동 보장 + workflow auto-inject** (PR #66) |
-| **🎯 Phase 6 Track B 5명 추가 (본부 3 67%)** | ✅ **Web Scraping / Desktop Auto / API Integration / Data Parser / DevOps 동시 추가** (PR #68) ⭐ |
+| **🎯 Phase 6 Track B 5명 추가 (본부 3 67%)** | ✅ **Web Scraping / Desktop Auto / API Integration / Data Parser / DevOps 동시 추가** (PR #68) |
+| **🎯 Track B 워크플로 통합 (옵션 6.B)** | ✅ **`automate_workflow.py` 신설 + 라우팅** (PR #70) ⭐ |
+| **🎯 E2E 스크립트 임의 시나리오 재사용** | ✅ **argparse + 원본 보존** (PR #71) |
 | **🎯 DoD marker single source of truth** | ✅ **DOD_PASS_RULES dict 통합** (PR #57) |
 | 전체 구현률 | ✅ **39/46 (85%)** ⭐ |
 | **active QA gating** | ✅ **2/4 (code_qa + gui_test)** — 10·11차 연속 안정 도달 (PR #64 + PR #66) ⭐ |
@@ -432,9 +434,36 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - Data Parser (openpyxl/pdfplumber + cp949 한글)
     - DevOps (Dockerfile multi-stage + non-root)
     - 신규 테스트 20개 (메타데이터 / factory / 도메인 키워드 / Final Answer / 5단 구조)
-    - pytest 518 → **538 passed** (+20, 회귀 0)
-    - 본부 3: 1/9 → **6/9 (67%)**, 전체 구현률 34/46 (74%) → **39/46 (85%)**
-56. ⏳ **본 PR (#69, Phase 6 결과 docs)** — session_log_20260507 + WORK_STATUS 갱신
+    - pytest 518 → 538 passed (+20, 회귀 0)
+    - 본부 3: 1/9 → 6/9 (67%), 전체 구현률 34/46 (74%) → 39/46 (85%)
+56. ~~PR #69 (Phase 6 결과 docs) 머지~~ ✅
+57. ~~PR #70 — 옵션 6.B Track B 워크플로 통합~~ ✅ ⭐
+    - `src/workflows/automate_workflow.py` 신설 (analyze_and_implement 와 분리)
+    - `AutomationDomain` enum + 휴리스틱 분류 + factory 매핑
+    - `_extract_track_b_code_blocks` (Python + Dockerfile + YAML 추출)
+    - `analyze_and_implement.py` 에 `enable_automate_branch=False` 파라미터 추가
+    - UNKNOWN 시 Track A fallback (backward compat)
+    - 신규 테스트 19개 (`test_automate_workflow.py`)
+    - pytest 538 → 557 passed (+19, 회귀 0)
+58. ~~CLI E2E 검증 (Excel 시나리오 첫 시도) — 96.13분, retry=2~~ ⚠️ 버그 발견
+    - DoD 7/7 PASS BUT artifact_category=gui (예상 cli)
+    - 진단: `run_e2e_10th_verification.py` retry 시 user_request 가 "계산기 만들어줘"로
+      덮어쓰기 → CLI 시나리오로 시작해도 calculator.py 산출
+59. ~~PR #71 — E2E 스크립트 fix (argparse + 원본 보존)~~ ✅ 머지 🐛
+    - argparse 도입 (`--request` / `-r` / `--max-retries`)
+    - `user_request_initial` 변수 — 원본 요청 보존
+    - retry 보강 시 `user_request_initial` 재사용 (하드코딩 제거)
+    - summary.json 도 동적 변수 사용
+    - 신규/수정 테스트 5개
+    - pytest 557 → **562 passed** (+5, 회귀 0)
+60. ~~CLI E2E 재검증 (Excel 시나리오, --request 인자 사용) — 12차~~ ⚠️ 부분 성공
+    - **PR #71 fix 효과 입증** ✅: user_request_initial 정확히 보존
+    - **시간 단축** ✅: 96분 → **37.57분** (retry=0 한 번에 PASS)
+    - **진짜 산출물 변화** ✅: calculator.py 단일 → **app.py + logic.py + ui.py + test_app.py + updater.py** 모듈 분리
+    - active QA: **2/4 유지** (회귀 0) — 단 functional/robustness 여전히 SKIPPED
+    - LLM 이 Excel 분석 → GUI 데이터 시각화 앱 으로 합리적 해석 (UI/UX Analyst 결정)
+    - 진짜 active 4/4 자연 도달은 별도 작업 (`--force-cli` 또는 UI/UX backstory 강화)
+61. ⏳ **본 PR (#72, 최종 docs)** — session_log_20260507 + WORK_STATUS 갱신
 
 ---
 
@@ -456,28 +485,38 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 
 ---
 
-## 🌅 다음 세션 (또는 본 세션 후속) 우선 순위
+## 🌅 다음 세션 (2026-05-08~) 우선 순위
 
-Phase 6 옵션 6.A 완료. 5 에이전트 등록 ✅, 그러나 호출되지 않음 — workflow 통합 필요.
+Phase 6 옵션 6.A + 6.B + script fix 모두 완료. CLI 시나리오 검증에서 발견된
+*active 4/4 자연 도달 미달성* 이 다음 1순위.
 
-### 🔴 1순위 — 옵션 6.B: Track B 워크플로 통합
+### 🔴 1순위 — active 4/4 자연 도달 (옵션 A/B/C 중 선택)
 
-**분기 1**: `analyze_and_implement.py` 에 Track B 라우팅 추가
-- 사용자 요청 의도 분류 → Track B 분기 결정
+CLI 시나리오에서도 LLM 이 GUI 앱으로 해석 → artifact_category=gui →
+functional/robustness SKIPPED. 진짜 active 4/4 도달을 위해:
 
-**분기 2 (권장)**: `src/workflows/automate_workflow.py` 별도 워크플로 신설
-- Track A (`analyze_and_implement`) 와 분리 책임
-- Track A 안정성 보호 (PR #66 풀체인 외부 통합 회귀 위험 격리)
+- **옵션 A — `--force-cli` 플래그 (권장)**: E2E 스크립트에 추가, `enable_gui_branch=False` 강제
+- **옵션 B — UI/UX Analyst backstory 강화**: 분석/리포트 시나리오 → `need_gui=no` 결정 신호
+- **옵션 C — 본부 1/2 (분석/계획) 보강**: BA / PM 추가로 *요구사항 분류* 강화
 
-권장: **분기 2** — 별도 워크플로 + entry point 에서 Track B 라우팅으로 호출.
+권장: **옵션 A** (작은 PR, 즉시 검증 가능) → 옵션 B (LLM 행동 강화)
 
-### 🟢 2순위 — CLI 풀체인 검증 (자연 active 4/4 도달 후보)
+### 🟢 2순위 — Track B 풀체인 E2E 검증
 
-`'매장별 시간 매출 Excel 분석 PDF 보고서'` 같은 CLI 시나리오로 CLI 분기에서 functional/robustness 자동 active 되는지 검증 → "도구 레벨 active 4/4" 가 *자연스럽게* 도달.
+`enable_automate_branch=True` 로 5 에이전트 각자 호출 검증:
+
+```bash
+python scripts/run_e2e_10th_verification.py \
+  --request "Stripe API webhook 으로 결제 알림 처리"   # → API Integration
+python scripts/run_e2e_10th_verification.py \
+  --request "Dockerfile multi-stage + GitHub Actions"  # → DevOps
+```
+
+5 도메인 각각 산출물 품질 확인 (현재 pytest 만 검증, 실 산출은 미검증).
 
 ### 🟢 3순위 — Streamlit UI / Vector DB / Credential Vault 등 v1 기능
 
-이전 세션 로그의 중장기 항목들. 풀체인 안정화 + Phase 6 워크플로 통합 완료 후 가치 추가.
+이전 세션 로그의 중장기 항목들. Track B 검증 + active 4/4 도달 후 가치 추가.
 
 ---
 
