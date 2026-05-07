@@ -279,6 +279,19 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "등) 검증에 사용."
         ),
     )
+    parser.add_argument(
+        "--enable-automate-branch",
+        action="store_true",
+        default=False,
+        help=(
+            "Track B (Phase 6) 활성화 — Web Scraping / Desktop Automation / "
+            "API Integration / Data Parser / DevOps 5 도메인 중 휴리스틱 분류로 "
+            "1명 호출 (PR #75). NOTE: Track B 는 단일 에이전트 호출 흐름이라 "
+            "Build/Release 단계 미동반 → DoD 7/7 일부 항목 (publish/executor) "
+            "실패 가능 — 산출물 코드 자체 검증이 목표. analyze_and_implement "
+            "라우팅이 UNKNOWN 도메인 시 Track A fallback (backward compat)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -291,6 +304,8 @@ def main() -> int:
     max_qa_retries = args.max_retries
     # PR #73: --force-cli → enable_gui_branch=False (CLI 산출 강제)
     enable_gui_branch_for_run = not args.force_cli
+    # PR #75: --enable-automate-branch → Track B 활성화
+    enable_automate_branch_for_run = args.enable_automate_branch
 
     print("=" * 80)
     print("10차 E2E Verification — M5 + QA 자동 피드백 루프 (PR #49)")
@@ -299,6 +314,11 @@ def main() -> int:
     print(f"Max QA Retries: {max_qa_retries}")
     print(f"enable_gui_branch: {enable_gui_branch_for_run} "
           f"(force_cli={args.force_cli})")
+    print(f"enable_automate_branch: {enable_automate_branch_for_run} "
+          f"(Track B Phase 6)")
+    if enable_automate_branch_for_run:
+        print("[NOTE] Track B 활성 — 단일 에이전트 호출 후 Build/Release 미동반.")
+        print("       DoD 7/7 일부 항목 실패 가능 (산출물 코드 검증이 목표).")
     print("=" * 80)
     print()
 
@@ -333,6 +353,7 @@ def main() -> int:
                 enable_publish=True,
                 publish_as_draft=True,
                 publish_timeout_sec=120,
+                enable_automate_branch=enable_automate_branch_for_run,
             )
             status = "SUCCESS"
         except KeyboardInterrupt:
@@ -465,6 +486,7 @@ def main() -> int:
         "max_qa_retries": max_qa_retries,
         "force_cli": args.force_cli,
         "enable_gui_branch": enable_gui_branch_for_run,
+        "enable_automate_branch": enable_automate_branch_for_run,
         "qa_modules_available": {k: v is not None for k, v in qa_modules.items()},
         "qa_iterations": qa_iterations,
         "qa_decision_final": _dump_safely(qa_decision),

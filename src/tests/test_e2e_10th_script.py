@@ -406,3 +406,80 @@ def test_script_summary_includes_force_cli() -> None:
     assert '"enable_gui_branch": enable_gui_branch_for_run' in source, (
         "summary.json 에 enable_gui_branch 저장 누락"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #75 — `--enable-automate-branch` 플래그 (Track B 풀체인 sample 검증용)
+# ---------------------------------------------------------------------------
+
+
+def test_script_has_enable_automate_branch_flag() -> None:
+    """`--enable-automate-branch` CLI 인자 도입 (PR #75)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "--enable-automate-branch" in source, "--enable-automate-branch CLI 인자 누락"
+    assert "enable_automate_branch" in source, "enable_automate_branch 변수 누락"
+    # Track B 라우팅 의도 명시 (Track A fallback 안내 포함)
+    assert "Track B" in source or "Phase 6" in source
+
+
+def test_parse_args_enable_automate_branch_default_false() -> None:
+    """`_parse_args([])` 기본값 enable_automate_branch=False (backward compat)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_e2e_10th_script", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_e2e_10th_script"] = module
+    try:
+        spec.loader.exec_module(module)
+        ns = module._parse_args([])
+        assert ns.enable_automate_branch is False, (
+            "기본값은 False (Track A 흐름 유지)"
+        )
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
+
+
+def test_parse_args_enable_automate_branch_set_true() -> None:
+    """`_parse_args(['--enable-automate-branch'])` → enable_automate_branch=True."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_e2e_10th_script", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_e2e_10th_script"] = module
+    try:
+        spec.loader.exec_module(module)
+        ns = module._parse_args(["--enable-automate-branch"])
+        assert ns.enable_automate_branch is True
+        # 다른 인자와 같이 사용 가능
+        ns2 = module._parse_args(
+            [
+                "--request",
+                "네이버 쇼핑 가격 크롤링",
+                "--enable-automate-branch",
+                "--max-retries",
+                "1",
+            ]
+        )
+        assert ns2.enable_automate_branch is True
+        assert ns2.request == "네이버 쇼핑 가격 크롤링"
+        assert ns2.max_retries == 1
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
+
+
+def test_script_passes_enable_automate_branch_to_workflow() -> None:
+    """run_analyze_and_implement 호출에 enable_automate_branch 전달 검증 (정적 grep)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert (
+        "enable_automate_branch=enable_automate_branch_for_run" in source
+    ), "run_analyze_and_implement 에 enable_automate_branch 전달 누락"
+
+
+def test_script_summary_includes_enable_automate_branch() -> None:
+    """summary.json 에 enable_automate_branch 저장."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert (
+        '"enable_automate_branch": enable_automate_branch_for_run' in source
+    ), "summary.json 에 enable_automate_branch 저장 누락"
