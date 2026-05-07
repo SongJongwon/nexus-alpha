@@ -12,6 +12,12 @@ Nexus Alpha 워크플로우 패키지.
 """
 
 from .analyze_and_implement import WorkflowResult, run_analyze_and_implement
+from .automate_workflow import (
+    AutomateWorkflowResult,
+    AutomationDomain,
+    detect_automation_domain,
+    run_automate_workflow,
+)
 from .build_workflow import BuildWorkflowResult, run_build_workflow
 from .iterative_loop import (
     LoopOutcome,
@@ -22,16 +28,24 @@ from .release_workflow import ReleaseWorkflowResult, run_release_workflow
 from .router import Intent, RoutingDecision, route_request
 
 __all__ = [
-    "BuildWorkflowResult",
-    "Intent",
-    "LoopOutcome",
-    "ReleaseWorkflowResult",
-    "RoutingDecision",
+    # Track A — analyze_and_implement (Calculator.exe 풀체인)
     "WorkflowResult",
-    "build_iterative_loop_graph",
-    "route_request",
     "run_analyze_and_implement",
+    # Track B — automate_workflow (Phase 6, PR #70)
+    "AutomateWorkflowResult",
+    "AutomationDomain",
+    "detect_automation_domain",
+    "run_automate_workflow",
+    # Phase 4.5 / 5
+    "BuildWorkflowResult",
+    "ReleaseWorkflowResult",
     "run_build_workflow",
-    "run_iterative_loop",
     "run_release_workflow",
+    # Routing + LangGraph loop
+    "Intent",
+    "RoutingDecision",
+    "route_request",
+    "LoopOutcome",
+    "build_iterative_loop_graph",
+    "run_iterative_loop",
 ]
