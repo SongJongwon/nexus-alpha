@@ -329,3 +329,80 @@ def test_parse_args_accepts_custom_request() -> None:
         assert ns2.request == "다른 요청"
     finally:
         sys.modules.pop("_e2e_10th_script", None)
+
+
+# ---------------------------------------------------------------------------
+# PR #73 — `--force-cli` 플래그 (active 4/4 도달용)
+# ---------------------------------------------------------------------------
+
+
+def test_script_has_force_cli_flag() -> None:
+    """`--force-cli` CLI 인자 도입 — Track A Engineer 강제 CLI 산출 (PR #73)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "--force-cli" in source, "--force-cli CLI 인자 누락"
+    assert "force_cli" in source, "force_cli 변수 누락"
+    # detect_artifact_category 의 'cli' 경로로 functional/robustness active 도달 의도 명시
+    assert "functional" in source.lower() or "active" in source.lower()
+
+
+def test_parse_args_force_cli_default_false() -> None:
+    """`_parse_args([])` 기본값 force_cli=False (backward compat)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_e2e_10th_script", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_e2e_10th_script"] = module
+    try:
+        spec.loader.exec_module(module)
+        ns = module._parse_args([])
+        assert ns.force_cli is False, "기본값은 False (기존 GUI 분기 흐름 유지)"
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
+
+
+def test_parse_args_force_cli_set_true() -> None:
+    """`_parse_args(['--force-cli'])` → force_cli=True (action='store_true')."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_e2e_10th_script", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_e2e_10th_script"] = module
+    try:
+        spec.loader.exec_module(module)
+        ns = module._parse_args(["--force-cli"])
+        assert ns.force_cli is True
+        # 다른 인자와 같이 사용 가능
+        ns2 = module._parse_args(
+            ["--request", "Excel 분석 도구", "--force-cli", "--max-retries", "1"]
+        )
+        assert ns2.force_cli is True
+        assert ns2.request == "Excel 분석 도구"
+        assert ns2.max_retries == 1
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
+
+
+def test_script_applies_force_cli_to_enable_gui_branch() -> None:
+    """force_cli=True 시 enable_gui_branch=False 강제 적용 검증 (정적 grep)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    # `not args.force_cli` 또는 동등 패턴 사용
+    assert (
+        "not args.force_cli" in source
+        or "enable_gui_branch_for_run" in source
+    ), (
+        "force_cli → enable_gui_branch=False 강제 로직 누락 — "
+        "PR #73 fix 미적용"
+    )
+
+
+def test_script_summary_includes_force_cli() -> None:
+    """summary.json 에 force_cli + enable_gui_branch 저장 (재현성)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert '"force_cli": args.force_cli' in source, (
+        "summary.json 에 force_cli 저장 누락"
+    )
+    assert '"enable_gui_branch": enable_gui_branch_for_run' in source, (
+        "summary.json 에 enable_gui_branch 저장 누락"
+    )
