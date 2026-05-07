@@ -1,14 +1,14 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-07 (PR #68~#72 — Phase 6 Track B 5명 + 워크플로 통합 + E2E 스크립트 fix + CLI 검증 → **본부 3 1/9 → 6/9, 전체 구현률 34/46 (74%) → 39/46 (85%), pytest 538 → 562 passed**) ⭐⭐⭐
-> **현재 브랜치**: `docs/log-20260507-final-pr68-71` (PR #63 ~ #71 머지 완료, 본 PR 은 최종 docs)
-> **테스트**: pytest **562 passed** (5/6 518 → 5/7 +44, 회귀 0)
-> **머지된 PR**: 62 → **71** (오늘 +4: #68 Phase 6 + #69 docs + #70 옵션 6.B + #71 script fix)
-> **active QA gating**: 0/4 → 2/4 (8차) → 1/4 회귀 (9차) → **2/4 안정** (10·11·12차 연속)
+> **마지막 업데이트**: 2026-05-07 (PR #73 `--force-cli` 플래그 → **CLI E2E `--force-cli` 로 active QA 4/4 완전 도달 — functional 10/10 + robustness 9/9 PASS**) ⭐⭐⭐
+> **현재 브랜치**: `docs/log-20260507-pr73-active-4-of-4` (PR #63 ~ #73 머지 완료, 본 PR 은 active 4/4 결과 docs)
+> **테스트**: pytest **567 passed** (5/6 518 → 5/7 +49, 회귀 0)
+> **머지된 PR**: 62 → **73** (오늘 +6: #68 Phase 6 + #69 docs + #70 옵션 6.B + #71 script fix + #72 docs + #73 force-cli)
+> **active QA gating**: 0/4 → 2/4 (8차) → 1/4 회귀 (9차) → 2/4 (10·11·12차) → **4/4 (`--force-cli` CLI 시나리오)** ⭐⭐⭐
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 워크플로** (PR #70)
-> **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐
+> **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **다음 1순위**: active 4/4 자연 도달 (옵션 A `--force-cli` 권장)
+> **다음 1순위**: Track B 풀체인 E2E 검증 (5 도메인 각자 호출)
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -43,8 +43,9 @@
 | **🎯 ```python``` fence 마커 자동 감싸기 (방어선 4)** | ✅ **`PytestSuiteOutput.to_markdown()` deterministic 보강** (PR #64) |
 | **🎯 Update Checker 실 통합 (방어선 4 패턴 재사용)** | ✅ **`UpdateModuleSpecOutput.to_markdown()` fence + 헤더 자동 보장 + workflow auto-inject** (PR #66) |
 | **🎯 Phase 6 Track B 5명 추가 (본부 3 67%)** | ✅ **Web Scraping / Desktop Auto / API Integration / Data Parser / DevOps 동시 추가** (PR #68) |
-| **🎯 Track B 워크플로 통합 (옵션 6.B)** | ✅ **`automate_workflow.py` 신설 + 라우팅** (PR #70) ⭐ |
+| **🎯 Track B 워크플로 통합 (옵션 6.B)** | ✅ **`automate_workflow.py` 신설 + 라우팅** (PR #70) |
 | **🎯 E2E 스크립트 임의 시나리오 재사용** | ✅ **argparse + 원본 보존** (PR #71) |
+| **🎯 active QA 4/4 자연 도달** | ✅ **`--force-cli` 플래그 → CLI 분기 강제** (PR #73) ⭐⭐⭐ |
 | **🎯 DoD marker single source of truth** | ✅ **DOD_PASS_RULES dict 통합** (PR #57) |
 | 전체 구현률 | ✅ **39/46 (85%)** ⭐ |
 | **active QA gating** | ✅ **2/4 (code_qa + gui_test)** — 10·11차 연속 안정 도달 (PR #64 + PR #66) ⭐ |
@@ -457,13 +458,26 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - 신규/수정 테스트 5개
     - pytest 557 → **562 passed** (+5, 회귀 0)
 60. ~~CLI E2E 재검증 (Excel 시나리오, --request 인자 사용) — 12차~~ ⚠️ 부분 성공
-    - **PR #71 fix 효과 입증** ✅: user_request_initial 정확히 보존
-    - **시간 단축** ✅: 96분 → **37.57분** (retry=0 한 번에 PASS)
-    - **진짜 산출물 변화** ✅: calculator.py 단일 → **app.py + logic.py + ui.py + test_app.py + updater.py** 모듈 분리
-    - active QA: **2/4 유지** (회귀 0) — 단 functional/robustness 여전히 SKIPPED
+    - PR #71 fix 효과 입증: user_request_initial 정확히 보존
+    - 시간 단축: 96분 → 37.57분 (retry=0 한 번에 PASS)
+    - 진짜 산출물 변화: calculator.py 단일 → app/logic/ui/test_app/updater 모듈 분리
+    - active QA: 2/4 유지 (회귀 0) — 단 functional/robustness 여전히 SKIPPED
     - LLM 이 Excel 분석 → GUI 데이터 시각화 앱 으로 합리적 해석 (UI/UX Analyst 결정)
     - 진짜 active 4/4 자연 도달은 별도 작업 (`--force-cli` 또는 UI/UX backstory 강화)
-61. ⏳ **본 PR (#72, 최종 docs)** — session_log_20260507 + WORK_STATUS 갱신
+61. ~~PR #72 (최종 docs) 머지~~ ✅
+62. ~~PR #73 — `--force-cli` 플래그 (옵션 A — active 4/4 도달)~~ ✅ 머지 ⭐
+    - argparse `--force-cli` 추가 (action='store_true', default=False)
+    - main() 에서 `enable_gui_branch = not args.force_cli` 적용
+    - summary.json 에 force_cli + enable_gui_branch 저장 (재현성)
+    - 신규 테스트 5개 (test_e2e_10th_script.py: 21 → 26)
+    - pytest 562 → **567 passed** (+5, 회귀 0)
+63. ~~CLI E2E (`--force-cli` Excel 시나리오) — **active QA 4/4 자연 도달**~~ ✅ ⭐⭐⭐
+    - **DoD 7/7 ALL PASSED + 32.91분 + retry=0 + skipped=0**
+    - artifact_category=library (gui 가 아님)
+    - **code_qa PASS (12 tests) + functional PASS (10/10) + gui_test PASS + robustness PASS (9/9)**
+    - chosen_path="" (Track A classic — Python Engineer 단독 호출)
+    - force_cli=true / enable_gui_branch=false 정확 적용
+64. ⏳ **본 PR (#74, active 4/4 결과 docs)** — session_log_20260507 + WORK_STATUS 갱신
 
 ---
 
@@ -487,36 +501,47 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 
 ## 🌅 다음 세션 (2026-05-08~) 우선 순위
 
-Phase 6 옵션 6.A + 6.B + script fix 모두 완료. CLI 시나리오 검증에서 발견된
-*active 4/4 자연 도달 미달성* 이 다음 1순위.
+Phase 6 옵션 6.A + 6.B + script fix + active 4/4 도달 모두 완료. 다음은
+*Track B 풀체인 검증* + *옵션 B (UI/UX backstory 강화)* 가 후보.
 
-### 🔴 1순위 — active 4/4 자연 도달 (옵션 A/B/C 중 선택)
-
-CLI 시나리오에서도 LLM 이 GUI 앱으로 해석 → artifact_category=gui →
-functional/robustness SKIPPED. 진짜 active 4/4 도달을 위해:
-
-- **옵션 A — `--force-cli` 플래그 (권장)**: E2E 스크립트에 추가, `enable_gui_branch=False` 강제
-- **옵션 B — UI/UX Analyst backstory 강화**: 분석/리포트 시나리오 → `need_gui=no` 결정 신호
-- **옵션 C — 본부 1/2 (분석/계획) 보강**: BA / PM 추가로 *요구사항 분류* 강화
-
-권장: **옵션 A** (작은 PR, 즉시 검증 가능) → 옵션 B (LLM 행동 강화)
-
-### 🟢 2순위 — Track B 풀체인 E2E 검증
+### 🔴 1순위 — Track B 풀체인 E2E 검증
 
 `enable_automate_branch=True` 로 5 에이전트 각자 호출 검증:
 
 ```bash
+# Web Scraping
 python scripts/run_e2e_10th_verification.py \
-  --request "Stripe API webhook 으로 결제 알림 처리"   # → API Integration
+  --request "네이버 쇼핑 가격 크롤링 스크립트"
+
+# Desktop Automation
 python scripts/run_e2e_10th_verification.py \
-  --request "Dockerfile multi-stage + GitHub Actions"  # → DevOps
+  --request "PyAutoGUI 로 엑셀 자동 입력"
+
+# API Integration
+python scripts/run_e2e_10th_verification.py \
+  --request "Stripe API webhook 으로 결제 알림 처리"
+
+# Data Parser
+python scripts/run_e2e_10th_verification.py \
+  --request "PDF 테이블 추출 후 CSV 변환"
+
+# DevOps
+python scripts/run_e2e_10th_verification.py \
+  --request "Dockerfile multi-stage + GitHub Actions"
 ```
 
-5 도메인 각각 산출물 품질 확인 (현재 pytest 만 검증, 실 산출은 미검증).
+각 도메인 산출물 품질 확인 (현재 pytest 만 검증, 실 산출 산물 미검증).
+필요 시 `enable_automate_branch=True` 토글을 E2E 스크립트에 추가 (지금은 라이브러리 호출만 가능).
+
+### 🟢 2순위 — UI/UX Analyst backstory 강화 (옵션 B)
+
+`--force-cli` 는 *수동* 강제 메커니즘. LLM 이 *자동으로* CLI 결정하도록 backstory
+강화 — 분석/리포트 시나리오 → `need_gui=no` 결정 신호 강화. 옵션 A 의 자연스러운
+보완재.
 
 ### 🟢 3순위 — Streamlit UI / Vector DB / Credential Vault 등 v1 기능
 
-이전 세션 로그의 중장기 항목들. Track B 검증 + active 4/4 도달 후 가치 추가.
+이전 세션 로그의 중장기 항목들. Track B 검증 + 옵션 B 완료 후 가치 추가.
 
 ---
 
