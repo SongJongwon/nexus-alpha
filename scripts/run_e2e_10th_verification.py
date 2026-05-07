@@ -267,6 +267,18 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         default=3,
         help="QA 자동 보정 최대 재시도 횟수. 기본 3.",
     )
+    parser.add_argument(
+        "--force-cli",
+        action="store_true",
+        default=False,
+        help=(
+            "GUI 분기 비활성화 (enable_gui_branch=False) → Python Engineer 단독 "
+            "CLI 산출 강제 (PR #73). 산출 코드에 argparse / sys.argv 가 포함되어 "
+            "detect_artifact_category 가 'cli' 반환 → functional / robustness "
+            "QA 도구가 active PASS 도달. CLI 시나리오 (Excel 분석 / 데이터 변환 "
+            "등) 검증에 사용."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -277,12 +289,16 @@ def main() -> int:
 
     user_request_initial = args.request
     max_qa_retries = args.max_retries
+    # PR #73: --force-cli → enable_gui_branch=False (CLI 산출 강제)
+    enable_gui_branch_for_run = not args.force_cli
 
     print("=" * 80)
     print("10차 E2E Verification — M5 + QA 자동 피드백 루프 (PR #49)")
     print(f"Start: {start_time.isoformat()}")
     print(f"Request: {user_request_initial}")
     print(f"Max QA Retries: {max_qa_retries}")
+    print(f"enable_gui_branch: {enable_gui_branch_for_run} "
+          f"(force_cli={args.force_cli})")
     print("=" * 80)
     print()
 
@@ -307,7 +323,7 @@ def main() -> int:
         try:
             result = run_analyze_and_implement(
                 user_request,
-                enable_gui_branch=True,
+                enable_gui_branch=enable_gui_branch_for_run,
                 enable_build_branch=True,
                 enable_release_branch=True,
                 previous_version="0.1.0",
@@ -447,6 +463,8 @@ def main() -> int:
         "status": status,
         "user_request_initial": user_request_initial,
         "max_qa_retries": max_qa_retries,
+        "force_cli": args.force_cli,
+        "enable_gui_branch": enable_gui_branch_for_run,
         "qa_modules_available": {k: v is not None for k, v in qa_modules.items()},
         "qa_iterations": qa_iterations,
         "qa_decision_final": _dump_safely(qa_decision),
