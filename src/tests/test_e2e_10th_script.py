@@ -63,9 +63,15 @@ def test_script_specifies_dod_checks() -> None:
 
 
 def test_script_max_qa_retries_is_3() -> None:
-    """기본 max_qa_retries = 3 (PR #48 qa_feedback_loop default 와 일치)."""
+    """기본 max_qa_retries = 3 (PR #48 qa_feedback_loop default 와 일치).
+
+    PR #71 이후: argparse `--max-retries` default=3 또는 직접 할당 패턴 모두 허용.
+    """
     source = SCRIPT_PATH.read_text(encoding="utf-8")
-    assert "max_qa_retries = 3" in source
+    # PR #71 argparse 도입 — default=3 또는 max_qa_retries = 3 둘 중 하나
+    assert ("max_qa_retries = 3" in source) or ("default=3" in source), (
+        "기본 max_qa_retries=3 의 신호가 스크립트에서 사라짐 (PR #71 argparse 또는 직접 할당)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +255,77 @@ def test_all_passed_uses_dod_pass_rules_directly() -> None:
     assert "DOD_PASS_RULES[k]" in source or "DOD_PASS_RULES.items()" in source, (
         "all_passed 가 DOD_PASS_RULES 를 사용하지 않음 — single source of truth 깨짐"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #71 — argparse 도입 + retry user_request 하드코딩 제거
+# ---------------------------------------------------------------------------
+
+
+def test_script_has_argparse_request_flag() -> None:
+    """`--request` CLI 인자 도입 — 임의 시나리오 재사용 가능 (PR #71)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "argparse" in source, "argparse import 누락"
+    assert "--request" in source, "--request CLI 인자 누락"
+    # parser factory 함수
+    assert "_parse_args" in source or "argparse.ArgumentParser" in source
+
+
+def test_script_retry_preserves_original_user_request() -> None:
+    """retry 시 원본 요청 보존 — '계산기 만들어줘' 하드코딩 제거 검증 (PR #71).
+
+    배경: PR #70 까지 retry 시 user_request 가 '계산기 만들어줘'로 덮어쓰이는
+    버그가 있어 임의 시나리오 (Excel 분석 등) 검증이 불가능했음.
+    """
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    # 원본 보존 변수
+    assert "user_request_initial" in source, "user_request_initial 변수 누락"
+    # retry 보강 코드에서 user_request_initial 사용
+    assert "{user_request_initial}" in source, (
+        "retry 보강 코드에서 user_request_initial 참조 누락 — 하드코딩 회귀 위험"
+    )
+
+
+def test_script_summary_uses_dynamic_user_request_initial() -> None:
+    """summary.json 의 user_request_initial 도 동적 변수 사용 (PR #71)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    # f-string 또는 변수 직접 사용 (하드코딩 '계산기 만들어줘' 검증 — summary 안에는 없어야)
+    assert '"user_request_initial": user_request_initial' in source, (
+        "summary 의 user_request_initial 이 변수가 아닌 하드코딩 — PR #71 fix 누락"
+    )
+
+
+def test_parse_args_returns_default_when_no_argv() -> None:
+    """`_parse_args([])` 가 default '계산기 만들어줘' 반환 (backward compat)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_e2e_10th_script", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_e2e_10th_script"] = module
+    try:
+        spec.loader.exec_module(module)
+        ns = module._parse_args([])
+        assert ns.request == "계산기 만들어줘"
+        assert ns.max_retries == 3
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
+
+
+def test_parse_args_accepts_custom_request() -> None:
+    """`_parse_args(['--request', '...'])` 가 custom request 반영."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_e2e_10th_script", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_e2e_10th_script"] = module
+    try:
+        spec.loader.exec_module(module)
+        ns = module._parse_args(["--request", "Excel 분석 PDF 보고서"])
+        assert ns.request == "Excel 분석 PDF 보고서"
+        # 짧은 형식 -r 도 동작
+        ns2 = module._parse_args(["-r", "다른 요청"])
+        assert ns2.request == "다른 요청"
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
