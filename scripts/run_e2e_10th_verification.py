@@ -30,6 +30,7 @@ Note: 본 스크립트는 PR #42~#48 의 QA 모듈에 의존. 해당 PR들이 ma
 되기 전에는 QA 모듈 lazy import 가 None 반환 → 9차와 동일 풀체인만 검증되고
 QA 루프는 자동 skip.
 """
+import argparse
 import sys
 import json
 import traceback
@@ -237,14 +238,51 @@ def _dump_safely(obj: Any) -> Any:
     return repr(obj)
 
 
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """CLI 인자 파싱 — `--request` 로 user_request 변경 가능 (PR #71).
+
+    배경 (PR #71):
+        기존 스크립트는 user_request 가 ``"계산기 만들어줘"`` 로 하드코딩되어
+        CLI 시나리오 (Excel 분석 PDF 보고서 등) 검증이 불가능했음. argparse 도입
+        + retry 시 원본 보존 로직 추가로 임의 시나리오 재사용 가능.
+
+    Args:
+        argv: 테스트 목적의 인자 주입. None 이면 sys.argv[1:] 사용.
+
+    Returns:
+        ``Namespace`` — request / max_retries 필드.
+    """
+    parser = argparse.ArgumentParser(
+        description="10차 E2E Verification — M5 + QA 자동 피드백 루프"
+    )
+    parser.add_argument(
+        "--request",
+        "-r",
+        default="계산기 만들어줘",
+        help="사용자 요청 (자연어). 기본: '계산기 만들어줘' (Calculator.exe 풀체인).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="QA 자동 보정 최대 재시도 횟수. 기본 3.",
+    )
+    return parser.parse_args(argv)
+
+
 def main() -> int:
+    args = _parse_args()
     start_time = datetime.now()
     timestamp_str = start_time.strftime("%Y%m%d_%H%M%S")
+
+    user_request_initial = args.request
+    max_qa_retries = args.max_retries
 
     print("=" * 80)
     print("10차 E2E Verification — M5 + QA 자동 피드백 루프 (PR #49)")
     print(f"Start: {start_time.isoformat()}")
-    print(f"Request: 계산기 만들어줘")
+    print(f"Request: {user_request_initial}")
+    print(f"Max QA Retries: {max_qa_retries}")
     print("=" * 80)
     print()
 
@@ -255,8 +293,7 @@ def main() -> int:
         missing = [k for k, v in qa_modules.items() if v is None]
         print(f"[QA] 미가용: {missing} (PR #42~#48 미머지 추정 — QA 루프는 부분 적용)")
 
-    max_qa_retries = 3
-    user_request = "계산기 만들어줘"
+    user_request = user_request_initial
 
     result = None
     qa_decision = None
@@ -343,10 +380,12 @@ def main() -> int:
                 print(f"[QA] BUDGET_EXHAUSTED — max_qa_retries({max_qa_retries}) 도달")
                 break
 
-            # 다음 시도를 위한 user_request 보강
+            # 다음 시도를 위한 user_request 보강 (PR #71 — 원본 요청 보존)
+            # 기존 버그: f"계산기 만들어줘\n\n..." 로 하드코딩 → 임의 시나리오로
+            # 시작해도 retry 후 calculator.py 산출. CLI E2E 검증 (Excel 분석 등) 불가.
             feedback = qa_modules["build_feedback_message"](qa_decision, full_qa_reports=None)
             user_request = (
-                f"계산기 만들어줘\n\n"
+                f"{user_request_initial}\n\n"
                 f"--- 이전 시도 ({attempt + 1} 회차) QA 검증 결과 ---\n"
                 + feedback
             )
@@ -406,7 +445,7 @@ def main() -> int:
         "end_time": end_time.isoformat(),
         "elapsed_sec": elapsed,
         "status": status,
-        "user_request_initial": "계산기 만들어줘",
+        "user_request_initial": user_request_initial,
         "max_qa_retries": max_qa_retries,
         "qa_modules_available": {k: v is not None for k, v in qa_modules.items()},
         "qa_iterations": qa_iterations,
