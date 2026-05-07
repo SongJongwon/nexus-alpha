@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-04-17** (Phase 2-P2 QA 에이전트 완료 + v3/v4 설계 문서 반영)
+> 마지막 업데이트: **2026-05-07** (PR #76 머지 시점, Phase 6 + active 4/4 + Update Checker 통합 반영)
 
 ---
 
@@ -11,453 +11,458 @@
 | 항목 | 값 |
 |---|---|
 | 프로젝트명 | Nexus Alpha — 업무 자동화/RPA 전문 AI 가상 기업 시스템 |
-| 최종 비전 (v4) | **"계산기 만들어줘" 한 마디 → .exe 완성품**까지 자동 도달 |
-| 현재 단계 | **Phase 2 우선순위 2 완료** (QA 에이전트 + 4-agent 워크플로우) + **v3/v4 설계 확정**. 우선순위 3(Knowledge) 또는 1-B(Linux CI) 착수 대기 |
+| 최종 비전 (v4) | **자연어 한 마디 → .exe + Draft Release + 자동 업데이트 체크** 풀체인 자동 도달 |
+| 현재 단계 | **Phase 6 Track B 5명 추가 + Update Checker 풀체인 통합 + active QA 4/4 도달** |
 | 작업 루트 | `C:\projects\nexus-alpha` |
 | 주 언어 | Python 3.13.13 (가상환경 `.venv/`) |
-| 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph (v3 루프 도입 예정) |
-| LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key로 전환 가능 |
-| 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) — 워크플로우 단일 trace 아래 4 generation |
-| 테스트 하네스 | pytest 9.0.3 + pytest-mock 3.15.1 + pytest-socket 0.7.0 (opt-in) |
-| 워크플로우 | CTO → Data Analyst → Python Engineer → **Code Reviewer** (4-agent sequential) |
-| 조직도 | C-Level 3 + 8 본부 = **46명 풀 조직** (현재 4명 구현, ~8.7%) |
+| 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph 1.1.6 |
+| LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key 전환 가능 |
+| 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
+| 테스트 하네스 | pytest 9.0.3 — **572 passed** (회귀 0) |
+| **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (automate_workflow 단일 에이전트)** |
+| **조직도 v8** | **46명 중 39명 구현 (85%)** |
+| **본부 3 (개발)** | **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐ |
+| **active QA gating** | **4/4 (--force-cli CLI 시나리오)** ⭐⭐⭐ |
 | GitHub | https://github.com/SongJongwon/nexus-alpha (`main` + 작업 브랜치) |
-| 최신 main 커밋 | `b9c178c Merge pull request #2 from SongJongwon/phase2/qa-agent` |
-| 마지막 엔드투엔드 산출물 | `outputs/workflow_20260417_164414/` (Git 추적 제외) |
+| 최신 main 커밋 | PR #76 머지 (5/7) — Track B sample 검증 결과 docs |
+| 마지막 E2E 산출 | `outputs/workflow_20260507_154643/` (CLI E2E `--force-cli` active 4/4) |
 
-**한 문장 요약**: Phase 2-P1 pytest 하네스 위에 Code Reviewer(4-agent 워크플로우)까지 main에 안착했고, **자기 진화 엔진(v3)** + **완전 자율 빌드(v4)** 설계가 `docs/architecture/`에 확정 기록되어 다음 단계 진입 준비 완료된 상태입니다.
-
----
-
-## 2. 완료된 작업 목록 (커밋 단위)
-
-```
-(작업브랜치) 📝 docs: 2026-04-17 세션 작업 로그 추가                 ← docs/architecture-v3-v4
-(작업브랜치) 📐 docs: v3/v4 설계 문서 및 조직도 반영                 ← docs/architecture-v3-v4
-b9c178c  Merge pull request #2 from SongJongwon/phase2/qa-agent       ← Phase 2-P2 main merge
-c30f794  🧪 Phase 2 우선순위 2: QA 에이전트(Code Reviewer) 추가
-c2c2a85  Merge pull request #1 from SongJongwon/phase2/pytest-harness ← Phase 2-P1 main merge
-29e1ce1  🧪 Phase 2 우선순위 1: pytest 하네스 정식화
-354ccfb  📌 다음 세션 컨텍스트 파일 추가
-160947c  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우 성공
-70af92b  🎉 Phase 1 MVP 완료: 3명 에이전트 협업 워크플로우
-52d8e3c  🧹 .claude 로컬 설정 파일 정리
-079451d  ✨ LangFuse 모니터링 통합 완료
-a6f0911  🎉 Phase 0 완료: Nexus Alpha 기반 구축
-```
-
-### Phase 2 우선순위 2 — QA 에이전트(Code Reviewer) + 4-agent 워크플로우 (2026-04-17)
-- **신규 에이전트**: `src/agents/qa/code_reviewer.py` → `create_code_reviewer_agent()`. `CODE_REVIEWER_*` 4 상수 + 팩토리 시그니처는 기존 3개 에이전트와 동일.
-- **백스토리 5대 점검 항목**: 타입 힌트 / docstring / pytest 실행 가능성 / 경계 예외 처리 / 모듈 분리. *읽기만 한다, 실행하지 않는다* 원칙 — 실행은 후속 Sandbox Runner(2-P4) 책임.
-- **출력 규약**: 5단 한국어 마크다운 + 마지막 줄 `Final Answer:` 종합 판정(APPROVED/NEEDS_REVISION).
-- **smoke test**: `src/tests/test_code_reviewer_agent.py` — 의도적 결함 4종(타입힌트/docstring/pytest/광범위 except) sample 포함. FakeProvider 패턴 그대로 적용.
-- **워크플로우 확장**: `src/workflows/analyze_and_implement.py`
-  - `WorkflowResult.qa_review: str` 필드 추가
-  - `qa_review_task` Task 추가 — `context=[engineer_task]` (Engineer 산출만 컨텍스트로, 비용·관심사 분리)
-  - `Crew(agents=[..., reviewer], tasks=[..., qa_review_task])` 4-agent 등록
-  - `outputs/workflow_<ts>/04_qa_review.md` 자동 저장
-- **워크플로우 E2E 테스트 갱신**: pytest 함수명 `_three_stage_` → `_four_stage_artifacts`, `04_qa_review.md` 검증 + `result.qa_review` marker 검증, 직접 실행 경로에 ④ Code Reviewer preview 패널 추가.
-- **회귀 검증**: `.venv/Scripts/pytest.exe` → **7 passed in ~11s** (Phase 2-P1 6건 + Code Reviewer 1건, 네트워크 호출 0건).
-- **Code Reviewer 명명 결정**: `next_session_context.md`의 잠정 명명 `create_qa_reviewer_agent()` 대신 어근 일관성을 우선해 `create_code_reviewer_agent()` 채택. 기존 3개 에이전트와 동일한 *역할-기반 이름* 패턴 유지.
-- **보고서**: `docs/progress/phase2_priority2_complete.md`
-
-### v3 / v4 설계 문서 확정 (2026-04-17)
-- `docs/architecture/` 폴더 신설 — 모든 아키텍처 설계서의 단일 출처.
-- **`nexus_alpha_v3.md`** — 자기 진화 엔진 (Phase 2.5):
-  - 신규 에이전트 4종 — Requirement Expander / Gap Analyst / Convergence Judge / Iteration Controller
-  - LangGraph StateGraph로 루프 제어 (entry → expand → chain → gap → judge → {finalize|feedback→chain|escalate})
-  - 종료 조건 3종: COMPLETE / IMPROVE_NEEDED / BLOCKED (stagnation·budget·iteration cap)
-  - 안전장치: max_iterations=5, budget gate, stagnation detection (2회 연속 0개 해소 시 BLOCKED)
-- **`nexus_alpha_v4.md`** — 완전 자율 빌드 (Phase 4 / 4.5 / 5):
-  - 비전: "계산기 만들어줘" → 다운로드 가능한 setup.exe
-  - 신규 에이전트 13종 (Phase 4: 4명 / Phase 4.5: 5명 / Phase 5: 4명)
-  - 빌드 도구 우선순위: PyInstaller → Nuitka → cx_Freeze
-  - 배포 채널 우선순위: GitHub Releases → 사내 서버 → S3 presigned → 로컬
-- **`nexus_alpha_org_v4.md`** — 확정 조직도:
-  - C-Level 3 + 8 본부 = 9개 조직 단위, **총 46명**
-  - 본부 8개: 업무 분석(5) / 기획·설계(4) / 개발(9) / 품질 검증(6) / 지식 관리(3) / 운영 지원(4) / 🆕 디자인(3) / 🆕 빌드 & 배포(9)
-  - 신설 디렉터리: `src/agents/design/` (Phase 4), `src/agents/build_release/` (Phase 4.5)
-  - **UI/UX Analyst는 디자인 본부가 아닌 기획·설계 본부 소속** (관심사 분리: 분석 vs 시각 디자인 생산)
-
-### Phase 2 우선순위 1 — pytest 하네스 정식화 (2026-04-17)
-- `pyproject.toml` 신규 — `[tool.pytest.ini_options]`, `[tool.ruff]` (line-length 100, py313)
-- `requirements.txt` — pytest/pytest-mock/pytest-socket 추가, **crewai/crewai-tools `==1.14.1` 버전 고정** (ReAct 파서 포맷이 FakeProvider에 결합)
-- `src/tests/conftest.py` 신규:
-  - `FakeProvider`(BaseLLMProvider 상속) + `fake_provider` / `fake_provider_factory` fixture
-  - autouse `_patch_llm_factory` — `src.llm.factory.get_llm_provider` **와** `src.llm.crewai_adapter.get_llm_provider` 두 네임스페이스를 동시 monkeypatch
-  - autouse `_silence_langfuse` — LangFuseClient 로깅 메서드 전부 no-op
-  - (제외) `pytest-socket` autouse — Windows ProactorEventLoop의 내부 socketpair까지 막아 부작용. Linux CI에서만 opt-in 예정
-- 5개 smoke test에 pytest 진입점 추가 (기존 `if __name__ == "__main__"` 경로는 **수정 없이 보존**)
-- FakeProvider 기본 응답: `Thought: ...\nFinal Answer: 이것은 FakeProvider가 반환한 고정 응답입니다.` — CrewAI 1.14.1 `crewai/agents/parser.py`의 `FINAL_ANSWER_ACTION = "Final Answer:"` 와 1:1 정합
-- 실행 결과: **6 passed in 7.72s** (네트워크 호출 0건)
-- 보고서: `docs/progress/phase2_priority1_complete.md`
-
-### Phase 0 (기반)
-- Python 3.13 가상환경 (`.venv/`) 구축 — 이전 3.14 venv는 crewai 비호환으로 폐기·재생성
-- `requirements.txt` 작성 및 한국어 주석 포함 설치
-- 에이전트 디렉터리 구조 완성 (`src/agents/{c_level,analysis,planning,engineering,qa,knowledge,operations}` + workflows/ + config/ + tests/ + outputs/ + logs/)
-- `.gitignore` 최종 형태 (`.env`, `.venv/`, `outputs/`, `logs/`, `.claude/` 등)
-- 루트 `README.md` (기술 스택·설치·구조·진행 현황)
-- Hello Agent smoke test (Provider만 사용하는 초간단 버전)
-
-### Phase 0 보강 — LLM Provider 시스템
-- `src/llm/base_provider.py` — `BaseLLMProvider` 추상 클래스. **Template Method** 패턴으로 `generate()`가 `_generate_impl()`을 래핑하고 LangFuse 자동 기록.
-- `src/llm/agent_sdk_provider.py` — `claude-agent-sdk`의 `query()` 사용 (Claude Code MAX 경로).
-- `src/llm/api_key_provider.py` — `langchain-anthropic` 사용 (API Key 경로).
-- `src/llm/factory.py` — `.env`의 `LLM_PROVIDER` 값으로 분기.
-- `src/monitoring/langfuse_client.py` — LangFuse v4 OTel API 기반 싱글톤. 키 누락 시 조용히 no-op.
-
-### Phase 1 — CrewAI 통합 & 3명 에이전트
-- `src/llm/crewai_adapter.py` — `NexusAlphaLLM(BaseLLM)` 어댑터. Pydantic 필드 충돌 때문에 외부 접근은 `backend_provider` 프로퍼티 사용.
-- 에이전트 팩토리 3개:
-  - `src/agents/c_level/cto.py` → `create_cto_agent()`
-  - `src/agents/analysis/data_analyst.py` → `create_data_analyst_agent()`
-  - `src/agents/engineering/python_engineer.py` → `create_python_engineer_agent()`
-- 워크플로우: `src/workflows/analyze_and_implement.py` → `run_analyze_and_implement(user_request)` / `WorkflowResult` 데이터클래스.
-- smoke test 5종:
-  - `src/tests/test_crewai_adapter.py`
-  - `src/tests/test_cto_agent.py`
-  - `src/tests/test_data_analyst_agent.py`
-  - `src/tests/test_python_engineer_agent.py`
-  - `src/tests/test_workflow_analyze_and_implement.py` ← E2E
-- 완료 보고서: `docs/progress/phase1_complete.md`
+**한 문장 요약**: Track A는 풀체인 안정 + active QA 4/4 자연 도달 + Update Checker 풀체인 통합 모두 달성, Track B는 5명 등록 + 워크플로 통합 + 2 도메인 sample 검증 (이슈 4/6 회귀 발견 — PR #77 후속 fix 예정).
 
 ---
 
-## 3. 현재 파일 구조
+## 2. 누적 머지 PR 추적 (Phase 0 ~ PR #76)
+
+### Phase 별 PR 카테고리
+
+| Phase / 주제 | PR 범위 | 핵심 산출 |
+|---|---|---|
+| Phase 0~5 | PR #1~#21 | 23명 구현 + Track A 도달 (사양 산출만) |
+| 이슈 4/5/6 close | PR #25~#34 | 본문 캡처율 38% → 94% |
+| **외부 도구 통합** | **PR #36, #38, #39** | PyInstaller (M4.5) + gh CLI (M5 smoke) |
+| Phase 7 본부 4 (10명+1) | PR #41~#48 | Code QA / Functional / GUI / Robustness / Phase 7 3명 + qa_feedback_loop |
+| 10차 E2E 시리즈 (12회) | PR #49~#62 | DoD 7/7 ALL PASSED + 카테고리 휴리스틱 + capture-before-rescue + active 2/4 도달 |
+| **방어선 4 (Pytest fence)** | **PR #63~#65** | 9차 회귀 차단 → active 1/4 → 2/4 회복 |
+| **Update Checker 풀체인 통합** | **PR #66~#67** | 풀체인 외부 첫 통합 (`code/updater.py` 자동) ⭐ |
+| **Phase 6 Track B 5명** | **PR #68~#69** | 본부 3 1/9 → 6/9 (67%) ⭐ |
+| **옵션 6.B (Track B 워크플로 통합)** | **PR #70~#72** | `automate_workflow.py` 신설 |
+| **`--force-cli` (active 4/4)** | **PR #73~#74** | active QA 4/4 자연 도달 ⭐⭐⭐ |
+| **Track B 검증 도구** | **PR #75~#76** | `--enable-automate-branch` + sample 검증 (이슈 4/6 회귀 발견) ⚠️ |
+
+### 핵심 마일스톤 PR (요약)
+
+| 마일스톤 | 달성 PR | 의미 |
+|---|---|---|
+| M4.5 (첫 .exe) | PR #36 | Calculator.exe 10.7MB 자동 생성 |
+| M4.7 (자연어 → .exe 풀체인) | PR #38 | 8차 E2E 자동 흐름 |
+| M5 (다운로드 URL) | PR #39+#41 | gh release create + Draft Release |
+| M5 + QA 풀체인 | PR #51 | DoD 7/7 ALL PASSED |
+| **방어선 4 입증** | **PR #64** | deterministic to_markdown 보강 |
+| **풀체인 외부 통합** | **PR #66** ⭐ | Update Checker 실 산출 + 보안 5원칙 100% |
+| **본부 3 67%** | **PR #68** ⭐ | Track B 5명 동시 추가 |
+| **active QA 4/4** | **PR #73** ⭐⭐⭐ | --force-cli → CLI 분기 강제 |
+
+---
+
+## 3. 현재 파일 구조 (PR #76 시점)
 
 ```
 nexus-alpha/
 ├── README.md
-├── requirements.txt          # pytest-* / crewai==1.14.1 (고정)
-├── pyproject.toml            # pytest + ruff 설정 (Phase 2-P1)
-├── .env                      # Git 제외 — LLM_PROVIDER, LANGFUSE_* 등
+├── requirements.txt          # crewai==1.14.1 (고정)
+├── pyproject.toml            # pytest + ruff
+├── .env                      # Git 제외 (LLM_PROVIDER, LANGFUSE_*)
 ├── .gitignore
 ├── docs/
-│   ├── architecture/                  # 설계 문서 (단일 출처) — 본 세션 신설
-│   │   ├── nexus_alpha_v3.md          #   자율 반복 루프 (Phase 2.5)
-│   │   ├── nexus_alpha_v4.md          #   완전 자율 빌드 (Phase 4/4.5/5)
-│   │   └── nexus_alpha_org_v4.md      #   확정 조직도 (46명, 8 본부)
+│   ├── architecture/
+│   │   ├── nexus_alpha_v3.md          # 자율 반복 루프 (Phase 2.5)
+│   │   ├── nexus_alpha_v4.md          # 완전 자율 빌드 (Phase 4/4.5/5)
+│   │   ├── nexus_alpha_v5_built.md
+│   │   ├── nexus_alpha_v6_built.md    # 통합 설계 v6
+│   │   ├── nexus_alpha_org_v4.md
+│   │   ├── Nexus_Alpha_조직도_v6.md
+│   │   ├── Nexus_Alpha_조직도_v7.md
+│   │   ├── Nexus_Alpha_조직도_v8.md   ⭐ (본 세션 5/7 신규)
+│   │   ├── Nexus_Alpha_구성안_v5.md
+│   │   └── Nexus_Alpha_구성안_v6.md   ⭐ (본 세션 5/7 신규)
 │   ├── context/
-│   │   └── next_session_context.md   # ← 본 문서
-│   └── progress/
-│       ├── phase1_complete.md
-│       ├── phase2_priority1_complete.md
-│       └── phase2_priority2_complete.md   # Phase 2-P2 — 본 세션
+│   │   └── next_session_context.md   # ← 본 문서 (5/7 전면 재작성)
+│   ├── progress/
+│   │   ├── phase{1,2_priority1,2_priority2}_complete.md
+│   │   ├── e2e_*_verification.md (12회 누적)
+│   │   ├── session_log_2026{04*,0506,0507}.md
+│   │   └── ...
+│   └── WORK_STATUS.md       # 살아있는 대시보드
 └── src/
-    ├── __init__.py
-    ├── README.md
     ├── agents/
-    │   ├── __init__.py
-    │   ├── README.md
-    │   ├── c_level/
-    │   │   ├── __init__.py
-    │   │   ├── cto.py                  # create_cto_agent
-    │   │   └── README.md
-    │   ├── analysis/
-    │   │   ├── __init__.py
-    │   │   ├── data_analyst.py         # create_data_analyst_agent
-    │   │   └── README.md
-    │   ├── engineering/
-    │   │   ├── __init__.py
-    │   │   ├── python_engineer.py      # create_python_engineer_agent
-    │   │   └── README.md
-    │   ├── qa/                          # Phase 2-P2 — 본 세션
-    │   │   ├── __init__.py              # exports: create_code_reviewer_agent
-    │   │   ├── code_reviewer.py         # create_code_reviewer_agent
-    │   │   └── README.md
-    │   ├── planning/        (__init__.py + README만 — Phase 2 이후 채움)
-    │   ├── knowledge/       (    〃    )
-    │   └── operations/      (    〃    )
-    ├── llm/
-    │   ├── __init__.py                 # exports: BaseLLMProvider, NexusAlphaLLM, get_llm_provider
-    │   ├── base_provider.py            # Template Method + 자동 LangFuse 기록
-    │   ├── agent_sdk_provider.py       # claude-agent-sdk (MAX)
-    │   ├── api_key_provider.py         # langchain-anthropic (API Key)
-    │   ├── factory.py                  # LLM_PROVIDER 분기
-    │   ├── crewai_adapter.py           # NexusAlphaLLM (BaseLLM 상속)
-    │   └── README.md
-    ├── monitoring/
-    │   ├── __init__.py                 # exports: LangFuseClient, get_langfuse_client
-    │   ├── langfuse_client.py          # OTel 싱글톤
-    │   └── README.md
-    ├── config/              (__init__.py + README만)
-    ├── tests/
-    │   ├── __init__.py
-    │   ├── conftest.py                 # Phase 2-P1 — FakeProvider + autouse fixtures
-    │   ├── hello_agent.py              # Provider + LangFuse smoke (CrewAI 미사용)
-    │   ├── hello_agent_old.py.bak      # 초기(CrewAI LLM 버전) 백업
-    │   ├── test_crewai_adapter.py      # NexusAlphaLLM 직접 호출 + pytest 2건
-    │   ├── test_cto_agent.py           # + pytest 1건 (FakeProvider)
-    │   ├── test_data_analyst_agent.py  # + pytest 1건
-    │   ├── test_python_engineer_agent.py # + pytest 1건
-    │   ├── test_code_reviewer_agent.py # Phase 2-P2 — pytest 1건 (본 세션)
-    │   ├── test_workflow_analyze_and_implement.py   # E2E 4-agent + pytest 1건 (tmp_path)
-    │   └── README.md
-    └── workflows/
-        ├── __init__.py                 # exports: run_analyze_and_implement, WorkflowResult
-        ├── analyze_and_implement.py    # CTO → Analyst → Engineer → Code Reviewer (4-agent)
-        └── README.md
+    │   ├── c_level/cto.py
+    │   ├── analysis/data_analyst.py
+    │   ├── planning/ui_ux_analyst.py + requirement_expander.py
+    │   ├── engineering/                          ⭐ 본부 3 — 6/9 (67%)
+    │   │   ├── python_engineer.py                (기존)
+    │   │   ├── gap_analyst.py                    (기존)
+    │   │   ├── web_scraping_specialist.py        ⭐ PR #68
+    │   │   ├── desktop_automation_specialist.py  ⭐ PR #68
+    │   │   ├── api_integration_developer.py      ⭐ PR #68
+    │   │   ├── data_parser_engineer.py           ⭐ PR #68
+    │   │   └── devops_engineer.py                ⭐ PR #68
+    │   ├── design/  (3명, 100%)
+    │   │   ├── gui_designer.py / theme_designer.py / gui_code_generator.py
+    │   ├── build_release/  (9명, 100%)
+    │   │   ├── build_engineer.py + build_executor.py (PR #36)
+    │   │   ├── distribution_agent.py + distribution_executor.py (PR #39)
+    │   │   ├── update_checker.py (PR #66 backstory 강화)
+    │   │   └── ... (dependency_analyzer / asset_manager / installer_creator /
+    │   │           platform_tester / release_manager / changelog_generator)
+    │   ├── qa/  (9명+1, 100%)
+    │   │   ├── code_reviewer.py + code_qa_agent.py + functional_test_agent.py
+    │   │   ├── gui_test_agent.py + robustness_tester.py + pytest_author.py (PR #58~#64)
+    │   │   ├── security_auditor.py + performance_engineer.py + compliance_officer.py
+    │   │   └── *_executor.py (도구 4종)
+    │   ├── knowledge/ (curator + rag_searcher)
+    │   └── operations/ (sandbox_runner)
+    ├── workflows/
+    │   ├── analyze_and_implement.py    # Track A 메인 워크플로 (15 LLM, GUI/CLI/classic 분기)
+    │   ├── automate_workflow.py        ⭐ PR #70 — Track B 단일 에이전트 (5 도메인)
+    │   ├── build_workflow.py           # Phase 4.5
+    │   ├── release_workflow.py         # Phase 5
+    │   ├── qa_feedback_loop.py         # PR #48 (4종 합산 + 재시도 결정)
+    │   ├── _schemas.py                 # output_pydantic schemas + _ensure_python_fence (PR #64) + _ensure_file_header (PR #66)
+    │   ├── _common.py                  # rescue + retry 헬퍼
+    │   └── router.py                   # 의도 라우팅 (Implementation/Analysis/Search)
+    ├── llm/                            # Provider 추상화 + NexusAlphaLLM 어댑터
+    ├── monitoring/                     # LangFuse OTel 통합
+    └── tests/                          # 572 passed
+        ├── test_workflow_analyze_and_implement.py + test_workflow_release.py
+        ├── test_phase6_track_b_agents.py   ⭐ PR #68 (20 tests)
+        ├── test_automate_workflow.py        ⭐ PR #70 (19 tests)
+        ├── test_e2e_10th_script.py          # 31 tests (PR #49~#75 누적)
+        └── ... (총 ~30+ 테스트 파일)
 ```
 
-**Git 추적 제외** (`.gitignore`): `.env`, `.venv/`, `venv/`, `__pycache__/`, `*.pyc`, `*.pyo`, `*.pyd`, `outputs/`, `logs/`, `*.log`, `.vscode/`, `.idea/`, `.claude/`, `Thumbs.db`, `desktop.ini`, `*.tmp`, `*.temp`.
+---
+
+## 4. 핵심 설계 결정 (Phase 0~PR #76 누적)
+
+### 4-1. 방어선 1~4 정리 (이슈 6 LLM 비결정성 흡수)
+
+| 방어선 | PR | 메커니즘 | 효과 |
+|---|---|---|---|
+| 1 | #29 | auto-retry (`retry_short_tasks_in_chain`) | 미미 |
+| 2 | #31~33, #59 | `output_pydantic` schema 강제 | schema 필드 보장 ✅ |
+| 3 | #53, #55 | capture-before-rescue (Task._export_output 패치) | schema 실패 시 raw 보존 ✅ |
+| **4 (Pytest fence)** | **#64** | **`PytestSuiteOutput.to_markdown()` 자동 fence 감싸기** | schema 통과 후 fence 보장 |
+| **4 (Updater 통합)** | **#66** | **`UpdateModuleSpecOutput.to_markdown()` fence + 헤더 자동 + workflow auto-inject** | 외부 통합까지 deterministic ⭐ |
+
+**핵심 학습**: 방어선 4 가 *재사용 가능한 패턴* 으로 입증 (PR #64 → PR #66 같은 헬퍼 재사용).
+
+### 4-2. Track A / Track B 분리 (PR #70)
+
+```python
+# Track A — Calculator.exe 풀체인
+from src.workflows import run_analyze_and_implement
+result = run_analyze_and_implement(
+    "계산기 만들어줘",
+    enable_gui_branch=True,
+    enable_build_branch=True,
+    enable_release_branch=True,
+)
+
+# Track B — 도메인별 단일 에이전트
+from src.workflows import run_automate_workflow, AutomationDomain
+result = run_automate_workflow(
+    "네이버 쇼핑 가격 크롤링",
+    forced_domain=None,  # 자동 분류 (web_scraping)
+)
+```
+
+`analyze_and_implement.py` 라우팅: `enable_automate_branch=True` 시 Track B 호출, UNKNOWN 도메인 시 Track A fallback.
+
+### 4-3. E2E 스크립트 풀체인 도구 (3종)
+
+| 플래그 | PR | 효과 |
+|---|---|---|
+| `--request "..."` | #71 | 임의 시나리오 (default "계산기 만들어줘") |
+| `--force-cli` | #73 | `enable_gui_branch=False` → active QA 4/4 도달 |
+| `--enable-automate-branch` | #75 | Track B 라우팅 활성 (5 도메인) |
+| `--max-retries N` | #71 | qa_feedback_loop 자동 보정 횟수 |
+
+### 4-4. detect_artifact_category 휴리스틱 (PR #51)
+
+산출물 분류 → QA 도구 SKIPPED 처리:
+- GUI 키워드 (tkinter / PyQt / PySide / wx / kivy) → `"gui"` → functional/robustness SKIPPED
+- CLI 키워드 (argparse / sys.argv / click.command / typer.) → `"cli"` → 모두 active
+- 둘 다 없음 → `"library"` → 모두 active (12차 E2E 결과)
+- 둘 다 없고 .exe만 → `"gui"` (보수적)
+- 모두 부재 → `"unknown"`
+
+### 4-5. detect_automation_domain 휴리스틱 (PR #70 — Track B)
+
+5 도메인 키워드 분류 (router.py 와 같은 패턴):
+- `web_scraping`: 크롤링 / 스크래핑 / playwright / selenium / url
+- `desktop_automation`: 자동화 / rpa / pyautogui / pywinauto / 키 입력 / 마우스
+- `api_integration`: api / webhook / graphql / oauth / fastapi / stripe / slack
+- `data_parser`: 엑셀 / pdf / csv / json / openpyxl / pandas / pdfplumber
+- `devops`: 도커 / dockerfile / github actions / kubernetes / ci/cd
+
+동률 / 매칭 0건 → UNKNOWN (Track A fallback).
+
+### 4-6. 기존 설계 결정 (v5 부터 유지)
+
+- **LLM Provider 추상화** — `BaseLLMProvider` + Template Method (자동 LangFuse 로깅)
+- **CrewAI 어댑터 얇게** — `NexusAlphaLLM(BaseLLM)` 메시지 변환 + async→sync 브리지
+- **`backend_provider` 프로퍼티** — Pydantic 필드 충돌 회피
+- **Windows UTF-8 안전성** — sys.stdout/stderr reconfigure
+- **sys.path 주입** — 절대 경로 import 지원
+- **pytest FakeProvider** — autouse fixture로 두 네임스페이스 monkeypatch
+- **단일 LangFuse trace 원칙** — 워크플로 단일 trace + 자식 generation
+- **CrewAI 1.14.1 핀 고정** — FINAL_ANSWER_ACTION 결합
 
 ---
 
-## 4. 핵심 설계 결정 사항
-
-### 4-1. LLM 접근은 항상 Provider 추상화를 통한다
-- 에이전트/워크플로우가 직접 Anthropic SDK를 호출하는 코드를 **금지**.
-- 어떤 백엔드든 `BaseLLMProvider` 인터페이스 뒤로 숨긴다.
-- 전환 스위치는 `.env`의 `LLM_PROVIDER` (값: `agent_sdk` | `api_key`).
-
-### 4-2. Template Method 훅으로 자동 로깅
-- `BaseLLMProvider.generate()`가 공개 API. 하위 클래스는 `_generate_impl()`만 구현.
-- `generate()` 종료 시 반드시 `LangFuseClient.log_generation()` 호출.
-- 로깅 실패는 메인 경로를 절대 차단하지 않음 (try/finally + 내부 except).
-
-### 4-3. CrewAI 어댑터는 얇게, stateless에 가깝게
-- `NexusAlphaLLM`은 (a) 메시지 포맷 변환, (b) async→sync 브리지, 두 가지 역할만.
-- 실제 호출·로깅은 `BaseLLMProvider` 일임.
-- **새 Provider 추가 시 어댑터와 에이전트 코드는 수정 불필요.**
-
-### 4-4. Pydantic 필드 이름 충돌 회피
-- CrewAI `BaseLLM`이 이미 `provider: str = "openai"` 필드를 가지고 있음.
-- 내부에서 쓰는 Provider 참조는 **`backend_provider` 프로퍼티**로 노출.
-- `self._provider` (PrivateAttr)에 저장, `@property`로 읽기 전용 공개.
-
-### 4-5. async → sync 브리지는 loop 감지 + ThreadPoolExecutor fallback
-- `NexusAlphaLLM.call()`에서 `asyncio.get_running_loop()`로 상태 감지.
-- 루프가 없으면 `anyio.run()`, 있으면 새 스레드 + 새 loop.
-- 중첩 이벤트 루프 문제(“cannot be called from a running event loop”) 방지.
-
-### 4-6. 단일 LangFuse trace 원칙
-- 워크플로우 진입 시 `monitor.log_trace(name=...)` 호출 → `_current_trace`에 저장.
-- 이후 Provider.generate()가 자동으로 이 trace의 자식으로 generation을 붙임.
-- `finally`에서 `end_trace() + flush()` 보장.
-- 결과: Phase 1 `analyze_and_implement` trace 하나 아래에 CTO/Analyst/Engineer 3 generation 기록.
-
-### 4-7. Windows 한글/유니코드 안전성
-- 모든 실행 스크립트 최상단에서 sys.stdout/stderr를 UTF-8로 재설정:
-  ```python
-  if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
-      sys.stdout.reconfigure(encoding="utf-8")
-      sys.stderr.reconfigure(encoding="utf-8")
-  ```
-- cp949(Windows 기본) 환경에서도 한글·이모지·em-dash 모두 안전.
-
-### 4-8. sys.path 주입으로 절대 경로 import 지원
-- `src.llm`, `src.agents.*` 같은 절대 경로 import는 CWD가 프로젝트 루트여야 동작.
-- 모든 테스트 스크립트 상단에 `PROJECT_ROOT = Path(__file__).resolve().parents[2]` + `sys.path.insert(0, str(PROJECT_ROOT))`.
-
-### 4-9. pytest 하네스는 FakeProvider로 CrewAI 경로 완주 (Phase 2-P1)
-- `conftest.py`의 autouse fixture가 `get_llm_provider`를 **두 네임스페이스**(`src.llm.factory` + `src.llm.crewai_adapter`)에서 동시 monkeypatch.
-- FakeProvider 기본 응답은 `"Thought: ...\nFinal Answer: ..."` — CrewAI 1.14.1 `crewai/agents/parser.py`의 `FINAL_ANSWER_ACTION = "Final Answer:"` 계약에 정합해 단일 호출로 AgentFinish 수렴.
-- 에이전트/워크플로우 코드는 pytest를 위해 **절대 수정하지 않음** (최소 침습). 기존 `if __name__ == "__main__"` 경로는 그대로 실제 LLM을 호출.
-- Windows에서는 pytest-socket autouse를 쓰지 않음 — ProactorEventLoop의 내부 socketpair까지 차단하는 부작용. Linux CI에서 `pytest --disable-socket` opt-in 예정.
-
-### 4-10. 코드 생성 결과 저장 규약
-- 에이전트의 Python 코드 응답은 마크다운 내부 `python ... ` 블록 형태.
-- 자동 추출을 위해 엔지니어 에이전트에게 **첫 줄에 `# file: <상대경로>` 헤더를 넣도록** 백스토리에서 강제.
-- 워크플로우 저장 디렉터리 구조 (Phase 2-P2 4-agent 기준):
-  ```
-  outputs/workflow_<ts>/
-    00_user_request.txt
-    01_cto_strategy.md
-    02_analyst_brief.md
-    03_engineer_output.md
-    04_qa_review.md           ← Code Reviewer 정적 리뷰 (Phase 2-P2)
-    code/   ← 추출된 .py (이름은 `# file:` 헤더를 기준)
-  ```
-
----
-
-## 5. 환경 설정 정보
+## 5. 환경 설정 (Phase 0 부터 유지)
 
 ### 5-1. Python & 가상환경
-- **Python 3.13.13** (winget 설치 `Python.Python.3.13`)
-- **가상환경 경로**: `C:\projects\nexus-alpha\.venv`
-- **실행 파일**: `C:\projects\nexus-alpha\.venv\Scripts\python.exe`, `pip.exe`
-- bash 활성화: `source .venv/Scripts/activate`
-- PowerShell 활성화: `.venv\Scripts\Activate.ps1`
+- **Python 3.13.13** (winget `Python.Python.3.13`)
+- **가상환경**: `C:\projects\nexus-alpha\.venv`
+- **bash 활성화**: `source .venv/Scripts/activate`
 
-### 5-2. 설치된 주요 라이브러리 (Phase 1 검증 시점)
+### 5-2. 주요 라이브러리 (PR #76 시점)
 
 | 라이브러리 | 버전 |
 |---|---|
-| crewai | 1.14.1 |
-| crewai-tools | 1.14.1 |
+| crewai / crewai-tools | 1.14.1 (고정) |
 | langgraph | 1.1.6 |
-| langchain | 1.2.15 |
-| langchain-anthropic | 1.4.0 |
+| langchain / langchain-anthropic | 1.2.x / 1.4.x |
 | claude-agent-sdk | 0.1.61 |
 | anyio | 4.13.0 |
 | langfuse | 4.3.1 |
-| pandas | 3.0.2 |
-| openpyxl | 3.1.5 |
+| pandas / openpyxl | 3.0.x / 3.1.x |
 | pydantic | 2.11.10 |
-| python-dotenv | 1.1.1 |
-| PyYAML | 6.0.3 |
-| rich | 14.3.4 |
+| pytest / pytest-mock / pytest-socket | 9.0.3 / 3.15.1 / 0.7.0 |
 
-재설치: `.venv/Scripts/pip.exe install -r requirements.txt`
+### 5-3. `.env` 구성
 
-### 5-3. `.env` 구성 (실제 값은 로컬 `.env`에만 — Git 제외)
 ```env
-# LLM Provider 선택
-LLM_PROVIDER=agent_sdk              # 또는 api_key
-USE_API_KEY=false                   # 레거시 플래그 (hello_agent_old.py.bak 호환용)
+LLM_PROVIDER=agent_sdk
+USE_API_KEY=false
 
-# API Key (LLM_PROVIDER=api_key 일 때만)
+# (LLM_PROVIDER=api_key 일 때만)
 # ANTHROPIC_API_KEY=sk-ant-...
 
-# LangFuse 모니터링
 LANGFUSE_PUBLIC_KEY="pk-lf-09fedad5-dcbf-4b8e-8f5d-f741922da92b"
-LANGFUSE_SECRET_KEY="sk-lf-...(로컬 .env 참조)..."
+LANGFUSE_SECRET_KEY="sk-lf-...(로컬 .env)..."
 LANGFUSE_HOST="https://cloud.langfuse.com"
 ```
 
-> **LangFuse 계정**: Cloud 인스턴스 (`cloud.langfuse.com`). Organization/Project 이름은
-> 로그인 후 대시보드 좌상단에서 확인하세요. 공개키 접두사 `pk-lf-09fedad5…` 로
-> 프로젝트를 식별 가능합니다.
-
 ### 5-4. GitHub
-- **저장소 URL**: https://github.com/SongJongwon/nexus-alpha
+- **저장소**: https://github.com/SongJongwon/nexus-alpha
 - **기본 브랜치**: `main`
-- **원격명**: `origin`
-- **인증**: Git Credential Manager 기반 (push 시 별도 프롬프트 없이 동작함)
-- **Git 전역 설정**:
+- **인증**: `gh` CLI 2.91.0+ (`gh auth login --web` 권장)
+- **Git 전역**:
   - `user.name` = `머지봇_송종원`
   - `user.email` = `jwsong@ymx.co.kr`
-  - (변경하려면 `git config --local user.name "SongJongwon"` 등으로 이 저장소에만 override)
 
 ---
 
-## 6. 로드맵 (v4까지의 풀 스코프)
+## 6. 다음 세션 1순위 — PR #77: Track B 방어선 2 적용
 
-> 근거: `docs/progress/phase{1,2_priority1,2_priority2}_complete.md` + `docs/architecture/nexus_alpha_v3.md`, `nexus_alpha_v4.md`, `nexus_alpha_org_v4.md`.
+### 배경
 
-| Phase | 항목 | 상태 |
-|---|---|---|
-| 0 | 기반 구축 (venv, Provider, LangFuse) | ✅ 완료 |
-| 1 | MVP 3명 에이전트 협업 (CTO/Analyst/Engineer) | ✅ 완료 |
-| 2-P1 | pytest 하네스 정식화 | ✅ **완료 + main merge** |
-| **2-P2** | **QA 에이전트 (Code Reviewer) + 4-agent 워크플로우** | ✅ **완료 + main merge (2026-04-17)** |
-| 2-P1B | Linux GitHub Actions CI (`--disable-socket` opt-in) | 🟡 **다음 후보 ①** |
-| 2-P3 | Knowledge 에이전트 (Curator + RAG Searcher) | 🟡 **다음 후보 ②** |
-| 2-P4 | Operations 에이전트 (Sandbox Runner) — Code Reviewer의 "동적 검증" 짝 | 🟡 대기 |
-| 2-P5 | 요청 라우팅 + 하이브리드 UI | 🟡 대기 |
-| **2.5 (v3)** | **자기 진화 엔진** — Requirement Expander / Gap Analyst / Convergence Judge / Iteration Controller | 📐 설계 확정 |
-| 3 | 실행 엔진 통합 (Sandbox 빌드·실행) | 🟡 대기 |
-| **4 (v4)** | **GUI 자동 생성** — UI/UX Analyst + 디자인 본부 3명 | 📐 설계 확정 |
-| **4.5 (v4)** | **빌드 & 패키징** — Build/Dependency/Asset/Installer/Platform Tester (5명) | 📐 설계 확정 |
-| **5 (v4)** | **배포 자동화** — Release/Changelog/Update/Distribution (4명) | 📐 설계 확정 |
+PR #75 + 2 도메인 sample 검증에서 발견:
+- Web Scraping: 41 bytes (Final Answer 1줄만)
+- API Integration: 57 bytes (Final Answer 1줄만)
+- 두 도메인 모두 backstory 의 5단 본문 누락 → `code/` 빈 디렉터리
 
-**권장 진입 순서**: ~~`2-P1`~~ → ~~`2-P2`~~ → **`2-P1B`** (작고 즉시 효과 큼) → **`2-P3` (Knowledge)** → `2-P4` → `2-P5` → `2.5 (v3 루프)` → `3` → `4` → `4.5` → `5`.
+**원인**: Track A 의 방어선 2 (`output_pydantic` schema 강제) 가 Track B 에 미적용.
 
-### 다음 작업을 시작할 때 제일 먼저 할 일
+### 처방 (Track A PR #59 패턴 재사용)
 
-#### 후보 ① — Phase 2-P1B (Linux GitHub Actions CI)
-1. 새 브랜치 생성: `git checkout -b phase2/linux-ci`
-2. `.github/workflows/pytest.yml` — Python 3.13 + pip cache + `pytest --disable-socket` 실행. socket 차단으로 회귀 안전망 확보.
-3. (선택) `pytest -m integration` 분리 러너 — 실제 LLM 검증용 (LangFuse·API 키 secrets 필요).
-4. README badge 추가, PR 템플릿에 CI 통과 항목 명시.
+#### Step 1 — `_schemas.py` 에 5 schema 추가
 
-#### 후보 ② — Phase 2-P3 (Knowledge 에이전트)
-1. 새 브랜치 생성: `git checkout -b phase2/knowledge-agent`
-2. `src/agents/knowledge/knowledge_curator.py` — 과거 `outputs/workflow_*` 폴더 스캔, summary·tag 생성.
-3. `src/agents/knowledge/rag_searcher.py` — 사용자 새 요청과 과거 워크플로우 사이 유사도 검색(임베딩 또는 키워드 기반 1차).
-4. Code Reviewer와 동일 패턴: factory 함수 + smoke test + pytest 함수.
-5. (선택) `analyze_and_implement` 진입 시 RAG Searcher가 유사 사례를 CTO 컨텍스트에 주입하는 5-agent 확장 검토.
+```python
+class WebScrapingOutput(BaseModel):
+    summary: str = Field(...)        # 한 줄 요약
+    tool_choice: str = Field(...)    # ### 1. 도구 선택 + 근거
+    legal_review: str = Field(...)   # ### 2. robots.txt + ToS 검토
+    code_block: str = Field(...)     # ### 3. 단독 실행 코드 (```python``` + # file:)
+    selector_strategy: str = Field(...) # ### 4. 셀렉터 전략 + flakiness 방지
+    author_notes: str = Field(...)   # ### 5. 작성자 노트
+
+    def to_markdown(self) -> str:
+        # PR #64 + #66 패턴 재사용
+        code = _ensure_python_fence(_strip_leading_section_header(self.code_block))
+        code = _ensure_file_header_in_python_block(code, "scrape.py")
+        return f"{self.summary}\n\n## ...\n\n### 1. ...\n\n{...}"
+
+# 동일 패턴으로 4개 더:
+# DesktopAutomationOutput / APIIntegrationOutput / DataParserOutput / DevOpsOutput
+```
+
+#### Step 2 — `automate_workflow.py` task 빌더에 적용
+
+```python
+def _build_task(domain, agent, ...):
+    kwargs = dict(description=..., expected_output=..., agent=agent)
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = _DOMAIN_TO_SCHEMA[domain]
+    return Task(**kwargs)
+```
+
+#### Step 3 — backstory + description 분량 임계 (PR #59 패턴)
+
+```python
+# automate_workflow.py 의 _DOMAIN_TASK_DESCRIPTION_TEMPLATES 강화
+"전체 출력 **최소 1200자** — Final Answer 한 줄만 출력 시 task 실패 간주\n"
+"5단 본문 모두 채울 것 (도구/근거 + 보안·전략 + 코드 + 패턴·통합 + 작성자 노트)"
+```
+
+#### Step 4 — 신규 테스트
+
+각 schema 별 4 필드 검증 + to_markdown / fence 자동 / header 자동 / Track B 통합.
+
+#### Step 5 — 5 도메인 sample 재검증
+
+```bash
+python scripts/run_e2e_10th_verification.py \
+  --request "..." --enable-automate-branch
+# 목표: 본문 분량 1000+ bytes, code/ 디렉터리에 *.py 추출
+```
 
 ---
 
 ## 7. 새 세션 시작 방법
 
-### 7-1. 세션 초기 준비 체크리스트
+### 7-1. 세션 초기 준비
 ```bash
-# 프로젝트 디렉터리로 이동
 cd C:/projects/nexus-alpha
-
-# 가상환경 활성화
-source .venv/Scripts/activate       # bash
-# .venv\Scripts\Activate.ps1        # PowerShell
-
-# 현재 상태 확인
-git status
-git log --oneline -5
-.venv/Scripts/python.exe --version  # 3.13.13 이어야 함
+source .venv/Scripts/activate
+git status && git log --oneline -5
+.venv/Scripts/python.exe --version  # 3.13.13
 ```
 
-### 7-2. 새 Claude Code 세션을 시작할 때 첫 프롬프트 템플릿
-
-> 아래 텍스트를 그대로 복사해 붙여넣으면 새 세션이 바로 이어받습니다.
+### 7-2. 새 Claude Code 세션 첫 프롬프트 템플릿
 
 ```
 프로젝트 루트는 C:\projects\nexus-alpha 입니다.
 docs/context/next_session_context.md 를 먼저 읽어서 현재 상태와
-Phase 1까지의 설계 결정을 파악해 주세요.
-그 다음 아래 작업을 이어서 진행하려고 합니다:
+PR #76 까지의 설계 결정을 파악해 주세요.
 
-(여기에 구체 작업 내용, 예: "Phase 2 우선순위 1 — pytest 하네스 정식화 시작")
+현재 상태:
+- 머지된 PR: #76까지
+- pytest: 572 passed (회귀 0)
+- 전체 구현률: 39/46 (85%)
+- 본부 3 (개발): 6/9 (67%) — Phase 6 Track B 5명 추가
+- active QA: 4/4 자연 도달 (--force-cli)
+- Update Checker 풀체인 통합 완료 (PR #66)
+
+다음 1순위: PR #77 — Track B 방어선 2 적용
+- _schemas.py 에 5 도메인 output_pydantic schema 추가
+- automate_workflow.py task 빌더에 적용
+- backstory + description 분량 임계 (PR #59 패턴)
 ```
 
-### 7-3. 동작 확인용 명령
+### 7-3. 동작 확인 명령
 
-**(pytest 하네스 — 네트워크 없이, 7초 내 전체 통과)**
+**(pytest — 30초 내, 572 passed)**
 ```bash
-.venv/Scripts/pytest.exe                 # 전체 6개 테스트
-.venv/Scripts/pytest.exe src/tests/test_workflow_analyze_and_implement.py -v
+.venv/Scripts/pytest.exe -q
 ```
 
-**(기존 직접 실행 — 실제 LLM 호출, 수 분 소요, LangFuse 기록 포함)**
+**(Track A E2E — `--force-cli` active 4/4 검증, ~33분)**
 ```bash
-# (A) Provider 단독 — 가장 빠름 (~5초)
-.venv/Scripts/python.exe src/tests/hello_agent.py
+.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py \
+  --request "매장별 시간 매출 Excel 분석 PDF 보고서" \
+  --force-cli
+```
 
-# (B) CrewAI 어댑터 단독
-.venv/Scripts/python.exe src/tests/test_crewai_adapter.py
+**(Track B sample 검증 — ~7분)**
+```bash
+.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py \
+  --request "네이버 쇼핑 가격 크롤링 스크립트" \
+  --enable-automate-branch \
+  --max-retries 1
+```
 
-# (C) 개별 에이전트 단독
-.venv/Scripts/python.exe src/tests/test_cto_agent.py
-.venv/Scripts/python.exe src/tests/test_data_analyst_agent.py
-.venv/Scripts/python.exe src/tests/test_python_engineer_agent.py
-
-# (D) 엔드투엔드 3-agent (가장 오래 걸림, 수 분)
-.venv/Scripts/python.exe src/tests/test_workflow_analyze_and_implement.py
+**(직접 LLM smoke — 가장 빠름)**
+```bash
+.venv/Scripts/python.exe src/tests/hello_agent.py    # ~5초
 ```
 
 ### 7-4. 주요 확인 지점
+
+- **WORK_STATUS 대시보드**: `docs/WORK_STATUS.md` (살아있는 상태)
+- **세션 로그**: `docs/progress/session_log_20260507.md` (최신)
+- **E2E 보고서**: `docs/progress/e2e_10th_verification_post_pr*.md` (12회 누적)
+- **조직도 v8**: `docs/architecture/Nexus_Alpha_조직도_v8.md` (PR #76 시점)
+- **구성안 v6**: `docs/architecture/Nexus_Alpha_구성안_v6.md` (PR #76 시점)
 - **LangFuse 대시보드**: https://cloud.langfuse.com → Tracing → Traces
-- **산출물**: `outputs/workflow_<timestamp>/code/`
-- **진행 보고서**: `docs/progress/phase1_complete.md`, `docs/progress/phase2_priority1_complete.md`
-- **설계 문서**: `docs/architecture/nexus_alpha_v3.md`, `nexus_alpha_v4.md`, `nexus_alpha_org_v4.md`
-- **본 컨텍스트 파일**: `docs/context/next_session_context.md`
 
 ### 7-5. 자주 쓰는 단축 명령
+
 ```bash
 # 의존성 재설치
 .venv/Scripts/pip.exe install -r requirements.txt
 
-# Provider 전환 (.env 수정)
-#   LLM_PROVIDER=agent_sdk → MAX 구독
-#   LLM_PROVIDER=api_key   → .env의 ANTHROPIC_API_KEY 사용
-
-# 최신 원격 상태로 sync
+# 최신 main sync
 git pull --rebase origin main
 
 # 새 기능 브랜치
-git checkout -b phase2/<주제>
+git checkout -b feat/<주제>-pr<번호>
+
+# E2E 결과 빠른 확인
+ls outputs/e2e_10th_verification_*/summary.json | tail -5
 ```
 
 ---
 
-## 부록 — 알려진 주의 사항
+## 8. 부록 — 알려진 주의 사항 (v5 부터 유지 + v6 신규)
 
-1. **`verbose=True`는 노이즈가 큽니다.** 에이전트 팩토리 기본이 `verbose=True`라 smoke 시 CrewAI의 🤖/✅ 패널이 콘솔을 가득 채웁니다. 운영 진입 시 `verbose=False`로 호출하세요.
-2. **`python src/tests/hello_agent.py` 말고 venv의 python을 사용**. 시스템 Python(3.14)으로 실행하면 crewai 임포트 실패.
-3. **async→sync 브리지의 한계**. CrewAI가 자체 async 경로를 더 공격적으로 쓰기 시작하면 `NexusAlphaLLM.call()`의 ThreadPoolExecutor 경로가 빈번히 돌 수 있습니다. 필요 시 `asyncio.Runner`로 재작성 검토.
-4. **LangFuse v4는 OTel API**. v2 문법(`langfuse.trace(...)`)은 동작하지 않습니다. `start_observation(as_type=...)` 패턴을 그대로 유지하세요.
-5. **`outputs/`는 `.gitignore`에 포함**. 산출물이 저장되어도 Git에 푸시되지 않습니다. 공유가 필요하면 압축해 첨부하거나 별도 Gist로 올리세요.
-6. **pytest-socket은 Windows에서 autouse 불가**. `ProactorEventLoop`의 내부 `socket.socketpair()`까지 차단해 `anyio.run()` 경로가 전부 실패합니다. 네트워크 차단은 FakeProvider monkeypatch로 이미 달성되어 있고, pytest-socket은 Linux CI에서 `pytest --disable-socket` opt-in으로만 씁니다. 자세한 기록은 `docs/progress/phase2_priority1_complete.md` §3-1.
-7. **CrewAI 버전은 `==1.14.1`로 고정됨**. FakeProvider 응답이 `crewai/agents/parser.py`의 `FINAL_ANSWER_ACTION` 상수에 결합되어 있어 메이저/마이너 업그레이드 시 테스트 재검증 필요.
+1. **`verbose=True`는 노이즈가 큽니다** — 운영 시 `verbose=False`.
+2. **`python src/tests/hello_agent.py` 말고 venv python 사용** — 시스템 Python(3.14) crewai 비호환.
+3. **async→sync 브리지 한계** — CrewAI async 강화 시 `NexusAlphaLLM.call()` 검토.
+4. **LangFuse v4 OTel API** — v2 문법 (`langfuse.trace(...)`) 동작 X.
+5. **`outputs/`는 .gitignore** — 산출물 공유 시 별도 첨부.
+6. **pytest-socket Windows autouse 불가** — Linux CI opt-in 만.
+7. **CrewAI 1.14.1 핀 고정** — `FINAL_ANSWER_ACTION` 결합. 메이저 업그레이드 시 재검증.
+8. **(v6 신규) Track B 방어선 2 미적용** — 5 도메인 schema 도입 전엔 sample 검증 시 본문 누락 가능 (PR #77 fix 예정).
+9. **(v6 신규) `--force-cli` 만 active 4/4** — GUI 분기는 본질적으로 functional/robustness SKIPPED. UI/UX Analyst backstory 강화 (옵션 B) 필요 시 별도 작업.
+10. **(v6 신규) E2E 스크립트 retry 시 user_request 보존** — PR #71 fix 후 임의 시나리오 재사용 가능.
+
+---
+
+## 9. 핵심 학습 (v5 → v6)
+
+### 9-1. 방어선 4 패턴의 재사용 가능성 입증
+
+PR #64 (Pytest fence) → PR #66 (Updater 통합) 모두 `to_markdown()` deterministic 보강. 같은 헬퍼 (`_ensure_python_fence`) 재사용 → LLM 자유 영역의 빈틈을 *결정형 단계로* 점진 흡수.
+
+### 9-2. workflow-level deterministic 후처리의 가치
+
+GUI Code Generator backstory 강화 (LLM 의존) 대신 workflow 결정형 후처리:
+- 회귀 위험 0 (코드가 결정적)
+- idempotent (마커 검증)
+- silent failure (산출에 영향 없음)
+
+→ 외부 통합 일반에 적용 가능 (analytics / telemetry / crash reporter 등).
+
+### 9-3. active QA gating 진화의 의미
+
+```
+0/4 → 2/4 (8차 PR #59) → 1/4 회귀 (9차 PR #61) → 2/4 회복 (10차 PR #64)
+    → 2/4 안정 (10·11·12차) → 4/4 (PR #73 --force-cli) ⭐⭐⭐
+```
+
+**핵심 깨달음**: GUI 분기에서는 functional/robustness가 본질적으로 SKIPPED. 진짜 active 4/4 도달은 `--force-cli` 로 CLI 분기 강제 시에만. *분기에 따라 의미적 4/4 가 다름*.
+
+### 9-4. Track B 회귀 = 방어선 *재사용 필요*
+
+이전 학습 (PR #66): 방어선 4 가 재사용 가능한 패턴.
+v6 발견 (PR #75): 방어선 2 도 재사용 필요 — Track B 에 적용 안 되면 Track A 가 5 차례 겪은 회귀를 그대로 반복.
+
+→ PR #77 후속 작업의 기반.
+
+---
+
+*본 문서는 PR #76 머지 시점 (2026-05-07) 기준입니다. 다음 세션 1순위는 PR #77 (Track B 방어선 2 적용) 입니다.*
+*조직도 v8 / 구성안 v6 / 세션 로그 (5/6+5/7) 와 함께 4중 보호 — 세션 인계 시 본 문서 1장으로 충분.*
