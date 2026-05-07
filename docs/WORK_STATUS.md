@@ -1,14 +1,15 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-07 (PR #73 `--force-cli` 플래그 → **CLI E2E `--force-cli` 로 active QA 4/4 완전 도달 — functional 10/10 + robustness 9/9 PASS**) ⭐⭐⭐
-> **현재 브랜치**: `docs/log-20260507-pr73-active-4-of-4` (PR #63 ~ #73 머지 완료, 본 PR 은 active 4/4 결과 docs)
-> **테스트**: pytest **567 passed** (5/6 518 → 5/7 +49, 회귀 0)
-> **머지된 PR**: 62 → **73** (오늘 +6: #68 Phase 6 + #69 docs + #70 옵션 6.B + #71 script fix + #72 docs + #73 force-cli)
-> **active QA gating**: 0/4 → 2/4 (8차) → 1/4 회귀 (9차) → 2/4 (10·11·12차) → **4/4 (`--force-cli` CLI 시나리오)** ⭐⭐⭐
+> **마지막 업데이트**: 2026-05-07 (PR #75 `--enable-automate-branch` → **Track B sample 검증 → 이슈 4/6 회귀 발견 ⚠️ (방어선 2 미적용)** + 5/6 active QA 4/4 도달 ⭐⭐⭐ 유지)
+> **현재 브랜치**: `docs/log-20260507-pr75-track-b-sample` (PR #63 ~ #75 머지 완료, 본 PR 은 Track B sample 결과 docs)
+> **테스트**: pytest **572 passed** (5/6 518 → 5/7 +54, 회귀 0)
+> **머지된 PR**: 62 → **75** (오늘 +8: #68 Phase 6 + #69 docs + #70 옵션 6.B + #71 script fix + #72 docs + #73 force-cli + #74 docs + #75 automate-branch)
+> **active QA gating (Track A)**: 0/4 → 2/4 → 1/4 회귀 → 2/4 → **4/4 (`--force-cli` CLI)** ⭐⭐⭐
+> **Track B sample 검증**: ⚠️ **이슈 4/6 회귀** (Web Scraping 41 bytes, API Integration 57 bytes — Final Answer 1줄만)
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 워크플로** (PR #70)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **다음 1순위**: Track B 풀체인 E2E 검증 (5 도메인 각자 호출)
+> **다음 1순위**: Track B 방어선 2 적용 (5 도메인 `output_pydantic` schema 도입)
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -45,7 +46,9 @@
 | **🎯 Phase 6 Track B 5명 추가 (본부 3 67%)** | ✅ **Web Scraping / Desktop Auto / API Integration / Data Parser / DevOps 동시 추가** (PR #68) |
 | **🎯 Track B 워크플로 통합 (옵션 6.B)** | ✅ **`automate_workflow.py` 신설 + 라우팅** (PR #70) |
 | **🎯 E2E 스크립트 임의 시나리오 재사용** | ✅ **argparse + 원본 보존** (PR #71) |
-| **🎯 active QA 4/4 자연 도달** | ✅ **`--force-cli` 플래그 → CLI 분기 강제** (PR #73) ⭐⭐⭐ |
+| **🎯 active QA 4/4 자연 도달 (Track A)** | ✅ **`--force-cli` 플래그 → CLI 분기 강제** (PR #73) ⭐⭐⭐ |
+| **🎯 Track B 풀체인 sample 검증 도구** | ✅ **`--enable-automate-branch` 플래그** (PR #75) |
+| **⚠️ Track B 방어선 2 (output_pydantic) 미적용** | ⚠️ **2 도메인 sample 검증에서 이슈 4/6 회귀** — 다음 우선순위 |
 | **🎯 DoD marker single source of truth** | ✅ **DOD_PASS_RULES dict 통합** (PR #57) |
 | 전체 구현률 | ✅ **39/46 (85%)** ⭐ |
 | **active QA gating** | ✅ **2/4 (code_qa + gui_test)** — 10·11차 연속 안정 도달 (PR #64 + PR #66) ⭐ |
@@ -471,13 +474,24 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - summary.json 에 force_cli + enable_gui_branch 저장 (재현성)
     - 신규 테스트 5개 (test_e2e_10th_script.py: 21 → 26)
     - pytest 562 → **567 passed** (+5, 회귀 0)
-63. ~~CLI E2E (`--force-cli` Excel 시나리오) — **active QA 4/4 자연 도달**~~ ✅ ⭐⭐⭐
-    - **DoD 7/7 ALL PASSED + 32.91분 + retry=0 + skipped=0**
-    - artifact_category=library (gui 가 아님)
-    - **code_qa PASS (12 tests) + functional PASS (10/10) + gui_test PASS + robustness PASS (9/9)**
-    - chosen_path="" (Track A classic — Python Engineer 단독 호출)
-    - force_cli=true / enable_gui_branch=false 정확 적용
-64. ⏳ **본 PR (#74, active 4/4 결과 docs)** — session_log_20260507 + WORK_STATUS 갱신
+63. ~~CLI E2E (`--force-cli` Excel 시나리오) — active QA 4/4 자연 도달~~ ✅ ⭐⭐⭐
+    - DoD 7/7 ALL PASSED + 32.91분 + retry=0 + skipped=0
+    - artifact_category=library, chosen_path=""
+    - code_qa (12 tests) + functional (10/10) + gui_test + robustness (9/9) 모두 PASS
+64. ~~PR #74 (active 4/4 결과 docs) 머지~~ ✅
+65. ~~PR #75 — `--enable-automate-branch` 플래그 (Track B 검증용)~~ ✅ 머지
+    - argparse `--enable-automate-branch` (action='store_true', default=False)
+    - main() 에서 run_analyze_and_implement 에 전달 + Track B 활성 시 NOTE 인쇄
+    - summary.json 에 enable_automate_branch 저장
+    - 신규 테스트 5개 (test_e2e_10th_script.py: 26 → 31)
+    - pytest 567 → **572 passed** (+5, 회귀 0)
+66. ~~Track B sample E2E 2 도메인 검증~~ ⚠️ **이슈 4/6 회귀 발견**
+    - Web Scraping: 6.81분, 산출 41 bytes (Final Answer 1줄)
+    - API Integration: 2.84분, 산출 57 bytes (Final Answer 1줄)
+    - 휴리스틱 분류는 정확 (web_scraping / api_integration)
+    - 두 도메인 모두 5단 본문 누락 → code/ 빈 디렉터리
+    - **원인**: Track B 의 automate_workflow.py 에 방어선 2 (output_pydantic) 미적용
+67. ⏳ **본 PR (#76, Track B sample 검증 결과 + 발견 docs)** — session_log_20260507 + WORK_STATUS 갱신
 
 ---
 
@@ -495,53 +509,48 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 - PR #64 (Pytest fence) — 같은 schema 본문 내부 fence 보장
 - PR #66 (Updater 통합) — 같은 헬퍼 (`_ensure_python_fence`) 재사용 + 헤더 추가 보강
 
-다음 비슷한 회귀가 발생하면 이 패턴 즉시 적용 가능.
+### ⚠️ Track B 미적용 — PR #75 sample 검증으로 발견 (5/7)
+
+| 도메인 | Track A 적용 | **Track B (`automate_workflow.py`)** |
+|---|---|---|
+| 1 (auto-retry) | ✅ | ✅ |
+| **2 (`output_pydantic` schema)** | ✅ | ❌ **미적용 — 5 도메인 schema 부재** |
+| 3 (capture-before-rescue) | ✅ | ✅ |
+| 4 (fence 자동) | ✅ | (schema 없으니 N/A) |
+
+→ PR #77 후속: 5 도메인 schema (`WebScrapingOutput` 등) 도입 + PR #59 패턴 재사용.
 
 ---
 
 ## 🌅 다음 세션 (2026-05-08~) 우선 순위
 
-Phase 6 옵션 6.A + 6.B + script fix + active 4/4 도달 모두 완료. 다음은
-*Track B 풀체인 검증* + *옵션 B (UI/UX backstory 강화)* 가 후보.
+Track B sample 검증 (PR #75 + 2 도메인 E2E) 에서 발견된 *이슈 4/6 회귀 패턴* fix
+가 다음 1순위.
 
-### 🔴 1순위 — Track B 풀체인 E2E 검증
+### 🔴 1순위 — Track B 방어선 2 적용 (PR #77 후속)
 
-`enable_automate_branch=True` 로 5 에이전트 각자 호출 검증:
+5 도메인 각각의 `output_pydantic` schema 도입 + backstory/description 분량 임계
++ fence 마커 명시. PR #58/#59 (Pytest Author) 와 같은 패턴 재사용.
 
-```bash
-# Web Scraping
-python scripts/run_e2e_10th_verification.py \
-  --request "네이버 쇼핑 가격 크롤링 스크립트"
+작업 단계:
+1. `_schemas.py` 에 5 schema 추가 (`WebScrapingOutput` / `DesktopAutomationOutput` / `APIIntegrationOutput` / `DataParserOutput` / `DevOpsOutput`)
+2. 각 schema 5단 구조 + `_ensure_python_fence` (PR #64) + `_ensure_file_header_in_python_block` (PR #66) 적용
+3. `automate_workflow.py` 의 task 빌더에 `output_pydantic=<DomainOutput>` 적용
+4. backstory + description 분량 임계 명시 (전체 1200자, 5단 본문 강제)
+5. 신규 테스트 (각 schema)
+6. 5 도메인 sample 재검증 → 본문 분량 1000+ bytes 도달 확인
 
-# Desktop Automation
-python scripts/run_e2e_10th_verification.py \
-  --request "PyAutoGUI 로 엑셀 자동 입력"
+### 🟢 2순위 — Track B 나머지 3 도메인 sample 검증
 
-# API Integration
-python scripts/run_e2e_10th_verification.py \
-  --request "Stripe API webhook 으로 결제 알림 처리"
+PR #77 머지 후 Desktop Automation / Data Parser / DevOps 도메인 검증.
 
-# Data Parser
-python scripts/run_e2e_10th_verification.py \
-  --request "PDF 테이블 추출 후 CSV 변환"
+### 🟢 3순위 — UI/UX Analyst backstory 강화 (옵션 B)
 
-# DevOps
-python scripts/run_e2e_10th_verification.py \
-  --request "Dockerfile multi-stage + GitHub Actions"
-```
+`--force-cli` 의 자연스러운 보완재.
 
-각 도메인 산출물 품질 확인 (현재 pytest 만 검증, 실 산출 산물 미검증).
-필요 시 `enable_automate_branch=True` 토글을 E2E 스크립트에 추가 (지금은 라이브러리 호출만 가능).
+### 🟢 4순위 — Streamlit UI / Vector DB / Credential Vault
 
-### 🟢 2순위 — UI/UX Analyst backstory 강화 (옵션 B)
-
-`--force-cli` 는 *수동* 강제 메커니즘. LLM 이 *자동으로* CLI 결정하도록 backstory
-강화 — 분석/리포트 시나리오 → `need_gui=no` 결정 신호 강화. 옵션 A 의 자연스러운
-보완재.
-
-### 🟢 3순위 — Streamlit UI / Vector DB / Credential Vault 등 v1 기능
-
-이전 세션 로그의 중장기 항목들. Track B 검증 + 옵션 B 완료 후 가치 추가.
+이전 세션 로그 중장기 항목들.
 
 ---
 

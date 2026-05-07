@@ -1,8 +1,8 @@
-# 세션 로그 — 2026-05-07 (PR #68~#74 — Phase 6 + 옵션 6.B + active QA 4/4 자연 도달 ⭐⭐⭐)
+# 세션 로그 — 2026-05-07 (PR #68~#76 — Phase 6 + 옵션 6.B + active 4/4 + Track B sample 검증)
 
-> **세션 한 줄 요약**: Phase 6 Track B 5명 (PR #68) → docs (#69) → 워크플로 통합 (#70) → script fix (#71) → 최종 docs (#72) → **`--force-cli` 플래그 (#73)** → **active QA 4/4 완전 도달** (functional 10/10 + robustness 9/9 PASS) → 본 docs (#74). 본부 3 1/9 → 6/9, 전체 구현률 74% → 85%, pytest 538 → 567 passed
+> **세션 한 줄 요약**: Phase 6 Track B 5명 (#68) → docs (#69) → 워크플로 통합 (#70) → script fix (#71) → 최종 docs (#72) → `--force-cli` (#73) → **active QA 4/4 완전 도달** ⭐⭐⭐ → docs (#74) → `--enable-automate-branch` (#75) → **Track B 2 도메인 sample 검증 → 이슈 4/6 회귀 패턴 발견** ⚠️ → 본 docs (#76). 본부 3 1/9 → 6/9, 전체 74% → 85%, pytest 538 → 572
 > **이전 세션 로그**: [session_log_20260506.md](./session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
-> **다음 세션 시작점**: 2순위 = Track B 풀체인 E2E 검증 (`enable_automate_branch=True` 로 5 도메인 각자 호출) — active 4/4 도달 후속
+> **다음 세션 시작점**: 1순위 = Track B 방어선 2 (output_pydantic schema) 적용 — Web Scraping / Desktop / API / Data Parser / DevOps 5 schema 도입
 
 ---
 
@@ -16,10 +16,13 @@
 | E2E 스크립트 fix (CLI 시나리오 재사용 가능) | ✅ PR #71 머지 (argparse + 원본 보존) |
 | CLI E2E 재검증 (Excel 시나리오) | ⚠️ 부분 성공 — fix 효과 입증, active 4/4 미달성 |
 | 최종 docs PR | ✅ PR #72 머지 |
-| **`--force-cli` 플래그 추가 (옵션 A — active 4/4 도달)** | ✅ **PR #73 머지** ⭐ |
-| **CLI E2E (`--force-cli`) — active QA 4/4 자연 도달** | ✅ **달성!** (functional 10/10 + robustness 9/9 PASS) ⭐⭐⭐ |
-| 본 docs PR | ⏳ PR #74 진행 중 |
-| pytest 회귀 0 | ✅ 518 → **567 passed** (+49) |
+| `--force-cli` 플래그 추가 (옵션 A — active 4/4 도달) | ✅ PR #73 머지 ⭐ |
+| CLI E2E (`--force-cli`) — active QA 4/4 자연 도달 | ✅ 달성! (functional 10/10 + robustness 9/9 PASS) ⭐⭐⭐ |
+| docs PR (active 4/4) | ✅ PR #74 머지 |
+| **`--enable-automate-branch` 플래그 (Track B 풀체인 검증용)** | ✅ **PR #75 머지** |
+| **Track B sample 검증 (Web Scraping + API Integration)** | ⚠️ **이슈 4/6 회귀 발견** — 두 도메인 모두 본문 누락 |
+| 본 docs PR | ⏳ PR #76 진행 중 |
+| pytest 회귀 0 | ✅ 518 → **572 passed** (+54) |
 | 본부 3 (개발) 구성률 향상 | ✅ 1/9 (11%) → **6/9 (67%)** |
 | 전체 구현률 향상 | ✅ 34/46 (74%) → **39/46 (85%)** |
 
@@ -373,65 +376,138 @@ SKIPPED 분기 통과 → 그냥 실행 결과로 PASS 판정.
 
 ---
 
+## 7️⃣ PR #75 — `--enable-automate-branch` 플래그 (Track B 검증용)
+
+PR #70 옵션 6.B 가 라우팅 토글을 추가했지만 E2E 스크립트는 노출 X. 본 PR 가
+`--enable-automate-branch` CLI 인자 추가 → Track B 풀체인 sample 검증 가능.
+
+3단계 변경 (analogous to PR #73):
+  - `_parse_args()` — `--enable-automate-branch` (default=False)
+  - `main()` — `enable_automate_branch_for_run = args.enable_automate_branch`
+    + Track B 활성 시 NOTE 인쇄 (DoD 일부 실패 가능 안내)
+  - `summary.json` — `enable_automate_branch` 저장
+
+NOTE: Track B 는 *단일 에이전트* 호출 후 산출 (`analyze_and_implement` 라우팅이
+return 함). Build/Release 분기 미동반 → DoD 7/7 일부 실패 *예상된 동작*.
+
+신규 테스트 5개 (`test_e2e_10th_script.py`: 26 → 31).
+pytest: 567 → **572 passed** (+5, 회귀 0). CI PASS → squash merge.
+
+---
+
+## 8️⃣ Track B sample E2E 검증 — 이슈 4/6 회귀 발견 ⚠️
+
+### 검증 대상
+
+5 도메인 중 2개 sample (사용자 요청 옵션 2):
+- **Web Scraping** (Playwright)
+- **API Integration** (httpx + FastAPI)
+
+### 결과
+
+| 도메인 | Elapsed | retry | 산출 분량 | 패턴 |
+|---|---|---|---|---|
+| Web Scraping | 6.81분 | 1 | **41 bytes** | Final Answer 1줄만 |
+| API Integration | 2.84분 | 0 | **57 bytes** | Final Answer 1줄만 |
+
+산출 본문 (예: API Integration):
+```
+tool=httpx|gql|fastapi, auth=webhook_hmac, retry=tenacity
+```
+
+→ **두 도메인 모두 backstory 의 5단 구조 (도구/보안/코드/패턴/노트) 본문 누락**.
+`code/` 디렉터리 비어있음.
+
+### 검증된 부분 ✅
+
+| 검증 | 결과 |
+|---|---|
+| `enable_automate_branch=true` 정확 적용 | ✅ |
+| `detect_automation_domain` 휴리스틱 분류 | ✅ web_scraping / api_integration |
+| `automate_workflow_*/` 디렉터리 생성 | ✅ |
+| `01_detected_domain.txt` 파일 | ✅ |
+
+### 발견 사항 — 이슈 4/6 회귀가 Track B 에서 재현
+
+**원인 진단**: Track A 의 방어선 1~4 가 Track B 에 *부분 적용*:
+
+| 방어선 | Track A | **Track B (`automate_workflow.py`)** |
+|---|---|---|
+| 1 (PR #29 auto-retry) | ✅ | ✅ `retry_short_tasks_in_chain([task])` |
+| **2 (PR #31~33, #59 `output_pydantic`)** | ✅ | ❌ **미적용 — 핵심 원인** |
+| 3 (PR #53, #55 rescue) | ✅ | ✅ `kickoff_with_converter_rescue()` |
+| 4 (PR #64 fence 자동 감싸기) | ✅ | (schema 없으니 N/A) |
+
+**핵심**: Track B 5 도메인 각각의 schema (예: `WebScrapingOutput`, `APIIntegrationOutput`) 가 부재 → LLM 이 한 줄 요약으로 task 종료 가능. PR #58 7차 E2E 의 Pytest Author 회귀와 같은 패턴.
+
+### 학습 — sample 검증의 가치
+
+이전 학습 (5/6 11차):
+> "방어선 4 가 *재사용 가능한 패턴* 으로 입증 (PR #64 → PR #66)"
+
+5/7 본 PR 에서 *반대편 학습*:
+> "방어선 2 (`output_pydantic`) 도 *재사용 필요* — Track B 에 적용 안 되면 Track A 가 5 차례 겪은 회귀를 그대로 반복."
+
+**다음 PR #77 후속 작업** (다음 세션):
+- `_schemas.py` 에 5 도메인 schema 추가 (`WebScrapingOutput` / `DesktopAutomationOutput` / `APIIntegrationOutput` / `DataParserOutput` / `DevOpsOutput`)
+- 각 schema 에 5단 본문 필드 강제 (도구 / 보안·전략 / 코드 / 통합·검증 / 작성자 노트)
+- Track A 의 PR #59 패턴 재사용 — output_pydantic 강제 + backstory 분량 임계 + fence 마커 명시
+- `automate_workflow.py` 의 task 빌더에 `output_pydantic=<DomainOutput>` 적용
+
+---
+
 ## 📊 오늘 종료 시점
 
-- 머지된 PR: 67 → **73** (+6: #68 + #69 + #70 + #71 + #72 + #73)
-  - docs PR #74 (본 PR) 까지 **+7**
-- pytest: 518 → **567 passed** (+49, 회귀 0)
+- 머지된 PR: 67 → **75** (+8: #68 + #69 + #70 + #71 + #72 + #73 + #74 + #75)
+  - docs PR #76 (본 PR) 까지 **+9**
+- pytest: 518 → **572 passed** (+54, 회귀 0)
 - 본부 3 (개발): 1/9 (11%) → **6/9 (67%)** ⭐
 - 전체 구현률: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-- **active QA gating: 0/4 → 2/4 (8/10/11/12차 일반 시나리오) → 4/4 (`--force-cli` CLI 시나리오)** ⭐⭐⭐
-- **풀체인 시나리오 재사용 가능성 확보** (PR #71) + **CLI 분기 강제 도구** (PR #73)
+- **active QA gating: 0/4 → 2/4 (Track A GUI) → 4/4 (Track A `--force-cli` CLI)** ⭐⭐⭐
+- **Track B 5 도메인 등록 + 워크플로 통합 + sample 검증** — 이슈 4/6 회귀 발견 ⚠️
+- **풀체인 도구**: PR #71 (`--request`) + PR #73 (`--force-cli`) + PR #75 (`--enable-automate-branch`)
 
 ---
 
 ## 🌅 다음 세션 (2026-05-08~) 우선 순위
 
-옵션 6.A + 6.B + script fix + active 4/4 도달 모두 완료. 다음 단계는
-*Track B 풀체인 검증* 이 후보.
+Track B sample 검증에서 발견된 *이슈 4/6 회귀 패턴* fix 가 다음 1순위.
 
-### 🔴 1순위 — Track B 풀체인 E2E 검증
+### 🔴 1순위 — Track B 방어선 2 적용 (PR #77 후속)
 
-`enable_automate_branch=True` 로 5 에이전트 각자 호출 검증:
+5 도메인 각각의 `output_pydantic` schema 도입 + backstory/description 분량 임계
++ fence 마커 명시. PR #58/#59 (Pytest Author) 와 같은 패턴 재사용.
 
-```bash
-# Web Scraping
-python scripts/run_e2e_10th_verification.py \
-  --request "네이버 쇼핑 가격 크롤링 스크립트"
+**작업 단계**:
+1. `src/workflows/_schemas.py` 에 5 schema 추가:
+   - `WebScrapingOutput` (5단: 도구·근거 / robots.txt+ToS / 코드 / 셀렉터 전략 / 작성자 노트)
+   - `DesktopAutomationOutput` (5단: 도구·근거 / 식별 전략 / 코드 / 실패 처리 / 작성자 노트)
+   - `APIIntegrationOutput` (5단: 도구·근거 / 인증 / 코드 / rate limit·pagination / 작성자 노트)
+   - `DataParserOutput` (5단: 도구·근거 / 인코딩·한글 / 코드 / 출력 구조 / 작성자 노트)
+   - `DevOpsOutput` (5단: 도구·근거 / Dockerfile / CI/CD / 보안·secret / 작성자 노트)
+2. 각 schema 에 `_ensure_python_fence` (PR #64) + `_ensure_file_header_in_python_block` (PR #66) 패턴 적용
+3. `automate_workflow.py` 의 task 빌더에 `output_pydantic=<DomainOutput>` 적용
+4. backstory + description 분량 임계 명시 (전체 1200자, 5단 본문 강제)
+5. 신규 테스트 (각 schema 4 필드 + to_markdown / fence 자동 / header 자동 / Track B 통합)
+6. 5 도메인 sample 재검증 → 본문 분량 1000+ bytes 도달 확인
 
-# Desktop Automation
-python scripts/run_e2e_10th_verification.py \
-  --request "PyAutoGUI 로 엑셀 자동 입력"
+### 🟢 2순위 — Track B 나머지 3 도메인 sample 검증
 
-# API Integration
-python scripts/run_e2e_10th_verification.py \
-  --request "Stripe API webhook 으로 결제 알림 처리"
+PR #77 머지 후 Desktop Automation / Data Parser / DevOps 도메인 검증.
 
-# Data Parser
-python scripts/run_e2e_10th_verification.py \
-  --request "PDF 테이블 추출 후 CSV 변환"
+### 🟢 3순위 — UI/UX Analyst backstory 강화 (옵션 B)
 
-# DevOps
-python scripts/run_e2e_10th_verification.py \
-  --request "Dockerfile multi-stage + GitHub Actions"
-```
+`--force-cli` 의 자연스러운 보완재.
 
-각 도메인 산출물 품질 확인 (현재 pytest 만 검증, 실 산출 산물 미검증).
-필요 시 `enable_automate_branch=True` 토글을 E2E 스크립트에 추가 (지금은 라이브러리 호출만 가능).
+### 🟢 4순위 — Streamlit UI / Vector DB / Credential Vault
 
-### 🟢 2순위 — UI/UX Analyst backstory 강화 (옵션 B)
-
-`--force-cli` 는 *수동* 강제 메커니즘. LLM 이 *자동으로* CLI 결정하도록 backstory
-강화 — 분석/리포트 시나리오 → `need_gui=no` 결정 신호 강화. 옵션 A 의 자연스러운
-보완재.
-
-### 🟢 3순위 — Streamlit UI / Vector DB / Credential Vault
-
-이전 세션 로그 중장기 항목들. Track B 검증 + 옵션 B 완료 후 가치 추가.
+중장기 항목.
 
 ---
 
 *"2026-05-07: Phase 6 Track B 5명 + 워크플로 통합 + script fix + active QA 4/4 자연 도달 ⭐⭐⭐*
-*pytest 538 → 567 passed (+49, 회귀 0). 본부 3 1/9 → 6/9, 전체 74% → 85%.*
-*핵심 입증: PR #73 `--force-cli` → CLI 분기 강제 → functional 10/10 + robustness 9/9 PASS.*
-*다음 단계: Track B 5 도메인 풀체인 검증 (API / Web / Desktop / Data / DevOps 각자)."*
+*+ Track B sample 검증으로 이슈 4/6 회귀 발견 ⚠️ (방어선 2 미적용).*
+*pytest 538 → 572 passed (+54, 회귀 0). 본부 3 1/9 → 6/9, 전체 74% → 85%.*
+*핵심 입증 (Track A): `--force-cli` 로 functional 10/10 + robustness 9/9 PASS.*
+*핵심 발견 (Track B): output_pydantic schema 부재로 한 줄 요약만 출력.*
+*다음 단계: PR #77 — Track B 5 도메인 schema 도입 (Track A PR #59 패턴 재사용)."*
