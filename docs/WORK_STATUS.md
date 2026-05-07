@@ -1,15 +1,16 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-07 (PR #75 `--enable-automate-branch` → **Track B sample 검증 → 이슈 4/6 회귀 발견 ⚠️ (방어선 2 미적용)** + 5/6 active QA 4/4 도달 ⭐⭐⭐ 유지)
-> **현재 브랜치**: `docs/log-20260507-pr75-track-b-sample` (PR #63 ~ #75 머지 완료, 본 PR 은 Track B sample 결과 docs)
-> **테스트**: pytest **572 passed** (5/6 518 → 5/7 +54, 회귀 0)
-> **머지된 PR**: 62 → **75** (오늘 +8: #68 Phase 6 + #69 docs + #70 옵션 6.B + #71 script fix + #72 docs + #73 force-cli + #74 docs + #75 automate-branch)
+> **마지막 업데이트**: 2026-05-08 (PR #78 — **Track B 방어선 2 적용 ⭐⭐⭐** 5 도메인 `output_pydantic` schema + fence/header 자동 + description 1200자 임계)
+> **현재 브랜치**: `feat/track-b-defense-2-pr78` (PR #77 머지 완료 → 본 PR 작업 중)
+> **테스트**: pytest **606 passed** (PR #77 572 → +34, 회귀 0)
+> **머지된 PR**: 75 → **77** (이전 세션) → 본 PR #78 작업 중
 > **active QA gating (Track A)**: 0/4 → 2/4 → 1/4 회귀 → 2/4 → **4/4 (`--force-cli` CLI)** ⭐⭐⭐
-> **Track B sample 검증**: ⚠️ **이슈 4/6 회귀** (Web Scraping 41 bytes, API Integration 57 bytes — Final Answer 1줄만)
+> **Track B 방어선 2**: ✅ **적용 완료 (PR #78)** — 5 도메인 schema + fence/header 자동 보강 + 분량 임계 1200자
+> **Track B sample 검증**: ⚠️ PR #75 회귀 (41~57 bytes) → **PR #78 후속 5 도메인 sample 재검증 예정**
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 워크플로** (PR #70)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **다음 1순위**: Track B 방어선 2 적용 (5 도메인 `output_pydantic` schema 도입)
+> **다음 1순위**: PR #78 머지 후 5 도메인 sample 재검증 (본문 1000+ bytes 도달 확인)
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -491,7 +492,36 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - 휴리스틱 분류는 정확 (web_scraping / api_integration)
     - 두 도메인 모두 5단 본문 누락 → code/ 빈 디렉터리
     - **원인**: Track B 의 automate_workflow.py 에 방어선 2 (output_pydantic) 미적용
-67. ⏳ **본 PR (#76, Track B sample 검증 결과 + 발견 docs)** — session_log_20260507 + WORK_STATUS 갱신
+67. ~~PR #76 (Track B sample 검증 결과 docs) 머지~~ ✅
+68. ~~PR #77 (조직도 v8 + 구성안 v6 + next_session_context 전면 재작성) 머지~~ ✅ `1b6ef19`
+
+### 2026-05-08 진행 (오늘) ⭐⭐⭐
+
+69. ⏳ **PR #78 — Track B 방어선 2 적용** (작업 중) ⭐⭐⭐
+    - **`_schemas.py` 5 도메인 schema 추가** (PR #59 패턴 재사용):
+      - `WebScrapingOutput` (6 필드: summary + tool_choice + legal_review + code_block + selector_strategy + author_notes)
+      - `DesktopAutomationOutput` (6 필드: + target_identification + failure_handling)
+      - `APIIntegrationOutput` (6 필드: + auth_strategy + rate_limit_pagination)
+      - `DataParserOutput` (6 필드: + encoding_strategy + output_structure)
+      - `DevOpsOutput` (6 필드, **2 코드 블록**: dockerfile_block + cicd_workflow_block + security_secret)
+    - **fence + `# file:` 헤더 자동 보강** (PR #64/#66 헬퍼 일반화):
+      - `_ensure_fence(text, language)` — python/dockerfile/yaml 모두 지원
+      - `_ensure_file_header_in_block(text, language, expected_filename)` — 일반화
+      - 4 도메인 (Web/Desktop/API/DataParser) → python fence + scrape.py/automate.py/api_client.py/parser.py 헤더
+      - DevOps → dockerfile + yaml 두 블록 모두 fence + 헤더 자동
+    - **`automate_workflow.py` 방어선 2 적용**:
+      - `_DOMAIN_TO_SCHEMA` 매핑 추가 (5 도메인 → schema 클래스)
+      - `_build_track_b_task(domain, agent, user_request)` 신설 — pytest gating
+      - `_TRACK_B_COMMON_PREAMBLE` — 1200자 임계 + 5단 본문 강제 + schema 명시 + PR #75 회귀 사례 인용
+      - 5 도메인 description 모두 5단 구조 명시 + schema 이름 prepend
+    - **신규 테스트 34개** (`test_track_b_schemas.py`):
+      - generic helper 7개 (fence + header idempotent + 빈 입력)
+      - schema 필드 정의 5개 (parametrize)
+      - 5 도메인 to_markdown 6개 (5단 + fence + 헤더 자동 + idempotent)
+      - `_build_track_b_task` 4개 (pytest gating + 도메인 매핑)
+      - description templates 6개 (1200자 + schema 이름 + DevOps 양쪽 fence)
+    - **pytest 572 → 606 passed** (+34, 회귀 0)
+    - 다음: PR #78 머지 후 5 도메인 sample 재검증 (본문 1000+ bytes 도달 확인)
 
 ---
 
@@ -509,16 +539,16 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 - PR #64 (Pytest fence) — 같은 schema 본문 내부 fence 보장
 - PR #66 (Updater 통합) — 같은 헬퍼 (`_ensure_python_fence`) 재사용 + 헤더 추가 보강
 
-### ⚠️ Track B 미적용 — PR #75 sample 검증으로 발견 (5/7)
+### ✅ Track B 적용 완료 — PR #78 (5/8)
 
 | 도메인 | Track A 적용 | **Track B (`automate_workflow.py`)** |
 |---|---|---|
 | 1 (auto-retry) | ✅ | ✅ |
-| **2 (`output_pydantic` schema)** | ✅ | ❌ **미적용 — 5 도메인 schema 부재** |
+| **2 (`output_pydantic` schema)** | ✅ | ✅ **PR #78 — 5 도메인 schema 도입** ⭐ |
 | 3 (capture-before-rescue) | ✅ | ✅ |
-| 4 (fence 자동) | ✅ | (schema 없으니 N/A) |
+| 4 (fence 자동 + 헤더 자동) | ✅ | ✅ **PR #78 — 일반화 헬퍼 (`_ensure_fence` / `_ensure_file_header_in_block`) 재사용** ⭐ |
 
-→ PR #77 후속: 5 도메인 schema (`WebScrapingOutput` 등) 도입 + PR #59 패턴 재사용.
+→ 다음: PR #78 머지 후 5 도메인 sample 재검증으로 본문 분량 1000+ bytes 도달 확인.
 
 ---
 

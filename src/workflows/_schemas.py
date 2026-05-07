@@ -105,6 +105,66 @@ def _ensure_file_header_in_python_block(text: str, expected_filename: str) -> st
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# Generic fence/header helpers — Track B 5 도메인 schema 가 재사용 (PR #78)
+#
+# 배경 (PR #75 sample 검증 — 이슈 4/6 회귀 발견):
+#     Track A 의 방어선 2 (``output_pydantic`` schema 강제) 가 Track B
+#     (``automate_workflow.py``) 에 미적용 → 2 도메인 (Web Scraping / API
+#     Integration) sample 검증에서 Final Answer 한 줄 (41~57바이트) 만 출력 →
+#     5단 본문 누락 → ``code/`` 빈 디렉터리.
+#
+# 처방 (방어선 4 패턴 일반화 — deterministic):
+#     PR #64 (Pytest fence) + PR #66 (Updater header) 의 helpers 를 *언어 일반*
+#     으로 확장. Web/Desktop/API/DataParser 는 ```python``` 블록, DevOps 는
+#     ```dockerfile``` + ```yaml``` 두 블록. ``to_markdown()`` 단계에서 fence +
+#     # file: 헤더 모두 자동 보강 → ``_extract_track_b_code_blocks`` 매치 보장.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _ensure_fence(text: str, language: str) -> str:
+    """주어진 언어 태그의 fence (```<language>\\n...\\n```) 를 자동 보장 [PR #78].
+
+    ``_ensure_python_fence`` 의 일반화. WebScraping/DesktopAutomation/
+    APIIntegration/DataParser/DevOps 의 코드 블록 본문에 재사용.
+    """
+    if not text:
+        return text
+    pattern = re.compile(rf"```{re.escape(language)}\b", re.IGNORECASE)
+    if pattern.search(text):
+        return text
+    stripped = text.strip()
+    if not stripped:
+        return text
+    return f"```{language}\n{stripped}\n```"
+
+
+def _ensure_file_header_in_block(
+    text: str, language: str, expected_filename: str
+) -> str:
+    """주어진 언어 fence 의 첫 블록에 ``# file: <expected_filename>`` 헤더 자동 보장 [PR #78].
+
+    ``_ensure_file_header_in_python_block`` 의 일반화. dockerfile / yaml 모두
+    ``#`` 가 주석 문자 — 같은 헤더 패턴 사용 가능.
+    """
+    if not text:
+        return text
+    pattern = re.compile(rf"```{re.escape(language)}\s*\n", re.IGNORECASE)
+    fence_match = pattern.search(text)
+    if not fence_match:
+        return text
+    block_start = fence_match.end()
+    rest = text[block_start:]
+    first_newline = rest.find("\n")
+    if first_newline == -1:
+        return text
+    first_line = rest[:first_newline]
+    if re.match(r"#\s*file:\s*\S+", first_line):
+        return text  # 헤더 이미 있음 — idempotent
+    header_line = f"# file: {expected_filename}\n"
+    return text[:block_start] + header_line + text[block_start:]
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # Build Engineer — 빌드 사양 5단 구조
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -863,4 +923,388 @@ class PytestSuiteOutput(BaseModel):
             f"### 1. 테스트 전략\n\n{_strip_leading_section_header(self.test_strategy)}\n\n"
             f"### 2. 실 테스트 코드\n\n{test_code}\n\n"
             f"### 3. 검증 의도 + 한계\n\n{_strip_leading_section_header(self.intent_and_limits)}\n"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Track B (Phase 6 — automate_workflow.py) 5 도메인 schema [PR #78]
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 배경 (PR #75 sample 검증 — 이슈 4/6 회귀):
+#     Track A (analyze_and_implement) 의 방어선 2 (``output_pydantic``) 가
+#     Track B (automate_workflow) 에 미적용. 2 도메인 sample 검증에서 발견:
+#         - Web Scraping     : 41 bytes (Final Answer 한 줄만)
+#         - API Integration  : 57 bytes (Final Answer 한 줄만)
+#     → 5단 본문 누락 → ``code/`` 빈 디렉터리.
+#
+# 처방 (PR #59 패턴 재사용):
+#     5 도메인 각각 5단 구조 schema (summary + 5 본문 필드) 정의 + ``to_markdown()``
+#     단계에서 fence + ``# file:`` 헤더 deterministic 보강 (PR #64/#66 헬퍼 일반화).
+#     ``automate_workflow._build_task`` 에서 ``output_pydantic`` 적용 (pytest gating).
+
+
+class WebScrapingOutput(BaseModel):
+    """Web Scraping Specialist 출력 schema (PR #78 — Track B 방어선 2).
+
+    백스토리 5단 구조:
+        ### 1. 도구 선택 + 근거 (Playwright / Selenium / requests)
+        ### 2. robots.txt + ToS 검토 결과
+        ### 3. 단독 실행 코드 (```python``` + `# file: scrape.py`)
+        ### 4. 셀렉터 전략 + flakiness 방지
+        ### 5. 작성자 노트
+    """
+
+    summary: str = Field(
+        description=(
+            "한 줄 요약. 형식: 'tool=playwright|selenium|requests, pages=<N>, "
+            "rate_limit=<S>s' (예: 'tool=playwright, pages=10, rate_limit=1.0s')"
+        ),
+    )
+    tool_choice: str = Field(
+        description=(
+            "### 1. 도구 선택 + 근거 본문. Playwright (1순위) / Selenium (legacy) / "
+            "requests + BeautifulSoup (정적) 중 선택 + 근거 (호환성·안정성·속도). "
+            "섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    legal_review: str = Field(
+        description=(
+            "### 2. robots.txt + ToS 검토 결과 본문. 대상 도메인의 robots.txt 확인 "
+            "결과 + 차단/허용 경로 + ToS 우회 거절 + 캡차/login wall 처리 방침. "
+            "섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    code_block: str = Field(
+        description=(
+            "### 3. 단독 실행 코드 본문. **```python\\n...\\n``` fence 마커 반드시 "
+            "포함** + 첫 줄 ``# file: scrape.py`` 헤더 + ``python scrape.py`` 만으로 "
+            "실행 가능 (async/await 표준). data-testid → role → text → CSS 셀렉터 "
+            "우선순위 + rate limit (`asyncio.sleep(1.0)` 또는 jitter). 섹션 헤더 "
+            "없이 본문만 (코드 분량 최소 50줄)"
+        ),
+    )
+    selector_strategy: str = Field(
+        description=(
+            "### 4. 셀렉터 전략 + flakiness 방지 본문. data-testid / role / text / "
+            "CSS 우선순위 + 명시적 wait (`expect().to_be_visible()`) + headless/headed "
+            "토글. 섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    author_notes: str = Field(
+        description=(
+            "### 5. 작성자 노트 본문. rate limit 결정 근거 + 캡차 발견 시 사용자 "
+            "액션 + 정기 실행 시 schedule 권고 + 개인정보/저작권 경계. 섹션 헤더 "
+            "없이 본문만 (최소 100자)"
+        ),
+    )
+
+    def to_markdown(self) -> str:
+        code = _ensure_python_fence(_strip_leading_section_header(self.code_block))
+        code = _ensure_file_header_in_python_block(code, "scrape.py")
+        return (
+            f"{self.summary}\n\n"
+            f"## Web Scraping 산출\n\n"
+            f"### 1. 도구 선택 + 근거\n\n{_strip_leading_section_header(self.tool_choice)}\n\n"
+            f"### 2. robots.txt + ToS 검토 결과\n\n{_strip_leading_section_header(self.legal_review)}\n\n"
+            f"### 3. 단독 실행 코드\n\n{code}\n\n"
+            f"### 4. 셀렉터 전략 + flakiness 방지\n\n{_strip_leading_section_header(self.selector_strategy)}\n\n"
+            f"### 5. 작성자 노트\n\n{_strip_leading_section_header(self.author_notes)}\n"
+        )
+
+
+class DesktopAutomationOutput(BaseModel):
+    """Desktop Automation Specialist 출력 schema (PR #78 — Track B 방어선 2).
+
+    백스토리 5단 구조:
+        ### 1. 도구 선택 + 근거 (PyWinAuto / PyAutoGUI / pywin32 / 조합)
+        ### 2. 대상 앱 식별 전략 (title regex + class + UIA tree dump)
+        ### 3. 단독 실행 코드 (```python``` + `# file: automate.py`, FAILSAFE 활성)
+        ### 4. 실패 처리 + 로그 (timeout / 스크린샷 / 단계별 logging)
+        ### 5. 작성자 노트
+    """
+
+    summary: str = Field(
+        description=(
+            "한 줄 요약. 형식: 'tool=pywinauto|pyautogui|pywin32, target=<app>, "
+            "failsafe=on' (예: 'tool=pywinauto, target=Excel, failsafe=on')"
+        ),
+    )
+    tool_choice: str = Field(
+        description=(
+            "### 1. 도구 선택 + 근거 본문. PyWinAuto (1순위, UIA) / PyAutoGUI (2순위, "
+            "cross-platform) / pywin32 + comtypes (Office COM) 중 선택 + 근거 "
+            "(해상도 독립성·접근성 트리·OS 호환). 섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    target_identification: str = Field(
+        description=(
+            "### 2. 대상 앱 식별 전략 본문. ``Application().connect(title_re=..., "
+            "class_name=...)`` 패턴 + UIA tree dump 절차 + PID/HWND 직접 의존 회피. "
+            "섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    code_block: str = Field(
+        description=(
+            "### 3. 단독 실행 코드 본문. **```python\\n...\\n``` fence 마커 반드시 "
+            "포함** + 첫 줄 ``# file: automate.py`` 헤더 + ``python automate.py`` "
+            "만으로 실행 가능 + ``pyautogui.FAILSAFE = True`` 명시 + 모든 wait_* 에 "
+            "timeout 명시. 섹션 헤더 없이 본문만 (코드 분량 최소 50줄)"
+        ),
+    )
+    failure_handling: str = Field(
+        description=(
+            "### 4. 실패 처리 + 로그 본문. timeout 기본 10초 + 실패 시 "
+            "``pyautogui.screenshot('failure_at_<step>.png')`` 자동 저장 + "
+            "단계별 ``logging.INFO`` + 무한 루프 방지 종료 조건. 섹션 헤더 없이 "
+            "본문만 (최소 100자)"
+        ),
+    )
+    author_notes: str = Field(
+        description=(
+            "### 5. 작성자 노트 본문. 해상도 의존성 + 사용자 환경 가정 + 무인 실행 "
+            "가능 여부 + 클립보드 충돌 방지 + 위험 조작 거절 사례. 섹션 헤더 없이 "
+            "본문만 (최소 100자)"
+        ),
+    )
+
+    def to_markdown(self) -> str:
+        code = _ensure_python_fence(_strip_leading_section_header(self.code_block))
+        code = _ensure_file_header_in_python_block(code, "automate.py")
+        return (
+            f"{self.summary}\n\n"
+            f"## Desktop Automation 산출\n\n"
+            f"### 1. 도구 선택 + 근거\n\n{_strip_leading_section_header(self.tool_choice)}\n\n"
+            f"### 2. 대상 앱 식별 전략\n\n{_strip_leading_section_header(self.target_identification)}\n\n"
+            f"### 3. 단독 실행 코드\n\n{code}\n\n"
+            f"### 4. 실패 처리 + 로그\n\n{_strip_leading_section_header(self.failure_handling)}\n\n"
+            f"### 5. 작성자 노트\n\n{_strip_leading_section_header(self.author_notes)}\n"
+        )
+
+
+class APIIntegrationOutput(BaseModel):
+    """API Integration Developer 출력 schema (PR #78 — Track B 방어선 2).
+
+    백스토리 5단 구조:
+        ### 1. 도구 선택 + 근거 (httpx / gql / FastAPI / requests/Flask)
+        ### 2. 인증 전략 (OAuth2 / API key / JWT, .env 변수 목록)
+        ### 3. 단독 실행 코드 (```python``` + `# file: api_client.py`)
+        ### 4. rate limit + pagination 처리
+        ### 5. 작성자 노트
+    """
+
+    summary: str = Field(
+        description=(
+            "한 줄 요약. 형식: 'tool=httpx|gql|fastapi, auth=<oauth2|apikey|jwt|"
+            "webhook_hmac>, retry=tenacity'"
+        ),
+    )
+    tool_choice: str = Field(
+        description=(
+            "### 1. 도구 선택 + 근거 본문. httpx (REST 1순위) / gql (GraphQL) / "
+            "FastAPI (webhook 수신) / Flask·requests (legacy) 중 선택 + 근거 "
+            "(async 지원·type hint·schema validation). 섹션 헤더 없이 본문만 "
+            "(최소 100자)"
+        ),
+    )
+    auth_strategy: str = Field(
+        description=(
+            "### 2. 인증 전략 본문. OAuth2 (refresh token rotation) / API key / "
+            "JWT (algorithms 명시) / webhook HMAC 서명 검증 (timing-safe) 중 어떤 "
+            "조합 + 필요한 .env 변수 목록 (코드 하드코딩 절대 금지). 섹션 헤더 "
+            "없이 본문만 (최소 100자)"
+        ),
+    )
+    code_block: str = Field(
+        description=(
+            "### 3. 단독 실행 코드 본문. **```python\\n...\\n``` fence 마커 반드시 "
+            "포함** + 첫 줄 ``# file: api_client.py`` 헤더 + ``os.environ['<KEY>']`` "
+            "secret + ``timeout=10`` 강제 + ``@retry(stop_after_attempt(3))`` "
+            "(tenacity) + 응답 Pydantic 모델 검증. 섹션 헤더 없이 본문만 (코드 "
+            "분량 최소 50줄)"
+        ),
+    )
+    rate_limit_pagination: str = Field(
+        description=(
+            "### 4. rate limit + pagination 처리 본문. 응답 헤더 (`X-RateLimit-"
+            "Remaining` / `Retry-After`) 파싱 + 429 처리 + cursor/offset/link "
+            "header pagination → generator 추상화 + idempotency key 적용 위치. "
+            "섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    author_notes: str = Field(
+        description=(
+            "### 5. 작성자 노트 본문. 외부 API 변경 시 schema drift 감지 + "
+            "idempotency 위치 + secret 회전 정책 + 운영 경보 신호 위치. 섹션 헤더 "
+            "없이 본문만 (최소 100자)"
+        ),
+    )
+
+    def to_markdown(self) -> str:
+        code = _ensure_python_fence(_strip_leading_section_header(self.code_block))
+        code = _ensure_file_header_in_python_block(code, "api_client.py")
+        return (
+            f"{self.summary}\n\n"
+            f"## API Integration 산출\n\n"
+            f"### 1. 도구 선택 + 근거\n\n{_strip_leading_section_header(self.tool_choice)}\n\n"
+            f"### 2. 인증 전략\n\n{_strip_leading_section_header(self.auth_strategy)}\n\n"
+            f"### 3. 단독 실행 코드\n\n{code}\n\n"
+            f"### 4. rate limit + pagination 처리\n\n{_strip_leading_section_header(self.rate_limit_pagination)}\n\n"
+            f"### 5. 작성자 노트\n\n{_strip_leading_section_header(self.author_notes)}\n"
+        )
+
+
+class DataParserOutput(BaseModel):
+    """Data Parser Engineer 출력 schema (PR #78 — Track B 방어선 2).
+
+    백스토리 5단 구조:
+        ### 1. 도구 선택 + 근거 (openpyxl / pandas / pdfplumber / PyMuPDF / csv / json / ijson)
+        ### 2. 인코딩 + 한글 처리 전략 (chardet 우선, fallback utf-8→cp949→euc-kr)
+        ### 3. 단독 실행 코드 (```python``` + `# file: parser.py`, streaming)
+        ### 4. 출력 데이터 구조 (DataFrame schema 또는 dataclass 시그니처)
+        ### 5. 작성자 노트
+    """
+
+    summary: str = Field(
+        description=(
+            "한 줄 요약. 형식: 'format=<excel|pdf|csv|json>, tool=<X>, "
+            "encoding=<auto|cp949|utf8>, streaming=<yes|no>'"
+        ),
+    )
+    tool_choice: str = Field(
+        description=(
+            "### 1. 도구 선택 + 근거 본문. openpyxl/pandas (Excel) / pdfplumber/"
+            "PyMuPDF (PDF) / csv + chardet (CSV) / json/ijson (JSON) 중 입력 형식 "
+            "별 선택 + 근거 (메모리·한국어 안정성·속도). 섹션 헤더 없이 본문만 "
+            "(최소 100자)"
+        ),
+    )
+    encoding_strategy: str = Field(
+        description=(
+            "### 2. 인코딩 + 한글 처리 전략 본문. ``chardet.detect()`` 우선 + "
+            "fallback 순서 utf-8 → cp949 → euc-kr + 한글 컬럼명·시트명 보존 + "
+            "숫자·날짜 포맷 정상화 (`pd.to_datetime(errors='coerce')`). 섹션 헤더 "
+            "없이 본문만 (최소 100자)"
+        ),
+    )
+    code_block: str = Field(
+        description=(
+            "### 3. 단독 실행 코드 본문. **```python\\n...\\n``` fence 마커 반드시 "
+            "포함** + 첫 줄 ``# file: parser.py`` 헤더 + streaming 모드 (Excel "
+            "``read_only=True`` / CSV ``DictReader`` / JSON ``ijson.items``) + "
+            "row 단위 ``try/except`` graceful (전체 중단 X). 섹션 헤더 없이 본문만 "
+            "(코드 분량 최소 50줄)"
+        ),
+    )
+    output_structure: str = Field(
+        description=(
+            "### 4. 출력 데이터 구조 본문. DataFrame schema (컬럼명·dtype) 또는 "
+            "dataclass 시그니처 + 개인정보 (주민번호·카드번호·휴대폰) 마스킹 옵션. "
+            "섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    author_notes: str = Field(
+        description=(
+            "### 5. 작성자 노트 본문. 메모리 한계 (입력 크기별) + 인코딩 fallback "
+            "결과 + 개인정보 발견 시 처리 + 깨진 데이터 skip 통계. 섹션 헤더 없이 "
+            "본문만 (최소 100자)"
+        ),
+    )
+
+    def to_markdown(self) -> str:
+        code = _ensure_python_fence(_strip_leading_section_header(self.code_block))
+        code = _ensure_file_header_in_python_block(code, "parser.py")
+        return (
+            f"{self.summary}\n\n"
+            f"## Data Parser 산출\n\n"
+            f"### 1. 도구 선택 + 근거\n\n{_strip_leading_section_header(self.tool_choice)}\n\n"
+            f"### 2. 인코딩 + 한글 처리 전략\n\n{_strip_leading_section_header(self.encoding_strategy)}\n\n"
+            f"### 3. 단독 실행 코드\n\n{code}\n\n"
+            f"### 4. 출력 데이터 구조\n\n{_strip_leading_section_header(self.output_structure)}\n\n"
+            f"### 5. 작성자 노트\n\n{_strip_leading_section_header(self.author_notes)}\n"
+        )
+
+
+class DevOpsOutput(BaseModel):
+    """DevOps Engineer 출력 schema (PR #78 — Track B 방어선 2).
+
+    백스토리 5단 구조:
+        ### 1. 도구 선택 + 근거 (Dockerfile multi-stage / docker-compose /
+                                   GitHub Actions / Makefile 조합)
+        ### 2. Dockerfile (```dockerfile``` + `# file: Dockerfile`, multi-stage + non-root)
+        ### 3. CI/CD 워크플로 (```yaml``` + `# file: .github/workflows/ci.yml`)
+        ### 4. 보안 + secret 관리 (이미지 baked 금지 / Trivy / cosign)
+        ### 5. 작성자 노트
+
+    Note:
+        다른 4 도메인과 달리 코드 블록이 *2개* (dockerfile + yaml). 두 블록 모두
+        fence + ``# file:`` 헤더 자동 보강.
+    """
+
+    summary: str = Field(
+        description=(
+            "한 줄 요약. 형식: 'docker=multi-stage, ci=github_actions, "
+            "base=python-slim, security=non-root+trivy'"
+        ),
+    )
+    tool_choice: str = Field(
+        description=(
+            "### 1. 도구 선택 + 근거 본문. Dockerfile multi-stage (1순위) + "
+            "docker-compose (개발/스테이징) + GitHub Actions (CI/CD) + Makefile "
+            "(개발자 진입점) 중 어떤 조합 + 근거 (이미지 크기·캐시·보안). 섹션 "
+            "헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+    dockerfile_block: str = Field(
+        description=(
+            "### 2. Dockerfile 본문. **```dockerfile\\n...\\n``` fence 마커 반드시 "
+            "포함** + 첫 줄 ``# file: Dockerfile`` 헤더 + multi-stage (builder + "
+            "runtime) + ``python:3.13-slim`` base + ``RUN useradd -m app && USER "
+            "app`` (non-root) + ``HEALTHCHECK`` + .dockerignore 권고. 섹션 헤더 "
+            "없이 본문만 (최소 30줄)"
+        ),
+    )
+    cicd_workflow_block: str = Field(
+        description=(
+            "### 3. CI/CD 워크플로 본문. **```yaml\\n...\\n``` fence 마커 반드시 "
+            "포함** + 첫 줄 ``# file: .github/workflows/ci.yml`` 헤더 + matrix "
+            "build (Python 3.11/3.12/3.13) + ``actions/cache`` + ``concurrency`` "
+            "group + ``permissions: contents: read`` minimal scope. 섹션 헤더 "
+            "없이 본문만 (최소 30줄)"
+        ),
+    )
+    security_secret: str = Field(
+        description=(
+            "### 4. 보안 + secret 관리 본문. 이미지에 secret baked 절대 금지 + "
+            "GitHub Secrets / BuildKit ``--secret`` mount / Trivy CVE 스캔 + "
+            "Sigstore cosign 서명 + third-party action SHA pin 권고. 섹션 헤더 "
+            "없이 본문만 (최소 100자)"
+        ),
+    )
+    author_notes: str = Field(
+        description=(
+            "### 5. 작성자 노트 본문. 이미지 크기 예상치 + 빌드 시간 + rollback "
+            "절차 (불변 tag 재배포) + graceful shutdown (SIGTERM) + 운영 체크리스트. "
+            "섹션 헤더 없이 본문만 (최소 100자)"
+        ),
+    )
+
+    def to_markdown(self) -> str:
+        dockerfile = _ensure_fence(
+            _strip_leading_section_header(self.dockerfile_block), "dockerfile"
+        )
+        dockerfile = _ensure_file_header_in_block(dockerfile, "dockerfile", "Dockerfile")
+        ci_yaml = _ensure_fence(
+            _strip_leading_section_header(self.cicd_workflow_block), "yaml"
+        )
+        ci_yaml = _ensure_file_header_in_block(
+            ci_yaml, "yaml", ".github/workflows/ci.yml"
+        )
+        return (
+            f"{self.summary}\n\n"
+            f"## DevOps 산출\n\n"
+            f"### 1. 도구 선택 + 근거\n\n{_strip_leading_section_header(self.tool_choice)}\n\n"
+            f"### 2. Dockerfile\n\n{dockerfile}\n\n"
+            f"### 3. CI/CD 워크플로\n\n{ci_yaml}\n\n"
+            f"### 4. 보안 + secret 관리\n\n{_strip_leading_section_header(self.security_secret)}\n\n"
+            f"### 5. 작성자 노트\n\n{_strip_leading_section_header(self.author_notes)}\n"
         )
