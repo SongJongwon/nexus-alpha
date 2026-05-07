@@ -647,6 +647,7 @@ def run_analyze_and_implement(
     enable_publish: bool = False,
     publish_as_draft: bool = True,
     publish_timeout_sec: int = 120,
+    enable_automate_branch: bool = False,
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -696,6 +697,14 @@ def run_analyze_and_implement(
         자동화 스크립트 또는 CI 가 본 사양 보고 수행해야 함. 본 토글은 *사양 산출만*
         (LLM 4건). Update Checker 의 `updater.py` 는 *참조 구현* — 실제 통합은
         Engineer 단계의 별도 작업.
+
+    Phase 6 Track B (automate branch, PR #70):
+        ``enable_automate_branch=True`` 시 **사용자 요청 도메인 휴리스틱 분류** 후
+        Track A (CTO/Analyst/Engineer/QA 체인) 대신 ``run_automate_workflow`` 로
+        디스패치. 5 도메인 (web_scraping / desktop_automation / api_integration /
+        data_parser / devops) 중 1명 호출. 휴리스틱이 UNKNOWN 이면 Track A 로
+        fallback (backward compat). Track A / B 의 결과는 같은 ``WorkflowResult``
+        에 매핑되어 호출 측 인터페이스 일관성 유지.
     """
     target_outputs_dir = outputs_dir if outputs_dir is not None else DEFAULT_OUTPUTS_DIR
     target_outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -727,6 +736,37 @@ def run_analyze_and_implement(
     )
 
     try:
+        # ─── Phase 6 Track B 라우팅 (PR #70) ──────────────────────────────
+        # enable_automate_branch=True 면 휴리스틱 분류 → Track B 단일 에이전트 호출.
+        # UNKNOWN 시 Track A 로 fallback (backward compat).
+        if enable_automate_branch:
+            from src.workflows.automate_workflow import (
+                AutomationDomain,
+                detect_automation_domain,
+                run_automate_workflow,
+            )
+
+            domain = detect_automation_domain(user_request)
+            if domain is not AutomationDomain.UNKNOWN:
+                automate_result = run_automate_workflow(
+                    user_request,
+                    outputs_dir=target_outputs_dir,
+                    forced_domain=domain,
+                    verbose=verbose,
+                )
+                # AutomateWorkflowResult → WorkflowResult 매핑 (호출 측 일관성)
+                return WorkflowResult(
+                    user_request=user_request,
+                    cto_strategy=f"(Track B routing — domain={domain.value})",
+                    analyst_brief="",
+                    engineer_output=automate_result.agent_output,
+                    qa_review="",
+                    saved_dir=automate_result.saved_dir or target_outputs_dir,
+                    saved_code_files=list(automate_result.saved_code_files),
+                    chosen_path=f"automate_{domain.value}",
+                )
+            # UNKNOWN → 그대로 Track A 진행 (fallback)
+
         # 산출 디렉터리 미리 만들어 모든 경로가 동일 워크디렉터리 사용
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         workflow_dir = target_outputs_dir / f"workflow_{timestamp}"
