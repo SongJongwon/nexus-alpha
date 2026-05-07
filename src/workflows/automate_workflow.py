@@ -59,6 +59,13 @@ from src.workflows._common import (
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
 )
+from src.workflows._schemas import (
+    APIIntegrationOutput,
+    DataParserOutput,
+    DesktopAutomationOutput,
+    DevOpsOutput,
+    WebScrapingOutput,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -183,40 +190,111 @@ _DOMAIN_TO_FACTORY = {
 }
 
 
+# 도메인별 output_pydantic schema 매핑 (PR #78 — Track B 방어선 2).
+# Track A 의 ``analyze_and_implement._build_*_task`` 와 같은 패턴: pytest 환경에선
+# FakeProvider 호환을 위해 적용 skip → ``_build_track_b_task`` 에서 gating.
+_DOMAIN_TO_SCHEMA = {
+    AutomationDomain.WEB_SCRAPING: WebScrapingOutput,
+    AutomationDomain.DESKTOP_AUTOMATION: DesktopAutomationOutput,
+    AutomationDomain.API_INTEGRATION: APIIntegrationOutput,
+    AutomationDomain.DATA_PARSER: DataParserOutput,
+    AutomationDomain.DEVOPS: DevOpsOutput,
+}
+
+
+# 공용 분량/구조 임계 헤더 — 모든 도메인 description 에 prepend (PR #78).
+# 배경: PR #75 sample 검증에서 Web Scraping 41 bytes / API Integration 57 bytes —
+# Final Answer 한 줄만 출력 (이슈 4/6 회귀 패턴). Track A PR #59 분량 임계 패턴
+# 재사용 + schema 강제 명시.
+_TRACK_B_COMMON_PREAMBLE = (
+    "## 분량 + 구조 임계 (PR #78 — Track B 방어선 2) 🚨\n"
+    "  - 전체 출력 **최소 1200자** — Final Answer 한 줄만 출력하면 task 실패로 간주\n"
+    "    (PR #75 sample 검증 회귀 사례: Web Scraping 41 bytes / API Integration "
+    "    57 bytes — 5단 본문 누락 → ``code/`` 빈 디렉터리)\n"
+    "  - 5단 본문 **모두** 채울 것 — 빈 섹션 / 'TODO' / '생략' 표기 절대 금지\n"
+    "  - 코드 블록 fence 마커 (```<lang>\\n...\\n```) 반드시 포함 [PR #64 패턴 재사용] —\n"
+    "    fence 누락 시 ``_extract_track_b_code_blocks`` 매치 실패로 산출 추출 X\n"
+    "  - 코드 블록 첫 줄 ``# file: <name>`` 헤더 필수 [PR #66 패턴 재사용]\n\n"
+    "## output_pydantic 강제\n"
+    "본 task 는 schema 로 6개 필드 (summary + 5단 본문) 모두 채워져야 완료됩니다. "
+    "누락 시 CrewAI 가 재호출 → 그래도 실패 시 PR #55 capture-before-rescue 로 "
+    "raw 보존.\n\n"
+)
+
+
 _DOMAIN_TASK_DESCRIPTION_TEMPLATES: dict[AutomationDomain, str] = {
     AutomationDomain.WEB_SCRAPING: (
         "[사용자 요청]\n{request}\n\n"
-        "본 요청을 백스토리에 명시된 5단 구조 (도구 선택 / robots.txt + ToS / "
-        "단독 실행 코드 / 셀렉터 전략 / 작성자 노트) 로 한국어 마크다운 산출물을 "
-        "작성하세요. **```python``` 블록 첫 줄에 `# file: scrape.py` 헤더 필수**."
+        + _TRACK_B_COMMON_PREAMBLE
+        + "본 요청을 백스토리에 명시된 5단 구조로 한국어 마크다운 산출물을 작성하세요:\n"
+        "  ### 1. 도구 선택 + 근거 (Playwright 1순위 / Selenium fallback / requests 정적)\n"
+        "  ### 2. robots.txt + ToS 검토 결과 (차단/허용 경로, 우회 거절)\n"
+        "  ### 3. 단독 실행 코드 (```python``` 블록, 첫 줄 `# file: scrape.py`,\n"
+        "         `python scrape.py` 만으로 실행 가능, 코드 50줄+)\n"
+        "  ### 4. 셀렉터 전략 + flakiness 방지 (data-testid → role → text → CSS 우선순위,\n"
+        "         명시적 wait, headless/headed 토글)\n"
+        "  ### 5. 작성자 노트 (rate limit 결정 근거, 캡차 발견 시 사용자 액션)\n\n"
+        "rate limit (`asyncio.sleep(1.0)` 또는 randomized jitter) 명시 필수. "
+        "WebScrapingOutput schema 가 강제됩니다."
     ),
     AutomationDomain.DESKTOP_AUTOMATION: (
         "[사용자 요청]\n{request}\n\n"
-        "본 요청을 백스토리에 명시된 5단 구조 (도구 선택 / 대상 앱 식별 / 단독 "
-        "실행 코드 / 실패 처리 / 작성자 노트) 로 한국어 마크다운 산출물을 "
-        "작성하세요. **```python``` 블록 첫 줄에 `# file: automate.py` 헤더 필수**, "
-        "FAILSAFE 활성화 명시 필수."
+        + _TRACK_B_COMMON_PREAMBLE
+        + "본 요청을 백스토리에 명시된 5단 구조로 한국어 마크다운 산출물을 작성하세요:\n"
+        "  ### 1. 도구 선택 + 근거 (PyWinAuto 1순위 / PyAutoGUI / pywin32 / 조합)\n"
+        "  ### 2. 대상 앱 식별 전략 (title regex + class + UIA tree dump)\n"
+        "  ### 3. 단독 실행 코드 (```python``` 블록, 첫 줄 `# file: automate.py`,\n"
+        "         `python automate.py` 만으로 실행, 코드 50줄+,\n"
+        "         **`pyautogui.FAILSAFE = True` 명시 필수**)\n"
+        "  ### 4. 실패 처리 + 로그 (timeout 10s 기본, 실패 시 스크린샷, 단계별 logging.INFO)\n"
+        "  ### 5. 작성자 노트 (해상도 의존성, 무인 실행 가능 여부, 위험 조작 거절)\n\n"
+        "DesktopAutomationOutput schema 가 강제됩니다."
     ),
     AutomationDomain.API_INTEGRATION: (
         "[사용자 요청]\n{request}\n\n"
-        "본 요청을 백스토리에 명시된 5단 구조 (도구 선택 / 인증 전략 / 단독 "
-        "실행 코드 / rate limit + pagination / 작성자 노트) 로 한국어 마크다운 "
-        "산출물을 작성하세요. **```python``` 블록 첫 줄에 `# file: api_client.py` "
-        "헤더 필수**, secret 환경변수 사용 명시 필수."
+        + _TRACK_B_COMMON_PREAMBLE
+        + "본 요청을 백스토리에 명시된 5단 구조로 한국어 마크다운 산출물을 작성하세요:\n"
+        "  ### 1. 도구 선택 + 근거 (httpx 1순위 / gql / FastAPI / requests/Flask legacy)\n"
+        "  ### 2. 인증 전략 (OAuth2 refresh rotation / API key / JWT algorithms 명시 /\n"
+        "         webhook HMAC, .env 변수 목록)\n"
+        "  ### 3. 단독 실행 코드 (```python``` 블록, 첫 줄 `# file: api_client.py`,\n"
+        "         코드 50줄+, **secret 은 `os.environ['<KEY>']` — 코드 하드코딩 절대 금지**,\n"
+        "         **`timeout=10` 강제 + `@retry` (tenacity) + 응답 Pydantic 모델 검증**)\n"
+        "  ### 4. rate limit + pagination 처리 (응답 헤더 파싱, 429 처리, generator 추상화)\n"
+        "  ### 5. 작성자 노트 (schema drift 감지, idempotency 위치, secret 회전)\n\n"
+        "APIIntegrationOutput schema 가 강제됩니다."
     ),
     AutomationDomain.DATA_PARSER: (
         "[사용자 요청]\n{request}\n\n"
-        "본 요청을 백스토리에 명시된 5단 구조 (도구 선택 / 인코딩 + 한글 처리 / "
-        "단독 실행 코드 / 출력 데이터 구조 / 작성자 노트) 로 한국어 마크다운 "
-        "산출물을 작성하세요. **```python``` 블록 첫 줄에 `# file: parser.py` "
-        "헤더 필수**, cp949 인코딩 fallback 명시 필수."
+        + _TRACK_B_COMMON_PREAMBLE
+        + "본 요청을 백스토리에 명시된 5단 구조로 한국어 마크다운 산출물을 작성하세요:\n"
+        "  ### 1. 도구 선택 + 근거 (openpyxl/pandas Excel / pdfplumber/PyMuPDF PDF /\n"
+        "         csv+chardet / json+ijson — 입력 형식별)\n"
+        "  ### 2. 인코딩 + 한글 처리 전략 (`chardet.detect()` 우선,\n"
+        "         **fallback 순서 utf-8 → cp949 → euc-kr 명시 필수**, 한글 컬럼 보존)\n"
+        "  ### 3. 단독 실행 코드 (```python``` 블록, 첫 줄 `# file: parser.py`,\n"
+        "         코드 50줄+, streaming 모드, row 단위 try/except graceful)\n"
+        "  ### 4. 출력 데이터 구조 (DataFrame schema 또는 dataclass 시그니처,\n"
+        "         개인정보 마스킹 옵션)\n"
+        "  ### 5. 작성자 노트 (메모리 한계, 인코딩 fallback 결과, 깨진 데이터 통계)\n\n"
+        "DataParserOutput schema 가 강제됩니다."
     ),
     AutomationDomain.DEVOPS: (
         "[사용자 요청]\n{request}\n\n"
-        "본 요청을 백스토리에 명시된 5단 구조 (도구 선택 / Dockerfile / CI/CD "
-        "워크플로 / 보안 + secret / 작성자 노트) 로 한국어 마크다운 산출물을 "
-        "작성하세요. **```dockerfile``` 블록 첫 줄에 `# file: Dockerfile` 헤더 "
-        "필수**, multi-stage + non-root 명시 필수."
+        + _TRACK_B_COMMON_PREAMBLE
+        + "본 요청을 백스토리에 명시된 5단 구조로 한국어 마크다운 산출물을 작성하세요:\n"
+        "  ### 1. 도구 선택 + 근거 (Dockerfile multi-stage 1순위 + docker-compose +\n"
+        "         GitHub Actions + Makefile 어떤 조합)\n"
+        "  ### 2. Dockerfile (```dockerfile``` 블록, 첫 줄 `# file: Dockerfile`,\n"
+        "         **multi-stage (builder + runtime) + python:3.13-slim base +\n"
+        "         non-root user (`useradd -m app && USER app`) 명시 필수**, 30줄+)\n"
+        "  ### 3. CI/CD 워크플로 (```yaml``` 블록, 첫 줄 `# file: .github/workflows/ci.yml`,\n"
+        "         matrix build (Python 3.11/3.12/3.13) + actions/cache + concurrency +\n"
+        "         **`permissions: contents: read` minimal scope 명시**, 30줄+)\n"
+        "  ### 4. 보안 + secret 관리 (이미지 baked 절대 금지, GitHub Secrets/BuildKit\n"
+        "         `--secret` mount, Trivy 스캔, cosign 서명, action SHA pin)\n"
+        "  ### 5. 작성자 노트 (이미지 크기 예상치, 빌드 시간, rollback 절차)\n\n"
+        "DevOpsOutput schema 가 강제됩니다."
     ),
 }
 
@@ -282,6 +360,42 @@ def _extract_track_b_code_blocks(markdown: str, code_dir: Path) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Task 빌더 — output_pydantic 적용 (pytest gating, PR #78)
+# ---------------------------------------------------------------------------
+def _build_track_b_task(
+    domain: AutomationDomain, agent, user_request: str
+) -> Task:
+    """도메인별 Task 생성 + ``output_pydantic`` 적용 (PR #78 — Track B 방어선 2).
+
+    Track A (``analyze_and_implement._build_pytest_author_task`` 등) 와 같은
+    pytest gating 패턴: pytest 환경에선 ``output_pydantic`` 미적용 — FakeProvider
+    (autouse fixture) 가 schema 검증 실패 없이 raw 응답 반환 가능. 실 LLM 호출
+    경로 (운영 / E2E 검증) 에선 schema 강제 발동.
+
+    Args:
+        domain: 결정된 ``AutomationDomain`` (UNKNOWN 제외).
+        agent: 해당 도메인 factory 가 생성한 ``Agent`` 인스턴스.
+        user_request: 원본 사용자 자연어 요청.
+
+    Returns:
+        ``Task`` — description / expected_output / agent / (실 환경) output_pydantic.
+    """
+    import sys
+
+    description_template = _DOMAIN_TASK_DESCRIPTION_TEMPLATES[domain]
+    expected_output = _DOMAIN_TASK_EXPECTED_OUTPUTS[domain]
+
+    kwargs: dict = dict(
+        description=description_template.format(request=user_request),
+        expected_output=expected_output,
+        agent=agent,
+    )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = _DOMAIN_TO_SCHEMA[domain]
+    return Task(**kwargs)
+
+
+# ---------------------------------------------------------------------------
 # 공개 진입점
 # ---------------------------------------------------------------------------
 def run_automate_workflow(
@@ -326,15 +440,8 @@ def run_automate_workflow(
             )
 
         factory = _DOMAIN_TO_FACTORY[domain]
-        description_template = _DOMAIN_TASK_DESCRIPTION_TEMPLATES[domain]
-        expected_output = _DOMAIN_TASK_EXPECTED_OUTPUTS[domain]
-
         agent = factory(verbose=verbose)
-        task = Task(
-            description=description_template.format(request=user_request),
-            expected_output=expected_output,
-            agent=agent,
-        )
+        task = _build_track_b_task(domain, agent, user_request)
         crew = Crew(
             agents=[agent], tasks=[task], process=Process.sequential, verbose=verbose
         )
