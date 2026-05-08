@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from crewai import Crew, Process, Task
 
@@ -311,6 +311,11 @@ class AutomateWorkflowResult:
         agent_output: 선택된 에이전트 LLM 산출 마크다운.
         saved_dir: 산출 저장 디렉터리 (None 이면 디스크 저장 skip).
         saved_code_files: code/ 추출된 .py 파일 목록.
+        pytest_suite: Pytest Author 산출 (PR #81 — enable_qa_loop=True 시).
+            devops 도메인 또는 enable_qa_loop=False 시 빈 문자열.
+        code_qa_result: code_qa 실행 결과 (PR #81 — enable_qa_loop=True 시).
+            None 이면 미실행 (devops / disabled / qa_feedback_loop 미가용).
+            duck-typed: ``success: bool`` + ``summary_line() -> str`` 만 보장.
     """
 
     user_request: str
@@ -318,6 +323,8 @@ class AutomateWorkflowResult:
     agent_output: str
     saved_dir: Optional[Path] = None
     saved_code_files: list[Path] = field(default_factory=list)
+    pytest_suite: str = ""
+    code_qa_result: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +545,85 @@ def _build_track_b_task(
 
 
 # ---------------------------------------------------------------------------
+# QA 루프 통합 (PR #81) — Pytest Author + code_qa 통합
+# ---------------------------------------------------------------------------
+# devops 는 산출이 Dockerfile / .yml — Python 테스트 부적합 → QA 루프 skip.
+_QA_LOOP_SKIP_DOMAINS: frozenset[AutomationDomain] = frozenset({AutomationDomain.DEVOPS})
+
+
+def _run_track_b_qa_loop(
+    domain: AutomationDomain,
+    code_task: Task,
+    saved_dir: Path,
+    saved_code_files: list[Path],
+    *,
+    verbose: bool,
+) -> tuple[str, Any]:
+    """Track B 산출에 대한 QA 루프 (PR #81).
+
+    pytest_author 로 ``test_<entry>.py`` 생성 → 같은 ``code/`` 디렉터리에 저장
+    → ``code_qa`` (pytest + ruff) 실행 → 결과 dataclass 반환.
+
+    devops 는 호출자가 미리 차단 (``_QA_LOOP_SKIP_DOMAINS``).
+
+    Args:
+        domain: 결정된 도메인 (DEVOPS 제외).
+        code_task: 선행 도메인 에이전트 task (CrewAI Task) — pytest_author 의 컨텍스트.
+        saved_dir: ``automate_workflow_<ts>/`` 디렉터리.
+        saved_code_files: 도메인 task 에서 추출된 코드 파일 목록 (pytest_author
+            가 생성한 test_*.py 가 합산됨).
+        verbose: CrewAI 중간 로그.
+
+    Returns:
+        ``(pytest_suite_text, code_qa_result)``
+        - ``pytest_suite_text`` 는 pytest_author 산출 마크다운 (빈 문자열 가능)
+        - ``code_qa_result`` 는 ``CodeQAResult`` 등 — duck-typed (success 속성).
+          qa_feedback_loop 모듈 미가용 시 None.
+    """
+    # 지연 import — qa_feedback_loop 미머지 환경 호환
+    from src.agents.qa import create_pytest_author_agent
+    from src.workflows.analyze_and_implement import _build_pytest_author_task
+
+    pytest_author = create_pytest_author_agent(verbose=verbose)
+    pytest_task = _build_pytest_author_task(pytest_author, code_task)
+    pytest_crew = Crew(
+        agents=[pytest_author],
+        tasks=[pytest_task],
+        process=Process.sequential,
+        verbose=verbose,
+    )
+    kickoff_with_converter_rescue(pytest_crew, [pytest_task])
+    retry_short_tasks_in_chain([pytest_task])
+    pytest_suite_text = _task_output_text(pytest_task)
+
+    # pytest_author 산출 저장 + code/ 디렉터리에 test_*.py 추출
+    (saved_dir / "03_pytest_suite.md").write_text(
+        pytest_suite_text, encoding="utf-8"
+    )
+    test_files = _extract_track_b_code_blocks(pytest_suite_text, saved_dir / "code")
+    # saved_code_files 에 신규 test_*.py 합산 (중복 제거)
+    seen = {p.resolve() for p in saved_code_files}
+    for p in test_files:
+        if p.resolve() not in seen:
+            saved_code_files.append(p)
+            seen.add(p.resolve())
+
+    # code_qa 실행 — 모듈 미가용 (PR #42 미머지 환경) 시 None 반환
+    code_qa_result: Any = None
+    try:
+        from src.workflows.qa_feedback_loop import run_code_qa  # type: ignore[attr-defined]
+    except ImportError:
+        return pytest_suite_text, None
+    try:
+        code_qa_result = run_code_qa(saved_dir / "code")
+    except Exception:
+        # code_qa 실 실행 자체 실패 — 산출 보존 + None 반환 (silent failure)
+        return pytest_suite_text, None
+
+    return pytest_suite_text, code_qa_result
+
+
+# ---------------------------------------------------------------------------
 # 공개 진입점
 # ---------------------------------------------------------------------------
 def run_automate_workflow(
@@ -546,6 +632,7 @@ def run_automate_workflow(
     outputs_dir: Optional[Path] = None,
     forced_domain: Optional[AutomationDomain] = None,
     verbose: bool = False,
+    enable_qa_loop: bool = False,
 ) -> AutomateWorkflowResult:
     """Phase 6 Track B — 사용자 요청 도메인에 적합한 단일 에이전트 호출.
 
@@ -554,22 +641,31 @@ def run_automate_workflow(
         outputs_dir: 산출 저장 디렉터리. None 이면 디스크 저장 skip.
         forced_domain: 휴리스틱 결과를 무시하고 강제로 사용할 도메인. 테스트·디버그용.
         verbose: CrewAI 중간 로그.
+        enable_qa_loop: PR #81 — Pytest Author + code_qa 통합 활성. True 면 도메인
+            task 후 ``test_<entry>.py`` 생성 + pytest 실행 + code_qa 결과 반환.
+            **devops 도메인 + 디스크 저장 skip (outputs_dir=None) 시 자동 우회**.
+            기본 False — backward compat (PR #75/#79 호출 측 변경 불필요).
 
     Returns:
-        ``AutomateWorkflowResult`` — 감지된 도메인 + 에이전트 산출 + 저장 경로.
+        ``AutomateWorkflowResult`` — 감지된 도메인 + 에이전트 산출 + 저장 경로 +
+        (enable_qa_loop=True 시) pytest_suite + code_qa_result.
 
     Raises:
         ValueError: 휴리스틱이 UNKNOWN 을 반환했고 ``forced_domain`` 도 None 인 경우.
 
     Note:
-        본 함수는 LLM 호출 1건 (선택된 에이전트 단독 task). 향후 5 에이전트 chain
-        실행이 필요해지면 별도 함수 (``run_automate_chain_workflow``) 추가.
+        본 함수는 LLM 호출 1~2건 (도메인 task + (옵션) pytest_author task).
+        향후 5 에이전트 chain 실행이 필요해지면 별도 함수 추가.
     """
     monitor = get_langfuse_client()
     monitor.log_trace(
         name="automate_workflow",
         user_id="local-dev",
-        metadata={"phase": "phase_6_track_b", "workflow": "automate_workflow"},
+        metadata={
+            "phase": "phase_6_track_b",
+            "workflow": "automate_workflow",
+            "enable_qa_loop": enable_qa_loop,
+        },
     )
 
     try:
@@ -605,12 +701,30 @@ def run_automate_workflow(
             (saved_dir / "02_agent_output.md").write_text(agent_output, encoding="utf-8")
             saved_code_files = _extract_track_b_code_blocks(agent_output, saved_dir / "code")
 
+        # PR #81 — QA 루프 통합 (devops 자동 skip + 디스크 저장 skip 시 우회)
+        pytest_suite_text = ""
+        code_qa_result: Any = None
+        if (
+            enable_qa_loop
+            and saved_dir is not None
+            and domain not in _QA_LOOP_SKIP_DOMAINS
+        ):
+            pytest_suite_text, code_qa_result = _run_track_b_qa_loop(
+                domain,
+                task,
+                saved_dir,
+                saved_code_files,
+                verbose=verbose,
+            )
+
         return AutomateWorkflowResult(
             user_request=user_request,
             detected_domain=domain,
             agent_output=agent_output,
             saved_dir=saved_dir,
             saved_code_files=saved_code_files,
+            pytest_suite=pytest_suite_text,
+            code_qa_result=code_qa_result,
         )
 
     finally:

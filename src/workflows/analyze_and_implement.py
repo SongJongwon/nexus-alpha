@@ -648,6 +648,7 @@ def run_analyze_and_implement(
     publish_as_draft: bool = True,
     publish_timeout_sec: int = 120,
     enable_automate_branch: bool = False,
+    enable_automate_qa_loop: bool = False,
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -753,6 +754,7 @@ def run_analyze_and_implement(
                     outputs_dir=target_outputs_dir,
                     forced_domain=domain,
                     verbose=verbose,
+                    enable_qa_loop=enable_automate_qa_loop,
                 )
                 # AutomateWorkflowResult → WorkflowResult 매핑 (호출 측 일관성)
                 return WorkflowResult(
