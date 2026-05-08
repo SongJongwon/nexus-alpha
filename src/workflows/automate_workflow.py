@@ -325,6 +325,9 @@ class AutomateWorkflowResult:
     saved_code_files: list[Path] = field(default_factory=list)
     pytest_suite: str = ""
     code_qa_result: Any = None
+    executor_result: Any = None
+    """PR #82 — PyInstaller 실 호출 결과 (``ExecuteResult`` 또는 None).
+    enable_build=False / devops / outputs_dir=None / entry .py 부재 시 None."""
 
 
 # ---------------------------------------------------------------------------
@@ -546,9 +549,20 @@ def _build_track_b_task(
 
 # ---------------------------------------------------------------------------
 # QA 루프 통합 (PR #81) — Pytest Author + code_qa 통합
+# Build 통합 (PR #82) — execute_pyinstaller 직접 호출
 # ---------------------------------------------------------------------------
-# devops 는 산출이 Dockerfile / .yml — Python 테스트 부적합 → QA 루프 skip.
+# devops 는 산출이 Dockerfile / .yml — Python 테스트·.exe 빌드 부적합 → 둘 다 skip.
 _QA_LOOP_SKIP_DOMAINS: frozenset[AutomationDomain] = frozenset({AutomationDomain.DEVOPS})
+_BUILD_SKIP_DOMAINS: frozenset[AutomationDomain] = frozenset({AutomationDomain.DEVOPS})
+
+# 도메인 → entry .py 파일명 매핑 (PR #78 schema description 과 일치).
+# Track B 4 python 도메인 모두 단일 .py 산출 — entry 결정 결정론적.
+_DOMAIN_TO_ENTRY_FILENAME: dict[AutomationDomain, str] = {
+    AutomationDomain.WEB_SCRAPING: "scrape.py",
+    AutomationDomain.DESKTOP_AUTOMATION: "automate.py",
+    AutomationDomain.API_INTEGRATION: "api_client.py",
+    AutomationDomain.DATA_PARSER: "parser.py",
+}
 
 
 def _run_track_b_qa_loop(
@@ -623,6 +637,111 @@ def _run_track_b_qa_loop(
     return pytest_suite_text, code_qa_result
 
 
+def _resolve_track_b_entry_path(
+    domain: AutomationDomain, saved_code_files: list[Path]
+) -> Optional[Path]:
+    """도메인 → entry .py 결정 (PR #82).
+
+    우선순위:
+        1. 도메인 표준 파일명 (``_DOMAIN_TO_ENTRY_FILENAME``) — schema 의 ``# file:``
+           헤더와 일치 (예: web_scraping → ``scrape.py``)
+        2. 임의 .py 파일 (test_*.py 제외 — pytest_author 산출 회피)
+        3. None — entry 미탐지 시 build skip 신호
+    """
+    expected = _DOMAIN_TO_ENTRY_FILENAME.get(domain)
+    if expected is not None:
+        for p in saved_code_files:
+            if p.name == expected and p.exists():
+                return p
+    # fallback — 임의 .py (test_*.py 제외)
+    for p in saved_code_files:
+        if p.suffix == ".py" and not p.name.startswith("test_") and p.exists():
+            return p
+    return None
+
+
+def _format_track_b_executor_result_md(result: Any) -> str:
+    """``ExecuteResult`` → ``04_executor_result.md`` 형식 markdown (Track A 25_*.md 와 같은 구조)."""
+    lines = [
+        "# Track B PyInstaller 실행 결과 (PR #82)",
+        "",
+        f"**상태**: {'✅ SUCCESS' if result.success else '🔴 FAILED'}",
+        f"**Exit Code**: `{result.exit_code}`",
+        f"**Elapsed**: {result.elapsed_sec:.2f}초",
+    ]
+    if getattr(result, "exe_path", None):
+        lines.append(f"**산출 파일**: `{result.exe_path}`")
+    if getattr(result, "exe_size_bytes", None) is not None:
+        lines.append(
+            f"**크기**: {result.exe_size_bytes:,} bytes "
+            f"({result.exe_size_bytes / (1024 * 1024):.2f} MB)"
+        )
+    if getattr(result, "sha256", None):
+        lines.append(f"**SHA256**: `{result.sha256}`")
+    if getattr(result, "error_message", None):
+        lines.append("")
+        lines.append(f"**에러 메시지**: {result.error_message}")
+    if getattr(result, "command", None):
+        lines.append("")
+        lines.append("## 실행 명령")
+        lines.append("```")
+        lines.append(" ".join(result.command))
+        lines.append("```")
+    if getattr(result, "stdout", ""):
+        lines.append("")
+        lines.append("## stdout (tail)")
+        lines.append("```")
+        lines.append(result.stdout)
+        lines.append("```")
+    if getattr(result, "stderr", ""):
+        lines.append("")
+        lines.append("## stderr (tail)")
+        lines.append("```")
+        lines.append(result.stderr)
+        lines.append("```")
+    return "\n".join(lines) + "\n"
+
+
+def _run_track_b_build(
+    domain: AutomationDomain,
+    saved_dir: Path,
+    saved_code_files: list[Path],
+    *,
+    timeout_sec: int = 300,
+) -> Any:
+    """Track B 산출 .py 를 PyInstaller 로 빌드 (PR #82).
+
+    Track A 의 5단 LLM 사양 사슬 (run_build_workflow) 은 생략 — Track B 는
+    *단일 .py CLI 스크립트* 가정 → 직접 ``execute_pyinstaller()`` 호출이 충분.
+
+    Args:
+        domain: 결정된 도메인 (DEVOPS 제외 — 호출자가 미리 차단).
+        saved_dir: ``automate_workflow_<ts>/`` 디렉터리 — ``build_output/`` 하위 생성.
+        saved_code_files: 추출된 .py 파일 목록 (test_*.py 제외 후 entry 자동 선택).
+        timeout_sec: PyInstaller subprocess 타임아웃 (기본 300s = 5분).
+
+    Returns:
+        ``ExecuteResult`` (graceful failure 모델 — 예외 propagate 안 함).
+        entry 미탐지 시 None.
+    """
+    from src.agents.build_release.build_executor import execute_pyinstaller
+
+    entry_path = _resolve_track_b_entry_path(domain, saved_code_files)
+    if entry_path is None:
+        return None
+
+    # Track B 4 python 도메인 모두 CLI 스크립트 — windowed=False
+    app_name = entry_path.stem.title() or "App"
+    return execute_pyinstaller(
+        entry_path=entry_path,
+        output_dir=saved_dir / "build_output",
+        app_name=app_name,
+        windowed=False,
+        onefile=True,
+        timeout_sec=timeout_sec,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 공개 진입점
 # ---------------------------------------------------------------------------
@@ -633,6 +752,8 @@ def run_automate_workflow(
     forced_domain: Optional[AutomationDomain] = None,
     verbose: bool = False,
     enable_qa_loop: bool = False,
+    enable_build: bool = False,
+    build_timeout_sec: int = 300,
 ) -> AutomateWorkflowResult:
     """Phase 6 Track B — 사용자 요청 도메인에 적합한 단일 에이전트 호출.
 
@@ -645,17 +766,24 @@ def run_automate_workflow(
             task 후 ``test_<entry>.py`` 생성 + pytest 실행 + code_qa 결과 반환.
             **devops 도메인 + 디스크 저장 skip (outputs_dir=None) 시 자동 우회**.
             기본 False — backward compat (PR #75/#79 호출 측 변경 불필요).
+        enable_build: PR #82 — PyInstaller 실 호출 활성. True 면 도메인 산출 .py 를
+            ``execute_pyinstaller`` 로 .exe 빌드 + ``executor_result`` 반환 +
+            ``04_executor_result.md`` 저장. **devops + outputs_dir=None + entry 미탐지
+            시 자동 우회**. 기본 False — backward compat.
+        build_timeout_sec: PyInstaller subprocess 타임아웃 (기본 300s = 5분).
 
     Returns:
         ``AutomateWorkflowResult`` — 감지된 도메인 + 에이전트 산출 + 저장 경로 +
-        (enable_qa_loop=True 시) pytest_suite + code_qa_result.
+        (enable_qa_loop=True 시) pytest_suite + code_qa_result +
+        (enable_build=True 시) executor_result.
 
     Raises:
         ValueError: 휴리스틱이 UNKNOWN 을 반환했고 ``forced_domain`` 도 None 인 경우.
 
     Note:
-        본 함수는 LLM 호출 1~2건 (도메인 task + (옵션) pytest_author task).
-        향후 5 에이전트 chain 실행이 필요해지면 별도 함수 추가.
+        본 함수는 LLM 호출 1~2건 (도메인 task + (옵션) pytest_author task) +
+        (옵션) PyInstaller subprocess 1건. Track A 의 5단 LLM 빌드 사양 사슬은
+        Track B 에 미적용 — 단일 .py CLI 스크립트 가정으로 직접 호출이 충분.
     """
     monitor = get_langfuse_client()
     monitor.log_trace(
@@ -665,6 +793,7 @@ def run_automate_workflow(
             "phase": "phase_6_track_b",
             "workflow": "automate_workflow",
             "enable_qa_loop": enable_qa_loop,
+            "enable_build": enable_build,
         },
     )
 
@@ -717,6 +846,26 @@ def run_automate_workflow(
                 verbose=verbose,
             )
 
+        # PR #82 — Build 통합 (PyInstaller, devops 자동 skip + 디스크 저장 skip 시 우회)
+        executor_result: Any = None
+        if (
+            enable_build
+            and saved_dir is not None
+            and domain not in _BUILD_SKIP_DOMAINS
+        ):
+            executor_result = _run_track_b_build(
+                domain,
+                saved_dir,
+                saved_code_files,
+                timeout_sec=build_timeout_sec,
+            )
+            if executor_result is not None:
+                executor_md = saved_dir / "04_executor_result.md"
+                executor_md.write_text(
+                    _format_track_b_executor_result_md(executor_result),
+                    encoding="utf-8",
+                )
+
         return AutomateWorkflowResult(
             user_request=user_request,
             detected_domain=domain,
@@ -725,6 +874,7 @@ def run_automate_workflow(
             saved_code_files=saved_code_files,
             pytest_suite=pytest_suite_text,
             code_qa_result=code_qa_result,
+            executor_result=executor_result,
         )
 
     finally:
