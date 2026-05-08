@@ -227,14 +227,20 @@ def test_dod_marker_unknown_key_returns_x_conservatively() -> None:
     assert mod._dod_marker("99_unknown_future_check", True) == "❌"
 
 
-def test_download_urls_count_must_be_exactly_two() -> None:
-    """3_download_urls_count 는 .exe + .sha256.txt 두 자산만 PASS — 1개나 3개는 ❌."""
+def test_download_urls_count_must_be_at_least_one() -> None:
+    """3_download_urls_count 는 ≥ 1 PASS — Track A (.exe + .sha256.txt = 2) 와
+    Track B (.exe 1개) 모두 호환 (PR #92).
+
+    PR #92 이전: ``v == 2`` (Track A 의 sha256 파일 동반 가정).
+    PR #92 이후: ``v >= 1`` — release 의 *최소 1개 다운로드 URL 발급* 이 publish
+    성공의 충분 조건. Track A/B 모두 PASS 가능.
+    """
     mod = _load_script_module()
     rule = mod.DOD_PASS_RULES["3_download_urls_count"]
-    assert rule(2) is True
-    assert rule(0) is False
-    assert rule(1) is False
-    assert rule(3) is False
+    assert rule(0) is False  # 다운로드 URL 0개 = publish 실패
+    assert rule(1) is True   # Track B (.exe 1개)
+    assert rule(2) is True   # Track A (.exe + .sha256.txt)
+    assert rule(3) is True   # 3+ 자산도 PASS
 
 
 def test_qa_keys_treat_none_as_pass_for_optional_qa_modules() -> None:
