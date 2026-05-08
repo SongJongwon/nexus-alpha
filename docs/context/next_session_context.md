@@ -286,19 +286,25 @@ Release). 다음 1순위는 5 후보 중 선택:
 - ⚠️ QA gate fail (Pytest Author entry 파일명 추론 variance — 단일 LLM 이슈)
 - 보고서: `docs/progress/track_b_full_chain_verification_post_pr84.md`
 
-### 후보 F (신규) — Pytest Author entry 파일명 강제 ⭐ (Recommended)
+### 후보 F → ✅ 완료 (PR #86) + 실 LLM 재검증 ✅ (PR #87)
 
-**PR #84 검증에서 발견**: Pytest Author 가 `import scraper` 로 작성 (실제는
-`scrape`) → ImportError → code_qa/functional/robustness fail.
+PR #86 으로 directive 주입 (5 라인) → 실 LLM 재검증으로 `import scrape` 정확
+도달 입증. 7.78분 (PR #84 의 14.26분 대비 -45%).
 
-처방: `_run_track_b_qa_loop` 에 `_DOMAIN_TO_ENTRY_FILENAME[domain]` 주입 →
-description 에 entry 파일명 강제. 5 라인 fix.
+### 후보 G (신규) — import path 강제 (PR #88) ⭐ (Recommended)
 
-위치: `src/workflows/automate_workflow.py::_run_track_b_qa_loop` +
-`src/workflows/analyze_and_implement.py::_build_pytest_author_task` 시그니처
-변경 (선택).
+**PR #86 재검증에서 발견**: Pytest Author 가 `playwright` (sync) stub 만 만들었
+지만 도메인 산출 scrape.py 는 `from playwright.async_api import ...` (async)
+사용 → `ModuleNotFoundError: 'playwright' is not a package` → QA gate fail.
 
-효과: Track B QA gate PASS 도달 + Track A 잠재 회귀 차단.
+처방 (방어선 4 패턴 — 결정형 후처리):
+- `_run_track_b_qa_loop` 에서 `code_task` 산출 결과를 정규식으로 파싱 → entry .py
+  의 import 문 추출
+- 추출된 imports 를 `pytest_task.description` 에 명시 — stub/mock 이 정확히
+  cover 하도록 LLM 인지 강화
+- 또는 `_DOMAIN_TO_TYPICAL_IMPORTS` 사전 기반 도메인별 표준 imports 명시
+
+→ Track B QA gate PASS 도달 (3 layer mismatch fix 누적: 본문 → 파일명 → import path).
 
 ### 후보 B — DevOps 별도 분기 (Trivy 스캔 + docker build) 🟡
 
