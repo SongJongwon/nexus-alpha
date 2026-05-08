@@ -15,12 +15,13 @@
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 풀체인** (PR #70~#83)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **Track B 풀체인 실 LLM E2E 검증**: ✅ **인프라 5/5 PASS + PR #86 directive 작동 입증** (PR #84 회귀 차단)
->    - PR #84 (1차): `import scraper` → ImportError → 14.26분
->    - **PR #86 (2차): `import scrape` 정확 ✅ → 7.78분** (-45% 단축, LLM variance 감소 입증)
->    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md)
->    - ⚠️ 새 LLM variance 발견 — `playwright` sync stub vs scrape.py async import → **PR #88 후보 G**
-> **다음 1순위 후보**: PR #88 (import path 강제, 후보 G) / DevOps 별도 분기 / Streamlit UI
+> **Track B 풀체인 실 LLM E2E 검증**: ✅ **3 layer fix 누적 → QA gate PASS 도달 ⭐⭐⭐**
+>    - PR #84 (1차): `import scraper` → ImportError → 14.26분 → 후보 F 도출
+>    - PR #87 (2차): `import scrape` ✅ + `playwright` 만 stub → ModuleNotFoundError → 7.78분 → 후보 G 도출
+>    - **PR #89 (3차): code_qa PASS (15 tests, exit=0) ⭐⭐⭐ → 14.80분 (retry=1)**
+>    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md) + [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md)
+>    - 결정형 후처리 패턴 *재귀적 적용* empirical 입증 (3 layer)
+> **다음 1순위 후보**: 검증 스크립트 Track B 인지 강화 (PR #90) / DevOps 별도 분기 / Streamlit UI
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -593,7 +594,21 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - 산출: scrape.py + test_scrape.py + Scrape.exe (재현)
     - ⚠️ 새 발견: `playwright` sync stub vs `playwright.async_api` mismatch → PR #88 후보 G
     - 보고서: [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md)
-81. ⏳ **본 PR #87 (PR #86 검증 결과 docs)** — WORK_STATUS + 보고서
+81. ~~**PR #87 (PR #86 검증 결과 docs)**~~ ✅ `291bc92`
+82. ~~**PR #88 — import path 강제** (PR #87 회귀 차단, 8 신규 테스트)~~ ✅ `dbc826a`
+    - `_extract_imports_from_track_b_code_block` (정규식 import 추출)
+    - `_inject_track_b_import_directive` (description 주입 + PR #87 회귀 인용)
+    - pytest 702 → **710 passed** (+8, 회귀 0)
+    - 방어선 패턴 *7 차* 재사용
+83. ~~**PR #88 효과 실 LLM 재검증 (후보 A 3차) — QA gate PASS ⭐⭐⭐**~~ ✅
+    - 같은 명령 ("네이버 쇼핑 가격 크롤링 스크립트")
+    - **결과: code_qa PASS — 15 tests, 0 failed, exit=0 (1.83s)**
+    - elapsed 14.80분 (retry=1, qa_feedback_loop 첫 실 효과)
+    - 산출: scrape.py + test_scrape.py (`import scrape  # PR #86: 정확히 'scrape' 모듈명` LLM 코멘트)
+    - Build: Scrape.exe **19.88 MB** SHA256 검증 통과
+    - **3 layer fix (PR #78 + #86 + #88) 누적 효과 empirical 입증**
+    - 보고서: [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md)
+84. ⏳ **본 PR #89 (PR #88 효과 검증 결과 docs — QA gate PASS milestone)** — WORK_STATUS + 보고서
 
 ---
 
