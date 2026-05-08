@@ -304,11 +304,23 @@ PR #90 으로 propagate 4 필드 → 실 LLM 4차 검증으로 **active 4/4 도�
 - retry=0, 6.35분 (가장 빠름)
 - Track A 의 active 4/4 (PR #73) 와 같은 패턴 — Nexus Alpha 핵심 비전 완성
 
-### 후보 J (신규, 선택) — Track B publish 검증 🟡
+### 후보 J → ✅ 완료 (PR #92) ⭐⭐⭐
 
-DoD 7/7 의 1~4_publish/release 도 PASS 하려면 `--enable-automate-release
---automate-repo X --automate-release-tag Y` 활성으로 Draft Release 발행 필요.
-외부 GitHub state 변경 — 사용자 명시 trigger 권장. 1회 실행 시 7/7 PASS 가능.
+publish 4 항목 PASS 입증 — 실 GitHub Draft Release 발행 + Scrape.exe 업로드.
+3_download_urls_count 룰 완화 (v==2 → v>=1). DoD 6/7 PASS 도달.
+6_qa_overall_passed 만 LLM variance fail (retry 시 코드 일관성).
+
+### 후보 K (신규) — qa_feedback_loop 안정화 (PR #93?) ⭐ (Recommended)
+
+PR #92 검증에서 retry 시 LLM variance 가 4 도구 active 상태를 깨뜨림 (PR #91:
+4/4 PASS → PR #92 retry 후: code_qa PASS, functional/robustness fail).
+
+처방:
+1. retry 시 *기존 산출 코드를 컨텍스트로 명시* — 변경 영역 minimal 화
+2. 또는 retry 횟수 증가 (max_qa_retries 1 → 3)
+3. 또는 retry 시 *기존 코드 + feedback diff* 가이드 (incremental fix)
+
+→ Track B DoD 7/7 PASS 도달.
 
 ### 후보 B (DevOps 별도 분기) 🟡
 

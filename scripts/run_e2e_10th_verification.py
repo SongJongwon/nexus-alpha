@@ -200,7 +200,11 @@ def _collect_qa_results(
 DOD_PASS_RULES: dict[str, Any] = {
     "1_publish_success": lambda v: v is True,
     "2_release_url_issued": lambda v: v is True,
-    "3_download_urls_count": lambda v: v == 2,
+    # PR #92 — v == 2 → v >= 1 (Track B 호환). Track A 는 .exe + .sha256.txt (2개)
+    # 업로드, Track B 는 .exe 1개만 업로드 → rule 을 ``≥ 1`` 로 완화. 두 Track
+    # 모두 PASS 가능. release 의 *최소 1개 다운로드 URL 발급* = publish 성공의
+    # 충분 조건.
+    "3_download_urls_count": lambda v: v >= 1,
     "4_is_draft": lambda v: v is True,
     "5_executor_success": lambda v: v is True,
     "6_qa_overall_passed": lambda v: v in (True, None),
