@@ -773,7 +773,13 @@ def run_analyze_and_implement(
                     publish_timeout_sec=automate_publish_timeout_sec,
                     target_platform=target_platform,
                 )
-                # AutomateWorkflowResult → WorkflowResult 매핑 (호출 측 일관성)
+                # AutomateWorkflowResult → WorkflowResult 매핑 (호출 측 일관성).
+                # PR #90 — Track B 산출 5 필드 propagate (PR #81/#82/#83 결과를
+                # 검증 스크립트가 정확히 인지하도록):
+                #   - pytest_suite (PR #81 QA loop)
+                #   - executor_result (PR #82 Build) → 5_executor_success 판정
+                #   - update_module_spec (PR #83 Release Update Checker)
+                #   - publish_result (PR #83 gh release create)
                 return WorkflowResult(
                     user_request=user_request,
                     cto_strategy=f"(Track B routing — domain={domain.value})",
@@ -783,6 +789,10 @@ def run_analyze_and_implement(
                     saved_dir=automate_result.saved_dir or target_outputs_dir,
                     saved_code_files=list(automate_result.saved_code_files),
                     chosen_path=f"automate_{domain.value}",
+                    pytest_suite=automate_result.pytest_suite,
+                    executor_result=automate_result.executor_result,
+                    update_module_spec=automate_result.update_module_spec,
+                    publish_result=automate_result.publish_result,
                 )
             # UNKNOWN → 그대로 Track A 진행 (fallback)
 
