@@ -74,12 +74,30 @@ deterministic 보강) 를 Track B (`automate_workflow.py`) 에 *재사용 가능
 
 ## 다음 단계
 
-1. **PR #78 commit + push + create**
-2. **머지 후**: 5 도메인 sample 재검증 — `python scripts/run_e2e_10th_verification.py
-   --request "..." --enable-automate-branch` 5회 실행. 본문 분량 1000+ bytes,
-   `code/` 디렉터리에 *.py / Dockerfile / *.yml 추출 확인.
-3. **방어선 4 패턴 추가 재사용 가능성**: PR #66 → PR #78 = 두 번째 재사용 입증.
-   외부 통합 일반에 적용 가능 (analytics / telemetry / crash reporter 등).
+1. ~~**PR #78 commit + push + create**~~ ✅ 머지 `3f74e4e`
+2. ~~**5 도메인 sample 재검증** — 5/5 PASS~~ ✅
+   - 결과: web 16K / api 12K / desktop 9K / parser 9K / devops 10K bytes
+   - PR #75 회귀 (41/57 bytes) 완전 차단 (최대 394× 증가)
+   - 보고서: `docs/progress/track_b_5domain_verification_post_pr78.md`
+3. **PR #79 (5 도메인 검증 결과 docs)** 본 작업
+4. **다음 1순위 후보** (`next_session_context.md` §6):
+   - A) 휴리스틱 분류 개선 (devops 오분류 사례 — `fastapi` + `api` 2점 vs
+     `docker` 1점 패배. 단어 경계 매칭 + 가중치 + LLM fallback)
+   - B) Track B 풀체인 (Build/Release 결합)
+   - C) Streamlit UI / Vector DB / Credential Vault
+   - D) UI/UX Analyst backstory 강화
+
+## 5 도메인 sample 재검증 결과 (PR #75 회귀 vs PR #78 fix)
+
+| 도메인 | 이전 (PR #75) | 이후 (PR #78) | 배율 | code/ |
+|---|---:|---:|---:|---|
+| web_scraping | 41 B | 16,159 B | **394×** | scrape.py |
+| api_integration | 57 B | 11,722 B | **205×** | api_client.py |
+| desktop_automation | (미수행) | 9,325 B | — | automate.py |
+| data_parser | (미수행) | 9,169 B | — | parser.py |
+| devops | (미수행) | 9,570 B | — | Dockerfile + ci.yml |
+
+**5/5 PASS — 5단 본문 + code/ 산출 모두 정상.**
 
 ## 학습 — 방어선 2/4 패턴의 *재사용 가능성* 추가 입증
 
