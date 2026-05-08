@@ -125,9 +125,23 @@ def retry_task_if_short(
     if not raw or len(raw.strip()) >= threshold:
         return False  # OK or empty — no retry needed
 
+    # PR #93 — 재시도 시 progressively stronger directive 주입.
+    # 배경: PR #92 검증에서 retry 시 LLM 이 *같은* 27 chars 응답 반복 → infinite
+    # short loop. 동일 prompt 재실행은 LLM 에 같은 패턴 유도 — 자유 영역 차단을
+    # 위해 description 에 *짧은 출력 명시 거부* directive 추가.
+    short_retry_directive = (
+        f"\n\n## 🚨 재시도 directive (PR #93) — 짧은 출력 회귀 차단\n"
+        f"이전 출력이 {len(raw.strip())} chars 로 임계 {threshold} 미달. "
+        f"Final Answer 한 줄만으로는 task 미완료입니다. **5단/3단 본문 모두 "
+        f"작성 필수** + 최소 분량 {max(threshold * 10, 1200)} chars. schema 의 "
+        f"모든 필드 (summary + body sections) 채우고, ```python``` 등 fence "
+        f"마커 + ``# file:`` 헤더 누락 금지. 이전 응답의 Final Answer 라인은 "
+        f"summary 필드에만 사용하고 본문은 별도로 *상세히* 작성하세요.\n"
+    )
+
     for _ in range(max_retries):
         retry_task = Task(
-            description=task.description,
+            description=task.description + short_retry_directive,
             expected_output=task.expected_output,
             agent=task.agent,
             context=task.context,

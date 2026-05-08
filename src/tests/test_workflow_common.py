@@ -638,3 +638,97 @@ def test_capture_restores_export_even_when_exception_propagates() -> None:
         assert _CrewTask._export_output is fake_export
     finally:
         _CrewTask._export_output = sentinel_export
+
+
+# ---------------------------------------------------------------------------
+# PR #93 — retry_task_if_short 재시도 directive 주입 (PR #92 회귀 차단)
+#
+# 배경 (PR #92 publish 검증에서 발견):
+#   Pytest Author 가 27 chars Final Answer 만 출력 → ConverterError 발생 →
+#   output_pydantic stripped → retry_task_if_short 자동 재시도. 그러나 동일
+#   description 으로 재시도 → LLM 이 *같은* 27 chars 응답 반복 → infinite short.
+#
+# 처방: retry 시 description 에 stronger directive 주입.
+#   - 짧은 출력 명시 거부
+#   - 최소 분량 임계 명시 (threshold * 10)
+#   - 5단/3단 본문 강제
+#   - schema 필드 + fence 마커 + # file: 헤더 강조
+# ---------------------------------------------------------------------------
+
+
+def test_retry_injects_short_output_directive_into_retry_description() -> None:
+    """retry 시 retry_task.description 에 PR #93 directive 자동 주입."""
+    task = _make_task()
+    _set_output(task, "tiny")  # 4 chars — well below 120 threshold
+
+    captured: list[str] = []
+
+    def fake_kickoff(retry_task: Task) -> None:
+        captured.append(retry_task.description)
+        # 짧은 응답 유지 — directive 주입 검증이 목적
+        _set_output(retry_task, "still tiny")
+
+    retry_task_if_short(task, fake_kickoff, max_retries=1)
+    assert len(captured) == 1
+    retry_desc = captured[0]
+    # 원본 description 보존
+    assert task.description in retry_desc
+    # PR #93 directive 추가
+    assert "재시도 directive (PR #93)" in retry_desc
+    assert "짧은 출력 회귀 차단" in retry_desc
+    # 분량 임계 명시 (threshold 기반)
+    assert "임계" in retry_desc
+    assert "본문 모두" in retry_desc or "분량" in retry_desc
+
+
+def test_retry_directive_includes_actual_output_length() -> None:
+    """directive 가 *실제 짧은 출력 길이* 를 명시 (LLM 인지 강화)."""
+    task = _make_task()
+    _set_output(task, "x" * 27)  # PR #92 회귀 사례 정확 재현 (27 chars)
+
+    captured: list[str] = []
+
+    def fake_kickoff(retry_task: Task) -> None:
+        captured.append(retry_task.description)
+        _set_output(retry_task, "x" * 27)
+
+    retry_task_if_short(task, fake_kickoff, max_retries=1)
+    assert len(captured) == 1
+    # directive 본문에 실제 출력 길이 (27) 포함
+    assert "27 chars" in captured[0] or "27 " in captured[0]
+
+
+def test_retry_directive_does_not_pollute_original_task_description() -> None:
+    """원본 task.description 은 mutate 안 됨 — retry_task 만 augment."""
+    task = _make_task()
+    original_desc = task.description
+    _set_output(task, "short")
+
+    def fake_kickoff(retry_task: Task) -> None:
+        _set_output(retry_task, "still short")
+
+    retry_task_if_short(task, fake_kickoff, max_retries=1)
+    # 원본 description 변경 없음
+    assert task.description == original_desc
+    assert "PR #93" not in task.description
+
+
+def test_retry_directive_emphasizes_schema_fields_and_fence_markers() -> None:
+    """directive 가 schema 필드 + fence 마커 + # file: 헤더 강조 — 다른 layer
+    에서도 활용 가능."""
+    task = _make_task()
+    _set_output(task, "y")
+
+    captured: list[str] = []
+
+    def fake_kickoff(retry_task: Task) -> None:
+        captured.append(retry_task.description)
+        _set_output(retry_task, "y" * 5)
+
+    retry_task_if_short(task, fake_kickoff, max_retries=1)
+    desc = captured[0]
+    # schema 필드 강조 (Pytest Author / 도메인 schema 모두 적용)
+    assert "schema" in desc.lower()
+    # fence 마커 + 파일 헤더 (PR #64/#66 패턴 재사용 강조)
+    assert "fence" in desc.lower() or "```python" in desc
+    assert "# file:" in desc
