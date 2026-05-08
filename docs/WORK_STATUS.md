@@ -15,10 +15,12 @@
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 풀체인** (PR #70~#83)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **Track B 풀체인 실 LLM E2E 검증**: ✅ **인프라 5/5 PASS** (분류·schema·QA loop·Build·산출 모두 정상) — `outputs/automate_workflow_20260508_104330/` (Scrape.exe 9.14 MB, SHA256 검증, 14.26분)
->    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md)
->    - ⚠️ Pytest Author entry 파일명 mismatch 발견 (`scraper` vs 실제 `scrape`) → **PR #86 후보 F**
-> **다음 1순위 후보**: PR #86 (Pytest Author entry 파일명 강제) / DevOps 별도 분기 / Streamlit UI
+> **Track B 풀체인 실 LLM E2E 검증**: ✅ **인프라 5/5 PASS + PR #86 directive 작동 입증** (PR #84 회귀 차단)
+>    - PR #84 (1차): `import scraper` → ImportError → 14.26분
+>    - **PR #86 (2차): `import scrape` 정확 ✅ → 7.78분** (-45% 단축, LLM variance 감소 입증)
+>    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md)
+>    - ⚠️ 새 LLM variance 발견 — `playwright` sync stub vs scrape.py async import → **PR #88 후보 G**
+> **다음 1순위 후보**: PR #88 (import path 강제, 후보 G) / DevOps 별도 분기 / Streamlit UI
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -579,7 +581,19 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - ⚠️ QA gate fail: Pytest Author 가 `scraper` 모듈명 추론 (실제 `scrape`) → ImportError → code_qa/functional/robustness fail
     - 인프라 회귀 아님 (단일 LLM variance) — PR #86 후보 F 도출
     - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md)
-78. ⏳ **본 PR #85 (Track B 풀체인 E2E 검증 결과 docs)** — WORK_STATUS + next_session_context + 보고서
+78. ~~**PR #85 (Track B 풀체인 E2E 검증 결과 docs)**~~ ✅ `c928dc4`
+79. ~~**PR #86 — Pytest Author entry 파일명 강제** (PR #84 회귀 차단, 5라인 fix)~~ ✅ `8b237d7`
+    - `_inject_track_b_entry_filename_directive(description, domain)` 헬퍼
+    - PR #82 의 결정론적 `_DOMAIN_TO_ENTRY_FILENAME` 재사용 (방어선 패턴 6 차)
+    - pytest 692 → **702 passed** (+10, 회귀 0)
+80. ~~**PR #86 효과 실 LLM 재검증 (후보 A 2차)**~~ ✅ ⭐
+    - 같은 명령 ("네이버 쇼핑 가격 크롤링 스크립트")
+    - **결과: PR #84 회귀 완전 차단** — `test_scrape.py` + `import scrape` ✅
+    - elapsed 7.78분 (PR #84 의 14.26분 대비 -45%, variance 감소 입증)
+    - 산출: scrape.py + test_scrape.py + Scrape.exe (재현)
+    - ⚠️ 새 발견: `playwright` sync stub vs `playwright.async_api` mismatch → PR #88 후보 G
+    - 보고서: [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md)
+81. ⏳ **본 PR #87 (PR #86 검증 결과 docs)** — WORK_STATUS + 보고서
 
 ---
 
