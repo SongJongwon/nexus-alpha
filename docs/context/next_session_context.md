@@ -310,17 +310,25 @@ publish 4 항목 PASS 입증 — 실 GitHub Draft Release 발행 + Scrape.exe �
 3_download_urls_count 룰 완화 (v==2 → v>=1). DoD 6/7 PASS 도달.
 6_qa_overall_passed 만 LLM variance fail (retry 시 코드 일관성).
 
-### 후보 K (신규) — qa_feedback_loop 안정화 (PR #93?) ⭐ (Recommended)
+### 후보 K → ✅ 완료 (PR #93) + 실 LLM 재검증 ✅ (PR #94)
 
-PR #92 검증에서 retry 시 LLM variance 가 4 도구 active 상태를 깨뜨림 (PR #91:
-4/4 PASS → PR #92 retry 후: code_qa PASS, functional/robustness fail).
+PR #93 으로 retry directive 주입 → 실 LLM 6차 검증으로 infinite-short 완전 차단
+입증 (pytest_suite 27 → 12,363 bytes). 단, dependency 이슈 (`playwright` 미설치)
+적발 → 후보 L 신규 도출.
 
-처방:
-1. retry 시 *기존 산출 코드를 컨텍스트로 명시* — 변경 영역 minimal 화
-2. 또는 retry 횟수 증가 (max_qa_retries 1 → 3)
-3. 또는 retry 시 *기존 코드 + feedback diff* 가이드 (incremental fix)
+### 후보 L (신규) — dependency-aware QA gating ⭐ (Recommended)
 
-→ Track B DoD 7/7 PASS 도달.
+**PR #94 검증에서 발견**: functional/robustness executor 가 `subprocess.run([sys
+.executable, scrape.py])` 직접 실행 → LLM 선택 dep (`playwright`) 미설치 →
+ModuleNotFoundError → 0/10 fail. PR #91 (requests, 설치됨) vs PR #94 (playwright,
+미설치) — LLM tool 선택 variance.
+
+처방 (Track A 의 GUI artifact_category SKIP 패턴 재사용):
+1. `detect_artifact_category` 에 "external_dependent" 카테고리 추가
+2. import 분석 + `importlib.util.find_spec` 으로 dep 미설치 감지
+3. 미설치 시 functional/robustness *의미적 SKIP* (0/N fail 회귀 차단)
+
+→ Track B publish 시 DoD 7/7 PASS 도달 (의미적 PASS).
 
 ### 후보 B (DevOps 별도 분기) 🟡
 

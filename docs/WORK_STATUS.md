@@ -15,16 +15,17 @@
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 풀체인** (PR #70~#83)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **Track B 풀체인 실 LLM E2E 검증**: ✅ **5 회 검증 — Track B 첫 GitHub Draft Release 발행** ⭐⭐⭐
+> **Track B 풀체인 실 LLM E2E 검증**: ✅ **6 회 검증 — 결정형 후처리 4 layer + dependency 이슈 적발** ⭐⭐⭐
 >    - PR #84 (1차): filename mismatch → 14.26분
 >    - PR #87 (2차): import path mismatch → 7.78분
 >    - PR #89 (3차): code_qa PASS → 14.80분 (retry=1)
 >    - PR #91 (4차): active 4/4 → 6.35분 (retry=0)
->    - **PR #92 (5차): publish 4 항목 PASS + Draft Release 발행 → 20.43분**
->    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md) + [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md) + [progress/track_b_pr90_verification.md](./progress/track_b_pr90_verification.md) + [progress/track_b_publish_verification_pr92.md](./progress/track_b_publish_verification_pr92.md)
->    - **DoD 6/7 PASS** (룰 완화 후) — 6_qa_overall_passed 만 LLM variance fail (retry 시 코드 일관성 이슈)
->    - **Track A + Track B 양 Track 모두 자연어 → .exe + Draft Release 풀체인 완성** ⭐⭐⭐
-> **다음 1순위 후보**: qa_feedback_loop 안정화 (DoD 7/7 도달) / DevOps 별도 분기 / Streamlit UI
+>    - PR #92 (5차): publish 4 항목 PASS + Draft Release → 20.43분
+>    - **PR #94 (6차): infinite-short 차단 + 6/7 → 16.77분 (dependency 이슈 발견)**
+>    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md) + [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md) + [progress/track_b_pr90_verification.md](./progress/track_b_pr90_verification.md) + [progress/track_b_publish_verification_pr92.md](./progress/track_b_publish_verification_pr92.md) + [progress/track_b_pr93_verification.md](./progress/track_b_pr93_verification.md)
+>    - **DoD 6/7 PASS** — 6_qa fail 원인이 LLM tool 선택 variance (PR #91 requests vs PR #94 playwright dependency)
+>    - **결정형 후처리 패턴 4 layer 누적**: 본문(#78) + filename(#86) + import(#88) + retry(#93)
+> **다음 1순위 후보**: dependency-aware QA gating (후보 L) / DevOps 별도 분기 / Streamlit UI
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -633,7 +634,21 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - 6_qa_overall_passed: ❌ — retry 시 LLM variance (functional/robustness fail) → 후보 K (PR #93)
     - 실 GitHub Draft Release: https://github.com/SongJongwon/nexus-alpha/releases/tag/untagged-783b999331b2015a920d
     - elapsed 20.43분, Scrape.exe 업로드 + 다운로드 URL 발급
-89. ⏳ **본 PR #92 (publish 검증 + 룰 완화 + 보고서)** — DoD rule v==2 → v>=1 (Track A/B 호환)
+89. ~~**PR #92 (publish 검증 + 룰 완화 + 보고서)**~~ ✅ `c7b0af2`
+90. ~~**PR #93 — retry_task_if_short stronger directive 주입 (PR #92 회귀 차단)**~~ ✅ `1fbdba8`
+    - retry 시 description 에 "짧은 출력 거부 + 분량 임계 + schema/fence/header 강조" directive 자동 주입
+    - 모든 chain (Track A/B/Build/Release) 자동 적용
+    - pytest 714 → **718 passed** (+4)
+    - 방어선 패턴 *8 차* 재사용
+91. ~~**PR #93 효과 실 LLM 재검증 (후보 A 6차)**~~ ✅
+    - **infinite-short 완전 차단 ⭐** (pytest_suite 27 bytes → 12,363 bytes)
+    - code_qa PASS (17 tests)
+    - DoD 6/7 (PR #92 동일) — 단 *원인이 다름*
+    - ⚠️ 새 발견: subprocess 실행 시 LLM 선택 dep (`playwright`) 가 .venv 미설치 → ModuleNotFoundError → functional/robustness 0/N
+    - PR #91 (requests, .venv 설치) vs PR #94 (playwright, 미설치) 의 LLM tool 선택 variance
+    - 후보 L 도출: dependency-aware QA gating (detect_artifact_category 확장)
+    - 보고서: [progress/track_b_pr93_verification.md](./progress/track_b_pr93_verification.md)
+92. ⏳ **본 PR #94 (PR #93 검증 결과 docs)** — WORK_STATUS + 보고서 + 후보 L
 
 ---
 
