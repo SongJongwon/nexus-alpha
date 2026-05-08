@@ -291,20 +291,29 @@ Release). 다음 1순위는 5 후보 중 선택:
 PR #86 으로 directive 주입 (5 라인) → 실 LLM 재검증으로 `import scrape` 정확
 도달 입증. 7.78분 (PR #84 의 14.26분 대비 -45%).
 
-### 후보 G (신규) — import path 강제 (PR #88) ⭐ (Recommended)
+### 후보 G → ✅ 완료 (PR #88) + 실 LLM 재검증 ✅ (PR #89) ⭐⭐⭐
 
-**PR #86 재검증에서 발견**: Pytest Author 가 `playwright` (sync) stub 만 만들었
-지만 도메인 산출 scrape.py 는 `from playwright.async_api import ...` (async)
-사용 → `ModuleNotFoundError: 'playwright' is not a package` → QA gate fail.
+PR #88 으로 import path directive 주입 → 실 LLM 3차 검증으로 **code_qa PASS
+(15 tests, exit=0)** 도달. Track B QA gate 완전 도달 — 3 layer fix
+(PR #78 + #86 + #88) 누적 효과 empirical 입증.
 
-처방 (방어선 4 패턴 — 결정형 후처리):
-- `_run_track_b_qa_loop` 에서 `code_task` 산출 결과를 정규식으로 파싱 → entry .py
-  의 import 문 추출
-- 추출된 imports 를 `pytest_task.description` 에 명시 — stub/mock 이 정확히
-  cover 하도록 LLM 인지 강화
-- 또는 `_DOMAIN_TO_TYPICAL_IMPORTS` 사전 기반 도메인별 표준 imports 명시
+### 후보 H (신규, 선택) — 검증 스크립트 Track B 인지 강화 (PR #90) 🟢
 
-→ Track B QA gate PASS 도달 (3 layer mismatch fix 누적: 본문 → 파일명 → import path).
+`run_e2e_10th_verification.py` 의 `5_executor_success` 판정이 Track A 의
+`build_workflow` 결과만 인식. Track B 의 `_run_track_b_build` (PR #82) 직접 호출
+결과는 같은 ExecuteResult 타입이지만 검증 스크립트가 다른 위치에서 찾음 → 항상
+False. ~10 라인 fix.
+
+위치: `scripts/run_e2e_10th_verification.py` 의 `m5_qa_checks` 계산 부분.
+
+### 후보 I (신규, 선택) — functional/robustness 환경 이슈 fix (PR #91) 🟡
+
+`'str' object has no attribute 'decode'` subprocess 처리 버그 (Track B 무관).
+일반 인프라 개선.
+
+### 후보 B/C/D/E → 후순위
+
+DevOps 별도 분기 / Streamlit / UI/UX backstory / 휴리스틱 더 강화.
 
 ### 후보 B — DevOps 별도 분기 (Trivy 스캔 + docker build) 🟡
 
