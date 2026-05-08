@@ -297,23 +297,32 @@ PR #88 으로 import path directive 주입 → 실 LLM 3차 검증으로 **code_
 (15 tests, exit=0)** 도달. Track B QA gate 완전 도달 — 3 layer fix
 (PR #78 + #86 + #88) 누적 효과 empirical 입증.
 
-### 후보 H (신규, 선택) — 검증 스크립트 Track B 인지 강화 (PR #90) 🟢
+### 후보 H → ✅ 완료 (PR #90) + 실 LLM 재검증 ✅ (PR #91) ⭐⭐⭐
 
-`run_e2e_10th_verification.py` 의 `5_executor_success` 판정이 Track A 의
-`build_workflow` 결과만 인식. Track B 의 `_run_track_b_build` (PR #82) 직접 호출
-결과는 같은 ExecuteResult 타입이지만 검증 스크립트가 다른 위치에서 찾음 → 항상
-False. ~10 라인 fix.
+PR #90 으로 propagate 4 필드 → 실 LLM 4차 검증으로 **active 4/4 도달**:
+- code_qa + functional (10/10) + gui_test + robustness (9/9) 모두 PASS
+- retry=0, 6.35분 (가장 빠름)
+- Track A 의 active 4/4 (PR #73) 와 같은 패턴 — Nexus Alpha 핵심 비전 완성
 
-위치: `scripts/run_e2e_10th_verification.py` 의 `m5_qa_checks` 계산 부분.
+### 후보 J (신규, 선택) — Track B publish 검증 🟡
 
-### 후보 I (신규, 선택) — functional/robustness 환경 이슈 fix (PR #91) 🟡
+DoD 7/7 의 1~4_publish/release 도 PASS 하려면 `--enable-automate-release
+--automate-repo X --automate-release-tag Y` 활성으로 Draft Release 발행 필요.
+외부 GitHub state 변경 — 사용자 명시 trigger 권장. 1회 실행 시 7/7 PASS 가능.
 
-`'str' object has no attribute 'decode'` subprocess 처리 버그 (Track B 무관).
-일반 인프라 개선.
+### 후보 B (DevOps 별도 분기) 🟡
 
-### 후보 B/C/D/E → 후순위
+devops 도메인의 Trivy + docker build 통합. 4 python 도메인 풀체인 완성, devops
+만 별도 분기.
 
-DevOps 별도 분기 / Streamlit / UI/UX backstory / 휴리스틱 더 강화.
+### 후보 I (functional/robustness env 이슈) 🟢
+
+`'str' object has no attribute 'decode'` — PR #91 검증에선 발생 안 함 (cli 분류로
+artifact_category 정확). 일시적 환경 이슈로 추정.
+
+### 후보 C/D/E → 후순위
+
+Streamlit / UI/UX backstory / 휴리스틱 더 강화.
 
 ### 후보 B — DevOps 별도 분기 (Trivy 스캔 + docker build) 🟡
 
