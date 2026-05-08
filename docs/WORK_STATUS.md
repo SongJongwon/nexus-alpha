@@ -1,16 +1,18 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-08 (PR #78 — **Track B 방어선 2 적용 ⭐⭐⭐** 5 도메인 `output_pydantic` schema + fence/header 자동 + description 1200자 임계)
-> **현재 브랜치**: `feat/track-b-defense-2-pr78` (PR #77 머지 완료 → 본 PR 작업 중)
-> **테스트**: pytest **606 passed** (PR #77 572 → +34, 회귀 0)
-> **머지된 PR**: 75 → **77** (이전 세션) → 본 PR #78 작업 중
+> **마지막 업데이트**: 2026-05-08 (PR #78 머지 + **5 도메인 sample 재검증 5/5 PASS ⭐⭐⭐** — 본문 9~16K bytes, PR #75 41/57 bytes 회귀 완전 차단)
+> **현재 브랜치**: `docs/track-b-5domain-pr78-verification` (PR #78 머지 완료, 본 PR 은 결과 docs)
+> **테스트**: pytest **606 passed** (PR #78 머지 시점, 회귀 0)
+> **머지된 PR**: 75 → **78** (이번 세션 +1: #78 Track B 방어선 2)
 > **active QA gating (Track A)**: 0/4 → 2/4 → 1/4 회귀 → 2/4 → **4/4 (`--force-cli` CLI)** ⭐⭐⭐
-> **Track B 방어선 2**: ✅ **적용 완료 (PR #78)** — 5 도메인 schema + fence/header 자동 보강 + 분량 임계 1200자
-> **Track B sample 검증**: ⚠️ PR #75 회귀 (41~57 bytes) → **PR #78 후속 5 도메인 sample 재검증 예정**
-> **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 워크플로** (PR #70)
+> **Track B 방어선 2**: ✅ **PR #78 적용 + 5 도메인 sample 5/5 PASS 검증** ⭐⭐⭐
+>    - web_scraping 16,159 B (PR #75 41 → **394×**) / api_integration 11,722 B (PR #75 57 → **205×**)
+>    - desktop_automation 9,325 B / data_parser 9,169 B / devops 9,570 B (재분류 1회)
+>    - 5 도메인 모두 5단 본문 + code/ 산출 정상 (.py / Dockerfile + ci.yml)
+> **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 워크플로** (PR #70 + #78)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **다음 1순위**: PR #78 머지 후 5 도메인 sample 재검증 (본문 1000+ bytes 도달 확인)
+> **다음 1순위 후보**: 휴리스틱 분류 개선 (devops 오분류 사례) / Track B 풀체인 / Streamlit UI
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -497,7 +499,7 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 
 ### 2026-05-08 진행 (오늘) ⭐⭐⭐
 
-69. ⏳ **PR #78 — Track B 방어선 2 적용** (작업 중) ⭐⭐⭐
+69. ~~**PR #78 — Track B 방어선 2 적용** 머지~~ ✅ `3f74e4e` ⭐⭐⭐
     - **`_schemas.py` 5 도메인 schema 추가** (PR #59 패턴 재사용):
       - `WebScrapingOutput` (6 필드: summary + tool_choice + legal_review + code_block + selector_strategy + author_notes)
       - `DesktopAutomationOutput` (6 필드: + target_identification + failure_handling)
@@ -521,7 +523,16 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
       - `_build_track_b_task` 4개 (pytest gating + 도메인 매핑)
       - description templates 6개 (1200자 + schema 이름 + DevOps 양쪽 fence)
     - **pytest 572 → 606 passed** (+34, 회귀 0)
-    - 다음: PR #78 머지 후 5 도메인 sample 재검증 (본문 1000+ bytes 도달 확인)
+
+70. ~~**5 도메인 sample 재검증 5/5 PASS**~~ ✅ ⭐⭐⭐ (PR #78 효과 검증)
+    - **web_scraping**: 16,159 B (PR #75 41 → **394×**), `scrape.py` 추출, 5단 본문 + Playwright async + robots.txt 검토 정상
+    - **api_integration**: 11,722 B (PR #75 57 → **205×**), `api_client.py`, Bearer PAT + httpx + tenacity + Pydantic 검증
+    - **desktop_automation**: 9,325 B, `automate.py`, PyWinAuto UIA + FAILSAFE
+    - **data_parser**: 9,169 B (1차 PASS), `parser.py`, chardet + cp949 fallback
+    - **devops**: 9,570 B, `Dockerfile` (2,108 B) + `.github/workflows/ci.yml` (3,045 B), multi-stage + matrix Python 3.11~3.13
+    - **devops 오분류 1회**: 1차 "FastAPI Docker 배포 파이프라인" → `fastapi`+`api` 2점 vs `docker` 1점으로 api_integration 분류 → 명확 키워드 ("Docker multi-stage Dockerfile GitHub Actions CI/CD") 재실행 시 정확 분류
+    - 보고서: [progress/track_b_5domain_verification_post_pr78.md](./progress/track_b_5domain_verification_post_pr78.md)
+71. ⏳ **본 PR #79 (5 도메인 검증 결과 docs)** — WORK_STATUS + next_session_context + 결과 보고서
 
 ---
 

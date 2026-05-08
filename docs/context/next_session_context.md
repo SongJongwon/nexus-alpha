@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-05-07** (PR #76 머지 시점, Phase 6 + active 4/4 + Update Checker 통합 반영)
+> 마지막 업데이트: **2026-05-08** (PR #78 머지 + Track B 5 도메인 sample 5/5 PASS 검증)
 
 ---
 
@@ -12,22 +12,23 @@
 |---|---|
 | 프로젝트명 | Nexus Alpha — 업무 자동화/RPA 전문 AI 가상 기업 시스템 |
 | 최종 비전 (v4) | **자연어 한 마디 → .exe + Draft Release + 자동 업데이트 체크** 풀체인 자동 도달 |
-| 현재 단계 | **Phase 6 Track B 5명 추가 + Update Checker 풀체인 통합 + active QA 4/4 도달** |
+| 현재 단계 | **Track A active 4/4 + Update Checker 통합 + Track B 방어선 2 + 5 도메인 sample PASS** |
 | 작업 루트 | `C:\projects\nexus-alpha` |
 | 주 언어 | Python 3.13.13 (가상환경 `.venv/`) |
 | 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph 1.1.6 |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key 전환 가능 |
 | 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
-| 테스트 하네스 | pytest 9.0.3 — **572 passed** (회귀 0) |
-| **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (automate_workflow 단일 에이전트)** |
+| 테스트 하네스 | pytest 9.0.3 — **606 passed** (PR #78 +34, 회귀 0) |
+| **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (automate_workflow 단일 에이전트 + 방어선 2 schema)** |
 | **조직도 v8** | **46명 중 39명 구현 (85%)** |
 | **본부 3 (개발)** | **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐ |
 | **active QA gating** | **4/4 (--force-cli CLI 시나리오)** ⭐⭐⭐ |
+| **Track B sample 검증** | **5/5 PASS** (web 16K / api 12K / desktop 9K / parser 9K / devops 10K bytes) ⭐⭐⭐ |
 | GitHub | https://github.com/SongJongwon/nexus-alpha (`main` + 작업 브랜치) |
-| 최신 main 커밋 | PR #76 머지 (5/7) — Track B sample 검증 결과 docs |
-| 마지막 E2E 산출 | `outputs/workflow_20260507_154643/` (CLI E2E `--force-cli` active 4/4) |
+| 최신 main 커밋 | PR #78 머지 (5/8 09:04) — Track B 방어선 2 (5 도메인 schema) |
+| 마지막 E2E 산출 | `outputs/automate_workflow_20260508_090456/` (devops 정확 분류 후 9,570 B) |
 
-**한 문장 요약**: Track A는 풀체인 안정 + active QA 4/4 자연 도달 + Update Checker 풀체인 통합 모두 달성, Track B는 5명 등록 + 워크플로 통합 + 2 도메인 sample 검증 (이슈 4/6 회귀 발견 — PR #77 후속 fix 예정).
+**한 문장 요약**: Track A는 풀체인 안정 + active QA 4/4 자연 도달 + Update Checker 풀체인 통합 모두 달성, **Track B 도 방어선 2 (5 도메인 `output_pydantic` schema + fence/header 자동) 적용 + 5/5 sample PASS 로 PR #75 회귀 (41/57 bytes) 완전 차단**.
 
 ---
 
@@ -48,6 +49,8 @@
 | **옵션 6.B (Track B 워크플로 통합)** | **PR #70~#72** | `automate_workflow.py` 신설 |
 | **`--force-cli` (active 4/4)** | **PR #73~#74** | active QA 4/4 자연 도달 ⭐⭐⭐ |
 | **Track B 검증 도구** | **PR #75~#76** | `--enable-automate-branch` + sample 검증 (이슈 4/6 회귀 발견) ⚠️ |
+| **Track B 방어선 2** | **PR #78** | 5 도메인 `output_pydantic` schema + fence/header 자동 + 분량 임계 1200자 ⭐⭐⭐ |
+| **5 도메인 sample 검증** | **PR #79** | 5/5 PASS (9~16K bytes, code/ 산출 정상) ⭐⭐⭐ |
 
 ### 핵심 마일스톤 PR (요약)
 
@@ -265,69 +268,37 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 
 ---
 
-## 6. 다음 세션 1순위 — PR #77: Track B 방어선 2 적용
+## 6. 다음 세션 1순위 후보 — Track A 풀체인 + Track B 모두 안정화 완료
 
-### 배경
+PR #78 + 5 도메인 sample 5/5 PASS 로 **방어선 1~4 가 Track A/B 양쪽 모두 적용
+완료**. 다음 1순위는 4 후보 중 선택:
 
-PR #75 + 2 도메인 sample 검증에서 발견:
-- Web Scraping: 41 bytes (Final Answer 1줄만)
-- API Integration: 57 bytes (Final Answer 1줄만)
-- 두 도메인 모두 backstory 의 5단 본문 누락 → `code/` 빈 디렉터리
+### 후보 A — 휴리스틱 분류 개선 (devops 오분류 사례 fix) 🟡
 
-**원인**: Track A 의 방어선 2 (`output_pydantic` schema 강제) 가 Track B 에 미적용.
+PR #79 검증에서 `"FastAPI Docker 배포 파이프라인"` → `fastapi`+`api` 2점 vs
+`docker` 1점 → api_integration 오분류. 단어 경계 매칭 (`\bapi\b`) + 키워드
+가중치 + 다중 매칭 시 LLM fallback 도입.
 
-### 처방 (Track A PR #59 패턴 재사용)
+위치: `src/workflows/automate_workflow.py::detect_automation_domain` +
+`_DOMAIN_KEYWORDS` 가중치 dict 변경.
 
-#### Step 1 — `_schemas.py` 에 5 schema 추가
+### 후보 B — Track B 풀체인 (Build/Release 결합) 🟢
 
-```python
-class WebScrapingOutput(BaseModel):
-    summary: str = Field(...)        # 한 줄 요약
-    tool_choice: str = Field(...)    # ### 1. 도구 선택 + 근거
-    legal_review: str = Field(...)   # ### 2. robots.txt + ToS 검토
-    code_block: str = Field(...)     # ### 3. 단독 실행 코드 (```python``` + # file:)
-    selector_strategy: str = Field(...) # ### 4. 셀렉터 전략 + flakiness 방지
-    author_notes: str = Field(...)   # ### 5. 작성자 노트
+현재 Track B 는 단일 에이전트 호출만 — Build/Release/QA 풀 피드백 루프 미동반.
+DoD 7/7 의 publish/release/executor 항목 도달 시 산출물 안정성 추가 향상.
 
-    def to_markdown(self) -> str:
-        # PR #64 + #66 패턴 재사용
-        code = _ensure_python_fence(_strip_leading_section_header(self.code_block))
-        code = _ensure_file_header_in_python_block(code, "scrape.py")
-        return f"{self.summary}\n\n## ...\n\n### 1. ...\n\n{...}"
+위치: `automate_workflow.run_automate_workflow()` 에 `enable_build_branch`
++ `enable_qa_loop` 옵션 추가.
 
-# 동일 패턴으로 4개 더:
-# DesktopAutomationOutput / APIIntegrationOutput / DataParserOutput / DevOpsOutput
-```
+### 후보 C — Streamlit UI / Vector DB / Credential Vault 🟢
 
-#### Step 2 — `automate_workflow.py` task 빌더에 적용
+이전 세션 로그 (5/7) 에 명시된 중장기 항목들. 풀체인 안정 + 5 도메인 PASS
+달성 후 가능.
 
-```python
-def _build_task(domain, agent, ...):
-    kwargs = dict(description=..., expected_output=..., agent=agent)
-    if "pytest" not in sys.modules:
-        kwargs["output_pydantic"] = _DOMAIN_TO_SCHEMA[domain]
-    return Task(**kwargs)
-```
+### 후보 D — UI/UX Analyst backstory 강화 (옵션 B) 🟢
 
-#### Step 3 — backstory + description 분량 임계 (PR #59 패턴)
-
-```python
-# automate_workflow.py 의 _DOMAIN_TASK_DESCRIPTION_TEMPLATES 강화
-"전체 출력 **최소 1200자** — Final Answer 한 줄만 출력 시 task 실패 간주\n"
-"5단 본문 모두 채울 것 (도구/근거 + 보안·전략 + 코드 + 패턴·통합 + 작성자 노트)"
-```
-
-#### Step 4 — 신규 테스트
-
-각 schema 별 4 필드 검증 + to_markdown / fence 자동 / header 자동 / Track B 통합.
-
-#### Step 5 — 5 도메인 sample 재검증
-
-```bash
-python scripts/run_e2e_10th_verification.py \
-  --request "..." --enable-automate-branch
-# 목표: 본문 분량 1000+ bytes, code/ 디렉터리에 *.py 추출
-```
+`--force-cli` 의 자연스러운 보완재. GUI 분기에서 functional/robustness
+SKIPPED 비율 감소 목표.
 
 ---
 
@@ -346,20 +317,22 @@ git status && git log --oneline -5
 ```
 프로젝트 루트는 C:\projects\nexus-alpha 입니다.
 docs/context/next_session_context.md 를 먼저 읽어서 현재 상태와
-PR #76 까지의 설계 결정을 파악해 주세요.
+PR #79 까지의 설계 결정을 파악해 주세요.
 
 현재 상태:
-- 머지된 PR: #76까지
-- pytest: 572 passed (회귀 0)
+- 머지된 PR: #79까지
+- pytest: 606 passed (PR #78 +34, 회귀 0)
 - 전체 구현률: 39/46 (85%)
 - 본부 3 (개발): 6/9 (67%) — Phase 6 Track B 5명 추가
-- active QA: 4/4 자연 도달 (--force-cli)
+- active QA: 4/4 자연 도달 (Track A --force-cli)
 - Update Checker 풀체인 통합 완료 (PR #66)
+- Track B 방어선 2 적용 완료 (PR #78) + 5/5 sample PASS (PR #79)
 
-다음 1순위: PR #77 — Track B 방어선 2 적용
-- _schemas.py 에 5 도메인 output_pydantic schema 추가
-- automate_workflow.py task 빌더에 적용
-- backstory + description 분량 임계 (PR #59 패턴)
+다음 1순위 후보 (next_session_context.md §6 참조):
+- A) 휴리스틱 분류 개선 (devops 오분류 fix)
+- B) Track B 풀체인 (Build/Release 결합)
+- C) Streamlit UI / Vector DB / Credential Vault
+- D) UI/UX Analyst backstory 강화 (옵션 B)
 ```
 
 ### 7-3. 동작 확인 명령
@@ -455,14 +428,22 @@ GUI Code Generator backstory 강화 (LLM 의존) 대신 workflow 결정형 후�
 
 **핵심 깨달음**: GUI 분기에서는 functional/robustness가 본질적으로 SKIPPED. 진짜 active 4/4 도달은 `--force-cli` 로 CLI 분기 강제 시에만. *분기에 따라 의미적 4/4 가 다름*.
 
-### 9-4. Track B 회귀 = 방어선 *재사용 필요*
+### 9-4. Track B 회귀 = 방어선 *재사용 필요* → 입증
 
 이전 학습 (PR #66): 방어선 4 가 재사용 가능한 패턴.
 v6 발견 (PR #75): 방어선 2 도 재사용 필요 — Track B 에 적용 안 되면 Track A 가 5 차례 겪은 회귀를 그대로 반복.
 
-→ PR #77 후속 작업의 기반.
+**v7 입증 (PR #78 + #79)**: 방어선 2 + 4 의 *재사용* 이 정확히 작동.
+- PR #59 (1차) → PR #64 (2차) → PR #66 (3차) → **PR #78 (4차, Track B 5 도메인)**
+- PR #75 회귀 (41/57 bytes) → PR #78 fix → 5/5 sample PASS (9~16K bytes)
+
+### 9-5. 휴리스틱 분류의 한계 — devops 사례 (PR #79 발견)
+
+`fastapi` 토큰이 `api_integration` (`fastapi` 키워드 + `api` 부분문자열) 양쪽
+매칭 → 2점 vs `docker` (devops) 1점 → 다중 도메인 신호 시 단순 카운트 모델
+오분류. 향후 단어 경계 매칭 + 가중치 + LLM fallback 으로 보강 가능 (§6 후보 A).
 
 ---
 
-*본 문서는 PR #76 머지 시점 (2026-05-07) 기준입니다. 다음 세션 1순위는 PR #77 (Track B 방어선 2 적용) 입니다.*
-*조직도 v8 / 구성안 v6 / 세션 로그 (5/6+5/7) 와 함께 4중 보호 — 세션 인계 시 본 문서 1장으로 충분.*
+*본 문서는 PR #79 머지 시점 (2026-05-08) 기준입니다. 다음 세션 1순위는 §6 후보 A~D 중 선택 입니다.*
+*조직도 v8 / 구성안 v6 / 세션 로그 (5/6+5/7+5/8) 와 함께 4중 보호 — 세션 인계 시 본 문서 1장으로 충분.*
