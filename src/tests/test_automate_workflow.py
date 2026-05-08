@@ -241,6 +241,144 @@ def test_analyze_and_implement_falls_back_to_track_a_on_unknown_domain(
 
 
 # ---------------------------------------------------------------------------
+# PR #90 — Track B 산출 4 필드 propagate (검증 스크립트 인지 강화)
+#
+# 배경: PR #89 검증에서 5_executor_success 가 False 로 나옴 — 검증 스크립트는
+# `result.executor_result` 만 읽는데, run_analyze_and_implement 가 Track B
+# 분기에서 WorkflowResult 매핑 시 executor_result / pytest_suite /
+# update_module_spec / publish_result 4 필드 propagate 누락.
+# 처방: 4 필드 모두 propagate.
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_and_implement_propagates_track_b_pytest_suite(
+    tmp_path: Path,
+) -> None:
+    """enable_automate_qa_loop=True → WorkflowResult.pytest_suite 채워짐."""
+    from src.workflows.analyze_and_implement import run_analyze_and_implement
+
+    result = run_analyze_and_implement(
+        "Dockerfile multi-stage + docker-compose + GitHub Actions 작성해줘",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_automate_branch=True,
+        enable_automate_qa_loop=True,
+    )
+    assert result.chosen_path == "automate_devops"
+    # devops 는 QA loop skip — pytest_suite 빈 문자열
+    assert result.pytest_suite == ""
+
+    # web_scraping 으로 다시 — QA loop 가 실행되므로 pytest_suite 비어있지 않음
+    result2 = run_analyze_and_implement(
+        "네이버 쇼핑 가격 크롤링 스크립트",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_automate_branch=True,
+        enable_automate_qa_loop=True,
+    )
+    assert result2.chosen_path == "automate_web_scraping"
+    assert result2.pytest_suite, "Track B QA loop pytest_suite 미 propagate"
+
+
+def test_analyze_and_implement_propagates_track_b_executor_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """enable_automate_build=True + .py entry 가 추출되면 executor_result propagate.
+
+    실 ``execute_pyinstaller`` 호출은 monkeypatch 로 mock — Track B build helper
+    까지 도달하면 fake ExecuteResult 가 WorkflowResult.executor_result 로 propagate.
+    """
+    from src.workflows.analyze_and_implement import run_analyze_and_implement
+
+    # FakeProvider 응답을 web_scraping schema 형식으로 stub (entry 추출 가능)
+    from src.tests.test_track_b_build import (
+        _FakeExecuteResult,
+        _mock_execute_pyinstaller,
+        _set_fake_response_for_domain,
+    )
+
+    # default_fake_provider 가 conftest fixture 이므로 _patch_llm_factory 직접 사용
+    # (이 테스트에선 새 응답 inject 가 필요)
+    fake_exec = _FakeExecuteResult()
+    _mock_execute_pyinstaller(monkeypatch, fake_exec)
+
+    # _patch_llm_factory autouse fixture 가 이미 setup 됨 — 직접 access
+    import src.llm.factory as factory_module
+    fake_provider = factory_module.get_llm_provider()
+    fake_provider._response = (
+        "Thought: Track B build stub.\n"
+        "Final Answer: tool=fake\n\n"
+        "## Web Scraping 산출\n\n"
+        "### 3. 단독 실행 코드\n\n"
+        "```python\n"
+        "# file: scrape.py\n"
+        "if __name__ == '__main__':\n"
+        "    print('hello')\n"
+        "```\n"
+    )
+
+    result = run_analyze_and_implement(
+        "네이버 쇼핑 가격 크롤링 스크립트",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_automate_branch=True,
+        enable_automate_build=True,
+    )
+    assert result.chosen_path == "automate_web_scraping"
+    # Track B 의 fake ExecuteResult 가 WorkflowResult.executor_result 로 propagate
+    assert result.executor_result is fake_exec, (
+        "Track B executor_result 가 WorkflowResult.executor_result 로 미 propagate "
+        "(PR #90 회귀)"
+    )
+    # 검증 스크립트의 5_executor_success 판정 기준
+    assert getattr(result.executor_result, "success", False) is True
+
+
+def test_analyze_and_implement_propagates_track_b_update_module_spec_and_publish_result(
+    tmp_path: Path,
+) -> None:
+    """enable_automate_release=True → update_module_spec + publish_result propagate."""
+    from src.workflows.analyze_and_implement import run_analyze_and_implement
+
+    # web_scraping 도메인 — release 활성 시 Update Checker LLM 산출 + (옵션) publish
+    result = run_analyze_and_implement(
+        "네이버 쇼핑 가격 크롤링 스크립트",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_automate_branch=True,
+        enable_automate_release=True,
+        # repo / tag 미제공 → Update Checker 만 실행, publish skip
+    )
+    assert result.chosen_path == "automate_web_scraping"
+    # update_module_spec 은 LLM 산출이므로 비어있지 않음
+    assert result.update_module_spec, (
+        "Track B update_module_spec 미 propagate (PR #83+#90)"
+    )
+    # publish_result 는 repo/tag 미제공으로 None
+    assert result.publish_result is None
+
+
+def test_analyze_and_implement_track_b_unknown_domain_skips_propagation(
+    tmp_path: Path,
+) -> None:
+    """UNKNOWN 도메인 → Track A fallback → Track B 필드들 default 유지 (backward compat)."""
+    from src.workflows.analyze_and_implement import run_analyze_and_implement
+
+    result = run_analyze_and_implement(
+        "사칙연산 계산기 만들어줘",
+        outputs_dir=tmp_path,
+        verbose=False,
+        enable_automate_branch=True,
+        enable_automate_qa_loop=True,
+        enable_automate_build=True,
+        enable_automate_release=True,
+    )
+    # Track A 진행 — chosen_path 가 'automate_*' 가 아님
+    assert not result.chosen_path.startswith("automate_")
+    # 본 path 는 Track A 의 own logic 으로 필드 채움 (Track B propagation 무관)
+
+
+# ---------------------------------------------------------------------------
 # 6. __init__.py export 검증
 # ---------------------------------------------------------------------------
 
