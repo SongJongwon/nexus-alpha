@@ -30,7 +30,9 @@ from src.workflows.automate_workflow import (
     AutomationDomain,
     _DOMAIN_TO_ENTRY_FILENAME,
     _QA_LOOP_SKIP_DOMAINS,
+    _extract_imports_from_track_b_code_block,
     _inject_track_b_entry_filename_directive,
+    _inject_track_b_import_directive,
     run_automate_workflow,
 )
 
@@ -357,3 +359,158 @@ def test_qa_loop_actually_injects_directive_into_pytest_task(
     )
     assert "import scrape" in pytest_desc
     assert "test_scrape.py" in pytest_desc
+
+
+# ---------------------------------------------------------------------------
+# PR #88 — entry .py 의 import path 강제 (PR #87 회귀 차단)
+#
+# 배경 (PR #87 검증에서 발견):
+#   scrape.py: from playwright.async_api import ... (async)
+#   test_scrape.py: _StubPW (sync_playwright 가정) → playwright 만 stub
+#   → ModuleNotFoundError: 'playwright' is not a package
+# 처방: code_task 산출에서 import 추출 → pytest_task description 에 명시
+# ---------------------------------------------------------------------------
+
+
+def test_extract_imports_from_python_block() -> None:
+    """``code_task`` 산출 마크다운의 첫 ```python``` 블록에서 import 라인 추출."""
+    md = (
+        "## Track B 산출\n\n"
+        "### 3. 단독 실행 코드\n\n"
+        "```python\n"
+        "# file: scrape.py\n"
+        "from playwright.async_api import async_playwright, Browser\n"
+        "import os\n"
+        "from typing import Optional\n"
+        "import asyncio\n"
+        "\n"
+        "async def main():\n"
+        "    pass\n"
+        "```\n"
+    )
+    imports = _extract_imports_from_track_b_code_block(md)
+    assert "from playwright.async_api import async_playwright, Browser" in imports
+    assert "import os" in imports
+    assert "from typing import Optional" in imports
+    assert "import asyncio" in imports
+    assert len(imports) == 4
+
+
+def test_extract_imports_returns_empty_for_no_python_block() -> None:
+    """python fence 부재 → 빈 리스트."""
+    md = "Just plain text with no python block."
+    assert _extract_imports_from_track_b_code_block(md) == []
+
+
+def test_extract_imports_returns_empty_for_empty_input() -> None:
+    """빈 입력 / 공백 입력 → 빈 리스트 (방어적)."""
+    assert _extract_imports_from_track_b_code_block("") == []
+    assert _extract_imports_from_track_b_code_block("   ") == []
+
+
+def test_extract_imports_picks_first_python_block_only() -> None:
+    """여러 python 블록이 있어도 첫 블록 (entry .py 가정) 만 파싱."""
+    md = (
+        "```python\n"
+        "import alpha\n"
+        "```\n"
+        "\n"
+        "```python\n"
+        "import beta\n"
+        "```\n"
+    )
+    imports = _extract_imports_from_track_b_code_block(md)
+    assert imports == ["import alpha"]
+    # 두 번째 블록의 beta 는 추출 안 됨
+    assert "import beta" not in imports
+
+
+def test_inject_import_directive_includes_extracted_imports() -> None:
+    """directive 본문에 추출된 import 라인 + 회귀 사례 + 경고 문구 포함."""
+    imports = [
+        "from playwright.async_api import async_playwright",
+        "import os",
+    ]
+    result = _inject_track_b_import_directive("BASE\n", imports)
+    assert "import path 강제 (PR #88)" in result
+    assert "``from playwright.async_api import async_playwright``" in result
+    assert "``import os``" in result
+    # PR #87 회귀 사례 명시 (추적성)
+    assert "PR #87" in result
+    assert "playwright.async_api" in result
+    assert "ModuleNotFoundError" in result
+
+
+def test_inject_import_directive_skip_for_empty_imports() -> None:
+    """빈 imports → 변경 없음 (방어적)."""
+    original = "BASE\n"
+    assert _inject_track_b_import_directive(original, []) == original
+
+
+def test_inject_import_directive_truncates_long_lists() -> None:
+    """imports > 12 → 첫 12개만 + ``... 외 N개`` 표기 (description 폭주 방지)."""
+    imports = [f"import mod{i}" for i in range(20)]
+    result = _inject_track_b_import_directive("BASE\n", imports)
+    assert "``import mod0``" in result
+    assert "``import mod11``" in result
+    assert "... 외 8개" in result
+    # 13번째 항목은 직접 표시 안 됨
+    assert "``import mod12``" not in result
+
+
+def test_qa_loop_actually_injects_import_directive_into_pytest_task(
+    tmp_path: Path, monkeypatch, _patch_llm_factory
+) -> None:
+    """_run_track_b_qa_loop 가 PR #86 + PR #88 directive 모두 주입.
+
+    FakeProvider 응답을 도메인 산출 형식으로 stub — `# file: scrape.py` +
+    ``from playwright.async_api import ...`` 포함. _run_track_b_qa_loop 가
+    이 응답을 code_task 출력으로 받아 import 추출 → pytest_task.description
+    에 directive 주입.
+    """
+    # 도메인 task 의 산출에 specific imports 포함 (_extract_imports 가 추출 가능)
+    _patch_llm_factory._response = (
+        "Thought: Track B test stub.\n"
+        "Final Answer: tool=fake, ok\n\n"
+        "## Web Scraping 산출\n\n"
+        "### 3. 단독 실행 코드\n\n"
+        "```python\n"
+        "# file: scrape.py\n"
+        "from playwright.async_api import async_playwright\n"
+        "import asyncio\n"
+        "from typing import Optional\n"
+        "\n"
+        "async def main():\n"
+        "    pass\n"
+        "```\n"
+    )
+
+    captured: dict = {"calls": []}
+    from src.workflows import automate_workflow as awm
+    original_kickoff = awm.kickoff_with_converter_rescue
+
+    def capturing_kickoff(crew, tasks):
+        if tasks:
+            captured["calls"].append(tasks[0].description)
+        return original_kickoff(crew, tasks)
+
+    monkeypatch.setattr(awm, "kickoff_with_converter_rescue", capturing_kickoff)
+
+    run_automate_workflow(
+        "네이버 쇼핑 크롤링",
+        outputs_dir=tmp_path,
+        forced_domain=AutomationDomain.WEB_SCRAPING,
+        verbose=False,
+        enable_qa_loop=True,
+    )
+
+    # 마지막 kickoff = pytest_task
+    assert len(captured["calls"]) >= 2
+    pytest_desc = captured["calls"][-1]
+    # PR #86 directive 그대로 포함
+    assert "Track B entry 파일명 강제 (PR #86)" in pytest_desc
+    # PR #88 directive 추가 포함
+    assert "import path 강제 (PR #88)" in pytest_desc
+    # 추출된 imports 가 directive 본문에 포함
+    assert "playwright.async_api" in pytest_desc
+    assert "import asyncio" in pytest_desc

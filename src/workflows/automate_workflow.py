@@ -572,6 +572,70 @@ _DOMAIN_TO_ENTRY_FILENAME: dict[AutomationDomain, str] = {
 }
 
 
+def _extract_imports_from_track_b_code_block(agent_output: str) -> list[str]:
+    """domain 에이전트 산출 마크다운의 첫 ```python``` 블록에서 import 문 추출 (PR #88).
+
+    배경 (PR #87 검증에서 발견):
+        scrape.py: ``from playwright.async_api import ...`` (async)
+        test_scrape.py: ``_StubPW`` (sync_playwright 가정) → ``sys.modules['playwright']``
+        만 stub → ``ModuleNotFoundError: No module named 'playwright.async_api';
+        'playwright' is not a package``.
+
+    처방 (방어선 4 패턴 — 결정형 후처리):
+        ``code_task`` 산출에서 정규식으로 import 문 추출 → ``pytest_task.description``
+        에 명시 → Pytest Author 가 *서브모듈까지 cover* 하는 stub 작성하도록 인지.
+
+    Args:
+        agent_output: 도메인 에이전트의 산출 마크다운 (5단 본문 포함).
+
+    Returns:
+        ``import X`` / ``from X import Y`` 라인 목록 (첫 ```python``` 블록 한정).
+        블록 부재 또는 import 부재 시 빈 리스트.
+    """
+    if not agent_output:
+        return []
+    matches = _PYTHON_FENCE_PATTERN.findall(agent_output)
+    if not matches:
+        return []
+    code = matches[0]  # 첫 블록 (entry .py 가정)
+    imports: list[str] = []
+    for line in code.splitlines():
+        stripped = line.strip()
+        # 단순 ``import X``, ``import X as Y``, ``from X import Y``,
+        # ``from X.Y import Z`` 모두 매칭. 멀티라인 import (괄호) 는 첫 줄만 캡처.
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            imports.append(stripped)
+    return imports
+
+
+def _inject_track_b_import_directive(
+    description: str, imports: list[str]
+) -> str:
+    """pytest_task description 에 entry .py 의 import path 강제 directive 추가 (PR #88).
+
+    ``_inject_track_b_entry_filename_directive`` 다음에 chained 호출 가정.
+    빈 imports → 변경 없음 (방어적).
+    """
+    if not imports:
+        return description
+    # 최대 12개 — description 폭주 방지 (대부분 entry 파일은 5~10 imports)
+    imports_block = "\n".join(f"  - ``{imp}``" for imp in imports[:12])
+    if len(imports) > 12:
+        imports_block += f"\n  - (... 외 {len(imports) - 12}개)"
+    return description + (
+        f"\n## entry .py 가 사용하는 import path 강제 (PR #88) 🚨\n"
+        f"엔트리 파일은 다음 import 들을 *정확히* 사용합니다:\n"
+        f"{imports_block}\n\n"
+        f"**테스트의 stub/mock 은 이 import path 들을 정확히 cover** 해야 합니다. "
+        f"예: ``from playwright.async_api import async_playwright`` 라면 "
+        f"``sys.modules['playwright.async_api'] = <stub_module>`` 으로 *서브모듈* "
+        f"까지 등록 필수. ``sys.modules['playwright'] = <stub>`` 만으로는 "
+        f"``ModuleNotFoundError: No module named 'playwright.async_api'; "
+        f"'playwright' is not a package`` 회귀 사례 (PR #87 검증). "
+        f"async API 면 ``pytest.mark.asyncio`` 또는 ``asyncio.run`` 으로 호출.\n"
+    )
+
+
 def _inject_track_b_entry_filename_directive(
     description: str, domain: AutomationDomain
 ) -> str:
@@ -648,6 +712,12 @@ def _run_track_b_qa_loop(
     # PR #86 — Pytest Author entry 파일명 강제 directive 주입 (PR #84 회귀 차단)
     pytest_task.description = _inject_track_b_entry_filename_directive(
         pytest_task.description, domain
+    )
+    # PR #88 — entry .py 의 import path 강제 directive 주입 (PR #87 회귀 차단)
+    code_task_output = _task_output_text(code_task)
+    entry_imports = _extract_imports_from_track_b_code_block(code_task_output)
+    pytest_task.description = _inject_track_b_import_directive(
+        pytest_task.description, entry_imports
     )
     pytest_crew = Crew(
         agents=[pytest_author],
