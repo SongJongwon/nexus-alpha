@@ -651,6 +651,12 @@ def run_analyze_and_implement(
     enable_automate_qa_loop: bool = False,
     enable_automate_build: bool = False,
     automate_build_timeout_sec: int = 300,
+    enable_automate_release: bool = False,
+    automate_repo_url: str = "",
+    automate_release_tag: str = "",
+    automate_release_title: str = "",
+    automate_publish_as_draft: bool = True,
+    automate_publish_timeout_sec: int = 120,
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -759,6 +765,13 @@ def run_analyze_and_implement(
                     enable_qa_loop=enable_automate_qa_loop,
                     enable_build=enable_automate_build,
                     build_timeout_sec=automate_build_timeout_sec,
+                    enable_release=enable_automate_release,
+                    repo_url=automate_repo_url,
+                    release_tag=automate_release_tag,
+                    release_title=automate_release_title,
+                    publish_as_draft=automate_publish_as_draft,
+                    publish_timeout_sec=automate_publish_timeout_sec,
+                    target_platform=target_platform,
                 )
                 # AutomateWorkflowResult → WorkflowResult 매핑 (호출 측 일관성)
                 return WorkflowResult(

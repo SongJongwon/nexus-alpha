@@ -328,6 +328,12 @@ class AutomateWorkflowResult:
     executor_result: Any = None
     """PR #82 — PyInstaller 실 호출 결과 (``ExecuteResult`` 또는 None).
     enable_build=False / devops / outputs_dir=None / entry .py 부재 시 None."""
+    update_module_spec: str = ""
+    """PR #83 — Update Checker LLM 산출 (``updater.py`` 참조 구현 포함 markdown).
+    enable_release=False / devops 시 빈 문자열."""
+    publish_result: Any = None
+    """PR #83 — gh release create 결과 (``PublishResult`` 또는 None).
+    enable_release=False / devops / .exe 부재 / repo_url 부재 시 None."""
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +560,7 @@ def _build_track_b_task(
 # devops 는 산출이 Dockerfile / .yml — Python 테스트·.exe 빌드 부적합 → 둘 다 skip.
 _QA_LOOP_SKIP_DOMAINS: frozenset[AutomationDomain] = frozenset({AutomationDomain.DEVOPS})
 _BUILD_SKIP_DOMAINS: frozenset[AutomationDomain] = frozenset({AutomationDomain.DEVOPS})
+_RELEASE_SKIP_DOMAINS: frozenset[AutomationDomain] = frozenset({AutomationDomain.DEVOPS})
 
 # 도메인 → entry .py 파일명 매핑 (PR #78 schema description 과 일치).
 # Track B 4 python 도메인 모두 단일 .py 산출 — entry 결정 결정론적.
@@ -635,6 +642,176 @@ def _run_track_b_qa_loop(
         return pytest_suite_text, None
 
     return pytest_suite_text, code_qa_result
+
+
+def _build_track_b_update_checker_task(
+    update_agent, app_short_name: str, target_platform: str, repo_url: str
+):
+    """Track B 전용 Update Checker task — Track A 와 달리 release_task context 없음.
+
+    PR #66 의 deterministic ``UpdateModuleSpecOutput.to_markdown`` (fence + ``# file:
+    updater.py`` 헤더 자동) 그대로 활용. 결과는 ``_integrate_update_checker`` 가
+    추출 + entry .py 자동 import.
+    """
+    import sys
+
+    from src.workflows._schemas import UpdateModuleSpecOutput
+
+    update_endpoint = (
+        f"https://api.github.com/repos/{repo_url.rstrip('/').split('github.com/')[-1]}"
+        "/releases/latest"
+        if repo_url and "github.com" in repo_url
+        else "TBD — repo_url 미제공"
+    )
+    kwargs: dict = dict(
+        description=(
+            "백스토리에 명시된 5단 구조(동작 흐름 / 참조 구현 updater.py / 통합 위치 / "
+            "보안 체크리스트 / 작성자 노트)로 한국어 자동 업데이트 모듈 사양을 작성하세요. "
+            "**보안 5원칙 (HTTPS / TLS 검증 / 화이트리스트 / SHA256 검증 / 자동 적용 "
+            "금지) 모두 준수해야 합니다.**\n\n"
+            f"[APP_METADATA]\n"
+            f"short_name: {app_short_name}\n\n"
+            f"[UPDATE_ENDPOINT]\n{update_endpoint}\n\n"
+            f"[TARGET_PLATFORM]\n{target_platform}\n\n"
+            "[SIGNING_AVAILABLE]\nno\n"
+        ),
+        expected_output=(
+            "5단 한국어 자동 업데이트 모듈 사양. 마지막 줄 `Final Answer: updater "
+            "module — endpoint=<도메인>, sha256_check=yes, signing_check=no, "
+            "check_interval=24h`."
+        ),
+        agent=update_agent,
+    )
+    if "pytest" not in sys.modules:
+        kwargs["output_pydantic"] = UpdateModuleSpecOutput
+    return Task(**kwargs)
+
+
+def _run_track_b_release(
+    domain: AutomationDomain,
+    saved_dir: Path,
+    saved_code_files: list[Path],
+    executor_result: Any,
+    *,
+    repo_url: str,
+    release_tag: str,
+    release_title: str,
+    publish_as_draft: bool,
+    publish_timeout_sec: int,
+    target_platform: str,
+    verbose: bool,
+) -> tuple[str, list[Path], Any]:
+    """Track B Release 통합 (PR #83).
+
+    1. Update Checker LLM 호출 → 5단 산출 (``UpdateModuleSpecOutput.to_markdown``
+       이 fence + ``# file: updater.py`` 헤더 deterministic 보강 — PR #66 패턴 재사용)
+    2. ``_integrate_update_checker`` 호출 → ``code/updater.py`` 추출 + entry .py
+       에 자동 import 라인 주입 (PR #66 헬퍼 재사용)
+    3. ``executor_result.exe_path`` 가 있고 repo_url + release_tag 가 있으면
+       ``execute_gh_release`` 호출 → Draft Release 생성 + .exe 업로드
+
+    Returns:
+        ``(update_module_spec, integrated_files, publish_result)``
+        - update_module_spec: Update Checker 산출 markdown (빈 문자열 가능)
+        - integrated_files: 새 ``updater.py`` + 수정된 entry 파일 목록
+        - publish_result: ``PublishResult`` 또는 None
+    """
+    from src.agents.build_release import create_update_checker_agent
+    from src.workflows.analyze_and_implement import _integrate_update_checker
+
+    # 1) Update Checker LLM
+    app_short_name = _DOMAIN_TO_ENTRY_FILENAME.get(domain, "app.py").replace(".py", "")
+    update_agent = create_update_checker_agent(verbose=verbose)
+    update_task = _build_track_b_update_checker_task(
+        update_agent, app_short_name, target_platform, repo_url
+    )
+    update_crew = Crew(
+        agents=[update_agent],
+        tasks=[update_task],
+        process=Process.sequential,
+        verbose=verbose,
+    )
+    kickoff_with_converter_rescue(update_crew, [update_task])
+    retry_short_tasks_in_chain([update_task])
+    update_module_spec = _task_output_text(update_task)
+
+    # 1a) Update Checker 산출 markdown 저장
+    (saved_dir / "05_update_module_spec.md").write_text(
+        update_module_spec, encoding="utf-8"
+    )
+
+    # 2) Update Checker 통합 — code/updater.py + entry import 주입
+    integrated_files: list[Path] = _integrate_update_checker(saved_dir, update_module_spec)
+    seen = {p.resolve() for p in saved_code_files}
+    for p in integrated_files:
+        if p.resolve() not in seen:
+            saved_code_files.append(p)
+            seen.add(p.resolve())
+
+    # 3) gh release create (executor_result 의 .exe + repo_url + tag 모두 있을 때만)
+    publish_result: Any = None
+    exe_path = getattr(executor_result, "exe_path", None) if executor_result else None
+    can_publish = (
+        exe_path is not None
+        and getattr(executor_result, "success", False)
+        and bool(repo_url)
+        and bool(release_tag)
+    )
+    if can_publish:
+        from src.agents.build_release.distribution_executor import execute_gh_release
+
+        publish_result = execute_gh_release(
+            repo=repo_url,
+            tag=release_tag,
+            title=release_title or f"{app_short_name} {release_tag}",
+            notes_body=(
+                f"# {app_short_name} {release_tag}\n\n"
+                f"Track B 자동 산출물 — domain={domain.value}.\n\n"
+                f"## 다운로드\n\n"
+                f"- `{exe_path.name}` — Track B {domain.value} 산출\n"
+            ),
+            files_to_upload=[exe_path],
+            draft=publish_as_draft,
+            timeout_sec=publish_timeout_sec,
+        )
+        # 06_publish_result.md 저장
+        if publish_result is not None:
+            (saved_dir / "06_publish_result.md").write_text(
+                _format_track_b_publish_result_md(publish_result),
+                encoding="utf-8",
+            )
+
+    return update_module_spec, integrated_files, publish_result
+
+
+def _format_track_b_publish_result_md(result: Any) -> str:
+    """``PublishResult`` → ``06_publish_result.md`` 형식 markdown."""
+    lines = [
+        "# Track B GitHub Release 발행 결과 (PR #83)",
+        "",
+        f"**상태**: {'✅ SUCCESS' if result.success else '🔴 FAILED'}",
+        f"**Tag**: `{result.tag}`",
+        f"**Draft**: {'yes' if result.is_draft else 'no'}",
+        f"**Exit Code**: `{result.exit_code}`",
+        f"**Elapsed**: {result.elapsed_sec:.2f}초",
+    ]
+    if getattr(result, "release_url", None):
+        lines.append(f"**Release URL**: {result.release_url}")
+    if getattr(result, "download_urls", None):
+        lines.append("")
+        lines.append("## 다운로드 URL")
+        for url in result.download_urls:
+            lines.append(f"- {url}")
+    if getattr(result, "error_message", None):
+        lines.append("")
+        lines.append(f"**에러 메시지**: {result.error_message}")
+    if getattr(result, "command", None):
+        lines.append("")
+        lines.append("## 실행 명령")
+        lines.append("```")
+        lines.append(" ".join(result.command))
+        lines.append("```")
+    return "\n".join(lines) + "\n"
 
 
 def _resolve_track_b_entry_path(
@@ -754,6 +931,13 @@ def run_automate_workflow(
     enable_qa_loop: bool = False,
     enable_build: bool = False,
     build_timeout_sec: int = 300,
+    enable_release: bool = False,
+    repo_url: str = "",
+    release_tag: str = "",
+    release_title: str = "",
+    publish_as_draft: bool = True,
+    publish_timeout_sec: int = 120,
+    target_platform: str = "windows",
 ) -> AutomateWorkflowResult:
     """Phase 6 Track B — 사용자 요청 도메인에 적합한 단일 에이전트 호출.
 
@@ -771,6 +955,18 @@ def run_automate_workflow(
             ``04_executor_result.md`` 저장. **devops + outputs_dir=None + entry 미탐지
             시 자동 우회**. 기본 False — backward compat.
         build_timeout_sec: PyInstaller subprocess 타임아웃 (기본 300s = 5분).
+        enable_release: PR #83 — Update Checker LLM + 자동 import 주입 + (조건 충족
+            시) ``gh release create`` 호출. True 면 ``code/updater.py`` 추가 + entry
+            .py 에 import 라인 자동 삽입 (PR #66 패턴 재사용) + .exe 산출 시 Draft
+            Release 발행. **devops + outputs_dir=None + .exe 부재 시 자동 우회**.
+        repo_url: PR #83 — gh release create 의 repo (예: ``owner/name`` 또는
+            GitHub URL). 빈 문자열이면 publish skip.
+        release_tag: PR #83 — release tag (예: ``v0.1.0-track-b``). 빈 문자열이면
+            publish skip.
+        release_title: PR #83 — release 제목. 빈 문자열이면 도메인 + tag 자동 생성.
+        publish_as_draft: PR #83 — Draft 발행 (기본 True — public 노출 안 됨).
+        publish_timeout_sec: gh release subprocess 타임아웃 (기본 120s).
+        target_platform: Update Checker 입력 — windows / macos / linux (기본 windows).
 
     Returns:
         ``AutomateWorkflowResult`` — 감지된 도메인 + 에이전트 산출 + 저장 경로 +
@@ -866,6 +1062,28 @@ def run_automate_workflow(
                     encoding="utf-8",
                 )
 
+        # PR #83 — Release 통합 (Update Checker + integration + (옵션) gh release create)
+        update_module_spec = ""
+        publish_result: Any = None
+        if (
+            enable_release
+            and saved_dir is not None
+            and domain not in _RELEASE_SKIP_DOMAINS
+        ):
+            update_module_spec, _, publish_result = _run_track_b_release(
+                domain,
+                saved_dir,
+                saved_code_files,
+                executor_result,
+                repo_url=repo_url,
+                release_tag=release_tag,
+                release_title=release_title,
+                publish_as_draft=publish_as_draft,
+                publish_timeout_sec=publish_timeout_sec,
+                target_platform=target_platform,
+                verbose=verbose,
+            )
+
         return AutomateWorkflowResult(
             user_request=user_request,
             detected_domain=domain,
@@ -875,6 +1093,8 @@ def run_automate_workflow(
             pytest_suite=pytest_suite_text,
             code_qa_result=code_qa_result,
             executor_result=executor_result,
+            update_module_spec=update_module_spec,
+            publish_result=publish_result,
         )
 
     finally:
