@@ -1,18 +1,21 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-08 (PR #78 머지 + **5 도메인 sample 재검증 5/5 PASS ⭐⭐⭐** — 본문 9~16K bytes, PR #75 41/57 bytes 회귀 완전 차단)
-> **현재 브랜치**: `docs/track-b-5domain-pr78-verification` (PR #78 머지 완료, 본 PR 은 결과 docs)
-> **테스트**: pytest **606 passed** (PR #78 머지 시점, 회귀 0)
-> **머지된 PR**: 75 → **78** (이번 세션 +1: #78 Track B 방어선 2)
+> **마지막 업데이트**: 2026-05-08 (PR #78~#84 머지 — **Track B 풀체인 완성 ⭐⭐⭐** — schema + 휴리스틱 + QA + Build + Release + E2E CLI 플래그)
+> **현재 브랜치**: `feat/track-b-e2e-cli-flags-pr84` (PR #83 머지 완료, 본 PR 은 E2E 스크립트 통합 + 문서 갱신)
+> **테스트**: pytest **687 passed** (PR #83 머지 시점, 572 → +115, 회귀 0)
+> **머지된 PR**: 75 → **83** (이번 세션 +6: #78~#83 Track B 풀체인 시퀀스)
 > **active QA gating (Track A)**: 0/4 → 2/4 → 1/4 회귀 → 2/4 → **4/4 (`--force-cli` CLI)** ⭐⭐⭐
 > **Track B 방어선 2**: ✅ **PR #78 적용 + 5 도메인 sample 5/5 PASS 검증** ⭐⭐⭐
 >    - web_scraping 16,159 B (PR #75 41 → **394×**) / api_integration 11,722 B (PR #75 57 → **205×**)
 >    - desktop_automation 9,325 B / data_parser 9,169 B / devops 9,570 B (재분류 1회)
->    - 5 도메인 모두 5단 본문 + code/ 산출 정상 (.py / Dockerfile + ci.yml)
-> **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 워크플로** (PR #70 + #78)
+> **Track B 휴리스틱**: ✅ **PR #80 — 가중치 + 단어 경계 + LLM fallback** (devops 오분류 fix)
+> **Track B 풀체인 시퀀스**: ✅ **PR #81 (QA loop) + PR #82 (Build) + PR #83 (Release)** ⭐⭐⭐
+>    - 자연어 → schema 강제 .py → pytest_author + code_qa → .exe → Update Checker 통합 → Draft Release
+>    - devops 자동 skip (Dockerfile/yml 산출, build/release 부적합)
+> **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 풀체인** (PR #70~#83)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **다음 1순위 후보**: 휴리스틱 분류 개선 (devops 오분류 사례) / Track B 풀체인 / Streamlit UI
+> **다음 1순위 후보**: Track B 풀체인 실 LLM E2E 검증 / DevOps 별도 분기 (Trivy + docker build) / Streamlit UI
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -532,7 +535,39 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - **devops**: 9,570 B, `Dockerfile` (2,108 B) + `.github/workflows/ci.yml` (3,045 B), multi-stage + matrix Python 3.11~3.13
     - **devops 오분류 1회**: 1차 "FastAPI Docker 배포 파이프라인" → `fastapi`+`api` 2점 vs `docker` 1점으로 api_integration 분류 → 명확 키워드 ("Docker multi-stage Dockerfile GitHub Actions CI/CD") 재실행 시 정확 분류
     - 보고서: [progress/track_b_5domain_verification_post_pr78.md](./progress/track_b_5domain_verification_post_pr78.md)
-71. ⏳ **본 PR #79 (5 도메인 검증 결과 docs)** — WORK_STATUS + next_session_context + 결과 보고서
+71. ~~**PR #79 (5 도메인 검증 결과 docs)**~~ ✅ `98f85e2`
+72. ~~**PR #80 — 휴리스틱 분류 개선** (가중치 + 단어 경계 + LLM fallback)~~ ✅ `7904602`
+    - 키워드 형식: `tuple[str, ...]` → `(text, weight, word_boundary)` 3-tuple
+    - STRONG (3) / MEDIUM (2) / WEAK (1, word_boundary=True) 3 tier
+    - 짧은 모호 영어 (`api`, `pdf`, `csv`, `json`, `docker`) 단어 경계 강제 → `fastapi` 안의 `api` 부분 매칭 차단
+    - 가중치 동률 시 LLM fallback (NexusAlphaLLM 1회 호출, pytest 환경 우회)
+    - PR #79 회귀 시나리오 ("FastAPI Docker 배포 파이프라인") E2E 재검증 → devops 정확 분류 + 9,598 B
+    - pytest 606 → **638 passed** (+32, 회귀 0)
+73. ~~**PR #81 — Track B + QA 피드백 루프** (pytest_author + code_qa)~~ ✅ `b59c00d`
+    - `run_automate_workflow(..., enable_qa_loop=False)` 추가 (default backward compat)
+    - Track A 의 `_build_pytest_author_task` 재사용 + 별도 Crew + `run_code_qa`
+    - devops 자동 skip (산출이 Dockerfile/yml, Python 테스트 부적합)
+    - 신규 필드: `pytest_suite: str` + `code_qa_result: Any`
+    - pytest 638 → **653 passed** (+15, 회귀 0)
+74. ~~**PR #82 — Track B + Build (PyInstaller)**~~ ✅ `de2df35`
+    - `enable_build=False` + `build_timeout_sec=300` 추가
+    - Track A 의 5단 LLM 사양 사슬 *생략* — Track B 단일 .py CLI 가정으로 `execute_pyinstaller` 직접 호출
+    - 도메인별 결정론적 entry: scrape.py / automate.py / api_client.py / parser.py
+    - 신규 필드: `executor_result: Any` (ExecuteResult)
+    - 신규 산출: `04_executor_result.md` + `build_output/dist/<App>.exe`
+    - pytest 653 → **673 passed** (+20, 회귀 0)
+75. ~~**PR #83 — Track B + Release** (Update Checker + gh release create)~~ ✅ `04aa88d`
+    - `enable_release=False` + 6 신규 파라미터 (repo_url / release_tag / release_title / publish_as_draft / publish_timeout_sec / target_platform)
+    - Update Checker LLM (1 task) + PR #66 의 `_integrate_update_checker` 직접 재사용
+    - .exe + repo_url + release_tag 모두 있을 때만 `execute_gh_release` 호출
+    - 신규 필드: `update_module_spec: str` + `publish_result: Any`
+    - 신규 산출: `05_update_module_spec.md` + `06_publish_result.md` + `code/updater.py`
+    - pytest 673 → **687 passed** (+14, 회귀 0)
+    - 방어선 패턴 *5 차* 재사용 입증
+76. ⏳ **본 PR #84 — Track B 풀체인 E2E CLI 플래그 + 문서 갱신**
+    - `run_e2e_10th_verification.py` 에 5 신규 플래그: `--enable-automate-qa-loop` / `--enable-automate-build` / `--enable-automate-release` / `--automate-repo` / `--automate-release-tag`
+    - WORK_STATUS + next_session_context PR #78~#83 누적 반영
+    - summary.json 에 신규 플래그 echo (재현성)
 
 ---
 
@@ -550,16 +585,31 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
 - PR #64 (Pytest fence) — 같은 schema 본문 내부 fence 보장
 - PR #66 (Updater 통합) — 같은 헬퍼 (`_ensure_python_fence`) 재사용 + 헤더 추가 보강
 
-### ✅ Track B 적용 완료 — PR #78 (5/8)
+### ✅ Track B 풀체인 완성 — PR #78~#83 (5/8) ⭐⭐⭐
 
-| 도메인 | Track A 적용 | **Track B (`automate_workflow.py`)** |
+| 방어선 / 단계 | Track A | **Track B** |
 |---|---|---|
 | 1 (auto-retry) | ✅ | ✅ |
-| **2 (`output_pydantic` schema)** | ✅ | ✅ **PR #78 — 5 도메인 schema 도입** ⭐ |
+| **2 (output_pydantic schema)** | ✅ | ✅ **PR #78 — 5 도메인 schema** |
 | 3 (capture-before-rescue) | ✅ | ✅ |
-| 4 (fence 자동 + 헤더 자동) | ✅ | ✅ **PR #78 — 일반화 헬퍼 (`_ensure_fence` / `_ensure_file_header_in_block`) 재사용** ⭐ |
+| **4 (fence 자동 + 헤더 자동)** | ✅ | ✅ **PR #78 — 일반화 헬퍼** |
+| 휴리스틱 분류 (가중치 + 단어 경계) | (N/A) | ✅ **PR #80** |
+| QA loop (pytest_author + code_qa) | ✅ | ✅ **PR #81** |
+| Build (PyInstaller .exe) | ✅ | ✅ **PR #82** (devops skip) |
+| Release (Update Checker + gh release) | ✅ | ✅ **PR #83** (devops skip) |
+| E2E CLI 플래그 통합 | (기본) | ✅ **PR #84** |
 
-→ 다음: PR #78 머지 후 5 도메인 sample 재검증으로 본문 분량 1000+ bytes 도달 확인.
+→ Track B 풀체인 최종 동작:
+```python
+result = run_automate_workflow(
+    "네이버 쇼핑 가격 크롤링",
+    enable_qa_loop=True, enable_build=True, enable_release=True,
+    repo_url="owner/repo", release_tag="v0.1.0-track-b",
+)
+# code/scrape.py + test_scrape.py + updater.py
+# 03_pytest_suite / 04_executor / 05_update_module / 06_publish
+# build_output/dist/Scrape.exe → Draft Release 업로드
+```
 
 ---
 

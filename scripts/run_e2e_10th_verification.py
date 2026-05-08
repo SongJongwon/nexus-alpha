@@ -286,10 +286,55 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help=(
             "Track B (Phase 6) 활성화 — Web Scraping / Desktop Automation / "
             "API Integration / Data Parser / DevOps 5 도메인 중 휴리스틱 분류로 "
-            "1명 호출 (PR #75). NOTE: Track B 는 단일 에이전트 호출 흐름이라 "
-            "Build/Release 단계 미동반 → DoD 7/7 일부 항목 (publish/executor) "
-            "실패 가능 — 산출물 코드 자체 검증이 목표. analyze_and_implement "
-            "라우팅이 UNKNOWN 도메인 시 Track A fallback (backward compat)."
+            "1명 호출 (PR #75). analyze_and_implement 라우팅이 UNKNOWN 도메인 시 "
+            "Track A fallback (backward compat)."
+        ),
+    )
+    # ─── Track B 풀체인 플래그 (PR #84 — PR #81/#82/#83 노출) ────────────────
+    parser.add_argument(
+        "--enable-automate-qa-loop",
+        action="store_true",
+        default=False,
+        help=(
+            "Track B + QA 피드백 루프 활성 (PR #81). 도메인 task 후 pytest_author "
+            "+ code_qa 실행 → 03_pytest_suite.md + test_*.py 산출. devops 자동 "
+            "skip. --enable-automate-branch 와 함께 사용."
+        ),
+    )
+    parser.add_argument(
+        "--enable-automate-build",
+        action="store_true",
+        default=False,
+        help=(
+            "Track B + Build (PyInstaller) 활성 (PR #82). 도메인 entry .py → .exe "
+            "산출 + 04_executor_result.md. devops 자동 skip. "
+            "--enable-automate-branch 와 함께 사용."
+        ),
+    )
+    parser.add_argument(
+        "--enable-automate-release",
+        action="store_true",
+        default=False,
+        help=(
+            "Track B + Release 활성 (PR #83). Update Checker LLM + updater.py "
+            "auto-import + (옵션) gh release create. --automate-repo + "
+            "--automate-release-tag 모두 제공 시 publish 실행. devops 자동 skip."
+        ),
+    )
+    parser.add_argument(
+        "--automate-repo",
+        default="",
+        help=(
+            "Track B Release 의 GitHub repo (예: 'owner/name'). 빈 문자열이면 "
+            "publish skip (Update Checker 통합만 실행). PR #83."
+        ),
+    )
+    parser.add_argument(
+        "--automate-release-tag",
+        default="",
+        help=(
+            "Track B Release tag (예: 'v0.1.0-track-b'). 빈 문자열이면 publish "
+            "skip. PR #83."
         ),
     )
     return parser.parse_args(argv)
@@ -306,6 +351,12 @@ def main() -> int:
     enable_gui_branch_for_run = not args.force_cli
     # PR #75: --enable-automate-branch → Track B 활성화
     enable_automate_branch_for_run = args.enable_automate_branch
+    # PR #84: Track B 풀체인 플래그 (PR #81/#82/#83 노출)
+    enable_automate_qa_loop_for_run = args.enable_automate_qa_loop
+    enable_automate_build_for_run = args.enable_automate_build
+    enable_automate_release_for_run = args.enable_automate_release
+    automate_repo_for_run = args.automate_repo
+    automate_release_tag_for_run = args.automate_release_tag
 
     print("=" * 80)
     print("10차 E2E Verification — M5 + QA 자동 피드백 루프 (PR #49)")
@@ -317,8 +368,20 @@ def main() -> int:
     print(f"enable_automate_branch: {enable_automate_branch_for_run} "
           f"(Track B Phase 6)")
     if enable_automate_branch_for_run:
-        print("[NOTE] Track B 활성 — 단일 에이전트 호출 후 Build/Release 미동반.")
-        print("       DoD 7/7 일부 항목 실패 가능 (산출물 코드 검증이 목표).")
+        track_b_chain = []
+        if enable_automate_qa_loop_for_run:
+            track_b_chain.append("QA loop")
+        if enable_automate_build_for_run:
+            track_b_chain.append("Build")
+        if enable_automate_release_for_run:
+            track_b_chain.append("Release")
+        if track_b_chain:
+            print(f"[NOTE] Track B 풀체인 활성 — {' + '.join(track_b_chain)} (PR #81~#83).")
+            if enable_automate_release_for_run and not (automate_repo_for_run and automate_release_tag_for_run):
+                print("       repo / release_tag 미제공 → publish skip (Update Checker 통합만).")
+        else:
+            print("[NOTE] Track B 활성 — 단일 에이전트 호출 (QA/Build/Release 비활성).")
+            print("       DoD 7/7 일부 항목 실패 가능 (산출물 코드 검증이 목표).")
     print("=" * 80)
     print()
 
@@ -354,6 +417,12 @@ def main() -> int:
                 publish_as_draft=True,
                 publish_timeout_sec=120,
                 enable_automate_branch=enable_automate_branch_for_run,
+                # PR #84 — Track B 풀체인 플래그 (PR #81/#82/#83)
+                enable_automate_qa_loop=enable_automate_qa_loop_for_run,
+                enable_automate_build=enable_automate_build_for_run,
+                enable_automate_release=enable_automate_release_for_run,
+                automate_repo_url=automate_repo_for_run,
+                automate_release_tag=automate_release_tag_for_run,
             )
             status = "SUCCESS"
         except KeyboardInterrupt:
@@ -487,6 +556,12 @@ def main() -> int:
         "force_cli": args.force_cli,
         "enable_gui_branch": enable_gui_branch_for_run,
         "enable_automate_branch": enable_automate_branch_for_run,
+        # PR #84 — Track B 풀체인 플래그 (PR #81/#82/#83)
+        "enable_automate_qa_loop": enable_automate_qa_loop_for_run,
+        "enable_automate_build": enable_automate_build_for_run,
+        "enable_automate_release": enable_automate_release_for_run,
+        "automate_repo": automate_repo_for_run,
+        "automate_release_tag": automate_release_tag_for_run,
         "qa_modules_available": {k: v is not None for k, v in qa_modules.items()},
         "qa_iterations": qa_iterations,
         "qa_decision_final": _dump_safely(qa_decision),

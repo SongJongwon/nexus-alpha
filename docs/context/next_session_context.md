@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-05-08** (PR #78 머지 + Track B 5 도메인 sample 5/5 PASS 검증)
+> 마지막 업데이트: **2026-05-08** (PR #78~#84 — Track B 풀체인 시퀀스 완성)
 
 ---
 
@@ -12,23 +12,23 @@
 |---|---|
 | 프로젝트명 | Nexus Alpha — 업무 자동화/RPA 전문 AI 가상 기업 시스템 |
 | 최종 비전 (v4) | **자연어 한 마디 → .exe + Draft Release + 자동 업데이트 체크** 풀체인 자동 도달 |
-| 현재 단계 | **Track A active 4/4 + Update Checker 통합 + Track B 방어선 2 + 5 도메인 sample PASS** |
+| 현재 단계 | **Track A active 4/4 + Track B 풀체인 (schema → 휴리스틱 → QA → Build → Release) 완성** |
 | 작업 루트 | `C:\projects\nexus-alpha` |
 | 주 언어 | Python 3.13.13 (가상환경 `.venv/`) |
 | 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph 1.1.6 |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key 전환 가능 |
 | 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
-| 테스트 하네스 | pytest 9.0.3 — **606 passed** (PR #78 +34, 회귀 0) |
-| **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (automate_workflow 단일 에이전트 + 방어선 2 schema)** |
+| 테스트 하네스 | pytest 9.0.3 — **687 passed** (572 → +115, 회귀 0) |
+| **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (단일 에이전트 + schema + 휴리스틱 + QA + Build + Release 풀체인)** |
 | **조직도 v8** | **46명 중 39명 구현 (85%)** |
 | **본부 3 (개발)** | **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐ |
 | **active QA gating** | **4/4 (--force-cli CLI 시나리오)** ⭐⭐⭐ |
-| **Track B sample 검증** | **5/5 PASS** (web 16K / api 12K / desktop 9K / parser 9K / devops 10K bytes) ⭐⭐⭐ |
+| **Track B 풀체인** | **schema (PR #78) + 휴리스틱 (PR #80) + QA (PR #81) + Build (PR #82) + Release (PR #83) 완성** ⭐⭐⭐ |
 | GitHub | https://github.com/SongJongwon/nexus-alpha (`main` + 작업 브랜치) |
-| 최신 main 커밋 | PR #78 머지 (5/8 09:04) — Track B 방어선 2 (5 도메인 schema) |
+| 최신 main 커밋 | PR #83 머지 — Track B + Release (Update Checker + gh release create) |
 | 마지막 E2E 산출 | `outputs/automate_workflow_20260508_090456/` (devops 정확 분류 후 9,570 B) |
 
-**한 문장 요약**: Track A는 풀체인 안정 + active QA 4/4 자연 도달 + Update Checker 풀체인 통합 모두 달성, **Track B 도 방어선 2 (5 도메인 `output_pydantic` schema + fence/header 자동) 적용 + 5/5 sample PASS 로 PR #75 회귀 (41/57 bytes) 완전 차단**.
+**한 문장 요약**: Track A는 풀체인 안정 + active QA 4/4 자연 도달 + Update Checker 풀체인 통합 모두 달성, **Track B 도 풀체인 시퀀스 (schema 강제 → 가중치 휴리스틱 → QA loop → PyInstaller Build → Update Checker + gh release) 완성 — Track A 와 동일한 산출 안정성 도달**.
 
 ---
 
@@ -51,6 +51,11 @@
 | **Track B 검증 도구** | **PR #75~#76** | `--enable-automate-branch` + sample 검증 (이슈 4/6 회귀 발견) ⚠️ |
 | **Track B 방어선 2** | **PR #78** | 5 도메인 `output_pydantic` schema + fence/header 자동 + 분량 임계 1200자 ⭐⭐⭐ |
 | **5 도메인 sample 검증** | **PR #79** | 5/5 PASS (9~16K bytes, code/ 산출 정상) ⭐⭐⭐ |
+| **Track B 휴리스틱 개선** | **PR #80** | 가중치 (3 tier) + 단어 경계 + LLM fallback (devops 오분류 fix) ⭐ |
+| **Track B + QA 루프** | **PR #81** | pytest_author + code_qa 통합 (devops skip) ⭐ |
+| **Track B + Build** | **PR #82** | execute_pyinstaller 직접 호출 (4 도메인 → .exe, devops skip) ⭐ |
+| **Track B + Release** | **PR #83** | Update Checker LLM + 자동 import + gh release create (devops skip) ⭐⭐⭐ |
+| **E2E CLI 플래그 통합** | **PR #84** | run_e2e_10th_verification.py 에 5 신규 플래그 노출 |
 
 ### 핵심 마일스톤 PR (요약)
 
@@ -268,37 +273,50 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 
 ---
 
-## 6. 다음 세션 1순위 후보 — Track A 풀체인 + Track B 모두 안정화 완료
+## 6. 다음 세션 1순위 후보 — Track B 풀체인 완성 후
 
-PR #78 + 5 도메인 sample 5/5 PASS 로 **방어선 1~4 가 Track A/B 양쪽 모두 적용
-완료**. 다음 1순위는 4 후보 중 선택:
+PR #78~#83 으로 Track B 풀체인 완성 (schema → 휴리스틱 → QA → Build →
+Release). 다음 1순위는 5 후보 중 선택:
 
-### 후보 A — 휴리스틱 분류 개선 (devops 오분류 사례 fix) 🟡
+### 후보 A — Track B 풀체인 실 LLM E2E 검증 ⭐ (Recommended)
 
-PR #79 검증에서 `"FastAPI Docker 배포 파이프라인"` → `fastapi`+`api` 2점 vs
-`docker` 1점 → api_integration 오분류. 단어 경계 매칭 (`\bapi\b`) + 키워드
-가중치 + 다중 매칭 시 LLM fallback 도입.
+PR #84 로 CLI 플래그는 노출됐지만, 실 LLM 으로 풀체인 (QA + Build + Release)
+empirical 검증 미실시. 다음 명령으로 1회 검증:
 
-위치: `src/workflows/automate_workflow.py::detect_automation_domain` +
-`_DOMAIN_KEYWORDS` 가중치 dict 변경.
+```bash
+.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py \
+  --request "네이버 쇼핑 가격 크롤링 스크립트" \
+  --enable-automate-branch \
+  --enable-automate-qa-loop \
+  --enable-automate-build
+# (release 검증은 repo + tag 추가 필요)
+```
 
-### 후보 B — Track B 풀체인 (Build/Release 결합) 🟢
+산출 검증: `outputs/automate_workflow_<ts>/03_pytest_suite.md` +
+`04_executor_result.md` + `build_output/dist/Scrape.exe`. 1회 ~10분 예상.
 
-현재 Track B 는 단일 에이전트 호출만 — Build/Release/QA 풀 피드백 루프 미동반.
-DoD 7/7 의 publish/release/executor 항목 도달 시 산출물 안정성 추가 향상.
+### 후보 B — DevOps 별도 분기 (Trivy 스캔 + docker build) 🟡
 
-위치: `automate_workflow.run_automate_workflow()` 에 `enable_build_branch`
-+ `enable_qa_loop` 옵션 추가.
+현재 devops 도메인은 build/release skip — 산출이 Dockerfile/yml. 별도 분기로
+`docker build` + Trivy CVE 스캔 + cosign 서명 통합 시 5/5 도메인 모두 풀
+산출 가능. 다른 도메인보다 작업량 큼.
+
+위치: `automate_workflow.py` 에 `_run_track_b_devops_pipeline` 추가 +
+새 helpers (docker_executor / trivy_scanner).
 
 ### 후보 C — Streamlit UI / Vector DB / Credential Vault 🟢
 
-이전 세션 로그 (5/7) 에 명시된 중장기 항목들. 풀체인 안정 + 5 도메인 PASS
-달성 후 가능.
+이전 세션 로그 (5/7) 에 명시된 중장기 항목들. 본격 신기능.
 
-### 후보 D — UI/UX Analyst backstory 강화 (옵션 B) 🟢
+### 후보 D — UI/UX Analyst backstory 강화 🟢
 
 `--force-cli` 의 자연스러운 보완재. GUI 분기에서 functional/robustness
-SKIPPED 비율 감소 목표.
+SKIPPED 비율 감소 목표. 작은 작업.
+
+### 후보 E — 휴리스틱 더 강화 (compound 단어 경계 + 동의어 사전) 🟢
+
+PR #80 으로 1차 fix 했지만, 한국어 compound prefix overlap (`도커파일`
+안의 `도커`) 은 의도적으로 허용 중. 더 정교한 처리 + 동의어 사전 도입 가능.
 
 ---
 
@@ -317,27 +335,34 @@ git status && git log --oneline -5
 ```
 프로젝트 루트는 C:\projects\nexus-alpha 입니다.
 docs/context/next_session_context.md 를 먼저 읽어서 현재 상태와
-PR #79 까지의 설계 결정을 파악해 주세요.
+PR #84 까지의 설계 결정을 파악해 주세요.
 
 현재 상태:
-- 머지된 PR: #79까지
-- pytest: 606 passed (PR #78 +34, 회귀 0)
+- 머지된 PR: #84까지
+- pytest: 687 passed (572 → +115, 회귀 0)
 - 전체 구현률: 39/46 (85%)
-- 본부 3 (개발): 6/9 (67%) — Phase 6 Track B 5명 추가
+- 본부 3 (개발): 6/9 (67%)
 - active QA: 4/4 자연 도달 (Track A --force-cli)
-- Update Checker 풀체인 통합 완료 (PR #66)
-- Track B 방어선 2 적용 완료 (PR #78) + 5/5 sample PASS (PR #79)
+- Track A 풀체인: Update Checker 통합 완료 (PR #66)
+- Track B 풀체인 시퀀스 완성:
+  * PR #78 방어선 2 schema (5 도메인)
+  * PR #80 휴리스틱 (가중치 + 단어 경계 + LLM fallback)
+  * PR #81 QA loop (pytest_author + code_qa)
+  * PR #82 Build (PyInstaller .exe)
+  * PR #83 Release (Update Checker + gh release create)
+  * PR #84 E2E CLI 플래그 통합
 
 다음 1순위 후보 (next_session_context.md §6 참조):
-- A) 휴리스틱 분류 개선 (devops 오분류 fix)
-- B) Track B 풀체인 (Build/Release 결합)
+- A) Track B 풀체인 실 LLM E2E 검증 (Recommended)
+- B) DevOps 별도 분기 (Trivy + docker build)
 - C) Streamlit UI / Vector DB / Credential Vault
-- D) UI/UX Analyst backstory 강화 (옵션 B)
+- D) UI/UX Analyst backstory 강화
+- E) 휴리스틱 더 강화 (compound + 동의어 사전)
 ```
 
 ### 7-3. 동작 확인 명령
 
-**(pytest — 30초 내, 572 passed)**
+**(pytest — 30초 내, 687 passed)**
 ```bash
 .venv/Scripts/pytest.exe -q
 ```
@@ -349,11 +374,34 @@ PR #79 까지의 설계 결정을 파악해 주세요.
   --force-cli
 ```
 
-**(Track B sample 검증 — ~7분)**
+**(Track B sample 검증 — 단일 에이전트만, ~5~7분)**
 ```bash
 .venv/Scripts/python.exe scripts/run_e2e_10th_verification.py \
   --request "네이버 쇼핑 가격 크롤링 스크립트" \
   --enable-automate-branch \
+  --max-retries 1
+```
+
+**(Track B 풀체인 검증 — QA + Build, ~10~15분, PR #84 신규)**
+```bash
+.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py \
+  --request "네이버 쇼핑 가격 크롤링 스크립트" \
+  --enable-automate-branch \
+  --enable-automate-qa-loop \
+  --enable-automate-build \
+  --max-retries 1
+```
+
+**(Track B 풀체인 + Release — gh release 발행 포함, PR #84 신규)**
+```bash
+.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py \
+  --request "네이버 쇼핑 가격 크롤링 스크립트" \
+  --enable-automate-branch \
+  --enable-automate-qa-loop \
+  --enable-automate-build \
+  --enable-automate-release \
+  --automate-repo "SongJongwon/nexus-alpha" \
+  --automate-release-tag "v0.1.0-track-b-test" \
   --max-retries 1
 ```
 
@@ -445,5 +493,5 @@ v6 발견 (PR #75): 방어선 2 도 재사용 필요 — Track B 에 적용 안 
 
 ---
 
-*본 문서는 PR #79 머지 시점 (2026-05-08) 기준입니다. 다음 세션 1순위는 §6 후보 A~D 중 선택 입니다.*
+*본 문서는 PR #84 머지 시점 (2026-05-08) 기준입니다. 다음 세션 1순위는 §6 후보 A~E 중 선택 — A (실 LLM E2E 검증) 추천.*
 *조직도 v8 / 구성안 v6 / 세션 로그 (5/6+5/7+5/8) 와 함께 4중 보호 — 세션 인계 시 본 문서 1장으로 충분.*

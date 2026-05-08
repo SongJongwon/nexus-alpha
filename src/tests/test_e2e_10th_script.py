@@ -483,3 +483,99 @@ def test_script_summary_includes_enable_automate_branch() -> None:
     assert (
         '"enable_automate_branch": enable_automate_branch_for_run' in source
     ), "summary.json 에 enable_automate_branch 저장 누락"
+
+
+# ---------------------------------------------------------------------------
+# PR #84 — Track B 풀체인 CLI 플래그 (PR #81 QA / PR #82 Build / PR #83 Release)
+# ---------------------------------------------------------------------------
+
+
+def test_script_has_track_b_full_chain_flags() -> None:
+    """5 신규 CLI 인자 도입 — PR #81/#82/#83 노출."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    for flag in (
+        "--enable-automate-qa-loop",
+        "--enable-automate-build",
+        "--enable-automate-release",
+        "--automate-repo",
+        "--automate-release-tag",
+    ):
+        assert flag in source, f"PR #84: {flag} CLI 인자 누락"
+
+
+def _load_script_module():
+    """``run_e2e_10th_verification.py`` 를 임시 모듈로 로드 (재사용 헬퍼)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_e2e_10th_script", SCRIPT_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_e2e_10th_script"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_parse_args_track_b_full_chain_flags_default_false() -> None:
+    """기본값 — 모든 신규 플래그 False / 빈 문자열 (backward compat)."""
+    try:
+        module = _load_script_module()
+        ns = module._parse_args([])
+        assert ns.enable_automate_qa_loop is False
+        assert ns.enable_automate_build is False
+        assert ns.enable_automate_release is False
+        assert ns.automate_repo == ""
+        assert ns.automate_release_tag == ""
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
+
+
+def test_parse_args_track_b_full_chain_flags_all_set() -> None:
+    """모든 신규 플래그 set 시 Namespace 정확 반영."""
+    try:
+        module = _load_script_module()
+        ns = module._parse_args(
+            [
+                "--enable-automate-branch",
+                "--enable-automate-qa-loop",
+                "--enable-automate-build",
+                "--enable-automate-release",
+                "--automate-repo",
+                "owner/repo",
+                "--automate-release-tag",
+                "v0.1.0-track-b-test",
+            ]
+        )
+        assert ns.enable_automate_branch is True
+        assert ns.enable_automate_qa_loop is True
+        assert ns.enable_automate_build is True
+        assert ns.enable_automate_release is True
+        assert ns.automate_repo == "owner/repo"
+        assert ns.automate_release_tag == "v0.1.0-track-b-test"
+    finally:
+        sys.modules.pop("_e2e_10th_script", None)
+
+
+def test_script_passes_track_b_full_chain_flags_to_workflow() -> None:
+    """run_analyze_and_implement 호출에 5 신규 플래그 전달 검증 (정적 grep)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    for line in (
+        "enable_automate_qa_loop=enable_automate_qa_loop_for_run",
+        "enable_automate_build=enable_automate_build_for_run",
+        "enable_automate_release=enable_automate_release_for_run",
+        "automate_repo_url=automate_repo_for_run",
+        "automate_release_tag=automate_release_tag_for_run",
+    ):
+        assert line in source, f"PR #84: 호출에 '{line}' 누락"
+
+
+def test_script_summary_includes_track_b_full_chain_flags() -> None:
+    """summary.json 에 5 신규 플래그 echo (재현성)."""
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    for key in (
+        '"enable_automate_qa_loop":',
+        '"enable_automate_build":',
+        '"enable_automate_release":',
+        '"automate_repo":',
+        '"automate_release_tag":',
+    ):
+        assert key in source, f"PR #84: summary.json 에 {key} 누락"
