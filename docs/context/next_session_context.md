@@ -278,22 +278,27 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 PR #78~#83 으로 Track B 풀체인 완성 (schema → 휴리스틱 → QA → Build →
 Release). 다음 1순위는 5 후보 중 선택:
 
-### 후보 A — Track B 풀체인 실 LLM E2E 검증 ⭐ (Recommended)
+### 후보 A — Track B 풀체인 실 LLM E2E 검증 ✅ 완료 (PR #85)
 
-PR #84 로 CLI 플래그는 노출됐지만, 실 LLM 으로 풀체인 (QA + Build + Release)
-empirical 검증 미실시. 다음 명령으로 1회 검증:
+2026-05-08 검증 완료. 결과:
+- 인프라 5/5 PASS (분류·schema·QA loop·Build·산출 모두 정상)
+- elapsed 14.26분, Scrape.exe 9.14 MB SHA256 검증 통과
+- ⚠️ QA gate fail (Pytest Author entry 파일명 추론 variance — 단일 LLM 이슈)
+- 보고서: `docs/progress/track_b_full_chain_verification_post_pr84.md`
 
-```bash
-.venv/Scripts/python.exe scripts/run_e2e_10th_verification.py \
-  --request "네이버 쇼핑 가격 크롤링 스크립트" \
-  --enable-automate-branch \
-  --enable-automate-qa-loop \
-  --enable-automate-build
-# (release 검증은 repo + tag 추가 필요)
-```
+### 후보 F (신규) — Pytest Author entry 파일명 강제 ⭐ (Recommended)
 
-산출 검증: `outputs/automate_workflow_<ts>/03_pytest_suite.md` +
-`04_executor_result.md` + `build_output/dist/Scrape.exe`. 1회 ~10분 예상.
+**PR #84 검증에서 발견**: Pytest Author 가 `import scraper` 로 작성 (실제는
+`scrape`) → ImportError → code_qa/functional/robustness fail.
+
+처방: `_run_track_b_qa_loop` 에 `_DOMAIN_TO_ENTRY_FILENAME[domain]` 주입 →
+description 에 entry 파일명 강제. 5 라인 fix.
+
+위치: `src/workflows/automate_workflow.py::_run_track_b_qa_loop` +
+`src/workflows/analyze_and_implement.py::_build_pytest_author_task` 시그니처
+변경 (선택).
+
+효과: Track B QA gate PASS 도달 + Track A 잠재 회귀 차단.
 
 ### 후보 B — DevOps 별도 분기 (Trivy 스캔 + docker build) 🟡
 
