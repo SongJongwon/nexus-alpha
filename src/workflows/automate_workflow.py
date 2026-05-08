@@ -85,75 +85,217 @@ class AutomationDomain(str, Enum):
     UNKNOWN = "unknown"
 
 
-# 도메인별 키워드 (한국어 우선 + 영문 보조). 부분 문자열 매칭 (case-insensitive).
-_DOMAIN_KEYWORDS: dict[AutomationDomain, tuple[str, ...]] = {
+# 도메인별 가중치 키워드 (PR #80 — 휴리스틱 분류 개선).
+#
+# 배경 (PR #79 5 도메인 sample 검증에서 발견):
+#     "FastAPI Docker 배포 파이프라인" → API_INTEGRATION 으로 오분류.
+#     원인: 단순 부분문자열 매칭으로 ``fastapi`` 안의 ``api`` 가 도매로 1점
+#     추가 → API: fastapi(1)+api(1)=2 vs DEVOPS: docker(1)=1 → API 승.
+#
+# PR #80 처방 (3 tier 가중치 + 단어 경계):
+#   1. STRONG (weight=3): 도메인 고유 도구·라이브러리·다중 단어 phrase
+#      (예: ``fastapi``, ``playwright``, ``dockerfile``, ``배포 자동화``)
+#   2. MEDIUM (weight=2): 일반 도구·핵심 명사 (예: ``docker``, ``엑셀``,
+#      ``파싱``, ``컨테이너``)
+#   3. WEAK (weight=1, **word_boundary=True**): 짧은 모호 영어 토큰 —
+#      `\bword\b` 패턴 강제 (예: ``api``, ``pdf``, ``csv``, ``json``,
+#      ``url``, ``http`` 등)
+#
+# 형식: tuple[str, int, bool] = (keyword, weight, word_boundary).
+# word_boundary=True 이면 `\bkeyword\b` 매칭 — 한국어/한자 키워드는 항상 False.
+_DomainKeyword = tuple[str, int, bool]
+_DOMAIN_KEYWORDS: dict[AutomationDomain, tuple[_DomainKeyword, ...]] = {
     AutomationDomain.WEB_SCRAPING: (
-        # 한국어
-        "크롤링", "스크래핑", "스크래퍼", "웹사이트", "웹페이지", "수집해", "긁어",
-        # 영문 도구·동사
-        "playwright", "selenium", "beautifulsoup", "requests", "scrape", "crawl",
-        # URL 패턴 신호
-        "http://", "https://", "url",
+        # STRONG (도구·도메인 고유)
+        ("크롤링", 3, False), ("스크래핑", 3, False), ("스크래퍼", 3, False),
+        ("playwright", 3, False), ("selenium", 3, False), ("beautifulsoup", 3, False),
+        # MEDIUM
+        ("웹사이트", 2, False), ("웹페이지", 2, False), ("수집해", 2, False),
+        ("긁어", 2, False),
+        ("scrape", 2, False), ("crawl", 2, False),
+        # WEAK (짧은 영어 — 단어 경계)
+        ("requests", 2, True),
+        ("http", 1, True), ("https", 1, True), ("url", 1, True),
     ),
     AutomationDomain.DESKTOP_AUTOMATION: (
-        # 한국어
-        "자동화", "rpa", "키 입력", "마우스", "윈도우", "엑셀 자동", "메일 발송",
-        "한컴", "한글 자동", "outlook 자동",
-        # 영문 도구
-        "pyautogui", "pywinauto", "pywin32", "comtypes", "keyboard automation",
-        # OS 자동화 동사
-        "click", "type", "press", "hotkey",
+        # STRONG
+        ("rpa", 3, False), ("키 입력", 3, False), ("마우스", 3, False),
+        ("엑셀 자동", 3, False), ("메일 발송", 3, False),
+        ("한컴", 3, False), ("한글 자동", 3, False), ("outlook 자동", 3, False),
+        ("pyautogui", 3, False), ("pywinauto", 3, False), ("pywin32", 3, False),
+        ("comtypes", 3, False), ("keyboard automation", 3, False),
+        # MEDIUM
+        ("자동화", 2, False), ("윈도우", 2, False),
+        # WEAK (짧은 영어 — 단어 경계)
+        ("click", 1, True), ("hotkey", 1, True), ("press", 1, True),
+        # NOTE: ``type`` 은 너무 일반적 (Python type hint, 데이터 type 등) → 제거
     ),
     AutomationDomain.API_INTEGRATION: (
-        # 한국어
-        "api 연동", "웹훅", "외부 서비스", "오픈 api", "엔드포인트",
-        # 영문
-        "api", "webhook", "rest api", "graphql", "oauth", "jwt", "fastapi",
-        "stripe", "slack", "shopify", "github api", "httpx", "graphql",
+        # STRONG
+        ("api 연동", 3, False), ("웹훅", 3, False), ("오픈 api", 3, False),
+        ("엔드포인트", 3, False),
+        ("webhook", 3, False), ("rest api", 3, False), ("graphql", 3, False),
+        ("oauth", 3, False), ("jwt", 3, False), ("fastapi", 3, False),
+        ("stripe", 3, False), ("slack", 3, False), ("shopify", 3, False),
+        ("github api", 3, False), ("httpx", 3, False),
+        # MEDIUM
+        ("외부 서비스", 2, False),
+        # WEAK (짧은 영어 — 단어 경계로 ``fastapi`` 안의 ``api`` 부분 매칭 차단)
+        ("api", 1, True),
     ),
     AutomationDomain.DATA_PARSER: (
-        # 한국어
-        "엑셀", "pdf 파싱", "pdf 추출", "pdf 분석", "파싱", "json 파싱",
-        # 영문 라이브러리·확장자
-        "pdf", "csv", ".xlsx", ".xls", "json", "openpyxl", "pandas", "pdfplumber",
-        # 파일 명사
-        "스프레드시트", "엑셀파일",
+        # STRONG
+        ("pdf 파싱", 3, False), ("pdf 추출", 3, False), ("pdf 분석", 3, False),
+        ("json 파싱", 3, False),
+        ("openpyxl", 3, False), ("pdfplumber", 3, False),
+        # MEDIUM
+        ("엑셀", 2, False), ("파싱", 2, False), ("스프레드시트", 2, False),
+        ("엑셀파일", 2, False),
+        ("pandas", 2, False),
+        # WEAK (짧은 영어 — 단어 경계)
+        ("pdf", 1, True), ("csv", 1, True), ("json", 1, True),
+        # 확장자는 점이 단어 경계 역할
+        (".xlsx", 1, False), (".xls", 1, False),
     ),
     AutomationDomain.DEVOPS: (
-        # 한국어
-        "도커", "도커파일", "컨테이너", "컨테이너화", "배포 자동화", "ci/cd",
-        # 영문
-        "docker", "dockerfile", "docker-compose", "github actions", "ci/cd",
-        "kubernetes", "k8s", "helm", "terraform", "ansible",
+        # STRONG
+        ("도커파일", 3, False), ("컨테이너화", 3, False),
+        ("배포 자동화", 3, False), ("배포 파이프라인", 3, False),
+        ("ci/cd", 3, False),
+        ("dockerfile", 3, False), ("docker-compose", 3, False),
+        ("github actions", 3, False),
+        ("kubernetes", 3, False), ("helm", 3, False), ("terraform", 3, False),
+        ("ansible", 3, False), ("multi-stage", 3, False),
+        # MEDIUM
+        ("도커", 2, False), ("컨테이너", 2, False),
+        # WEAK (짧은 영어 — 단어 경계, 가중치 2 — DevOps 핵심 도구이지만 일반어 빈도 높음)
+        ("docker", 2, True), ("k8s", 2, True),
     ),
 }
 
 
-def detect_automation_domain(user_request: str) -> AutomationDomain:
-    """사용자 요청을 받아 가장 매칭 키워드가 많은 도메인을 반환한다.
+def _keyword_matches(text: str, keyword: str, word_boundary: bool) -> bool:
+    """주어진 키워드가 ``text`` 에 매칭하는지 검사.
 
-    동률 / 매칭 0건 → UNKNOWN. router.py 와 같은 패턴 — LLM 무관, 결정적.
+    word_boundary=True 이면 ``\\bkeyword\\b`` 정규식, 아니면 단순 부분문자열.
+    text/keyword 모두 호출자가 lower() 한 상태로 들어온다.
+    """
+    if word_boundary:
+        return re.search(rf"\b{re.escape(keyword)}\b", text) is not None
+    return keyword in text
+
+
+def detect_automation_domain(
+    user_request: str, *, allow_llm_fallback: bool = True
+) -> AutomationDomain:
+    """사용자 요청을 받아 가중치 합산이 가장 큰 도메인을 반환한다 (PR #80).
+
+    PR #80 개선:
+        - 3 tier 가중치 (STRONG=3 / MEDIUM=2 / WEAK=1)
+        - 짧은 모호 영어 키워드 (``api``, ``pdf``, ``csv``, ``json``, ``docker`` 등)
+          은 단어 경계 (``\\bword\\b``) 매칭 — ``fastapi`` 안의 ``api`` 부분 매칭 차단
+        - 가중치 동률 시 LLM fallback (allow_llm_fallback=True + pytest 미실행 시)
+        - 매칭 0건 → UNKNOWN (이전과 동일)
 
     Args:
         user_request: 사용자의 자연어 요청.
+        allow_llm_fallback: 동률 시 LLM 분류 호출 허용 (default True).
+            테스트 / 결정론 보장 / 비용 회피 위해 False 강제 가능.
 
     Returns:
-        가장 적합한 ``AutomationDomain``. 모호하면 UNKNOWN.
+        가장 적합한 ``AutomationDomain``. 매칭 0건 또는 LLM 도 결정 못하면 UNKNOWN.
     """
     text = (user_request or "").strip().lower()
     if not text:
         return AutomationDomain.UNKNOWN
-    counts: dict[AutomationDomain, int] = {}
+    scores: dict[AutomationDomain, int] = {}
     for domain, keywords in _DOMAIN_KEYWORDS.items():
-        counts[domain] = sum(1 for kw in keywords if kw in text)
-    sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-    top_domain, top_count = sorted_counts[0]
-    second_count = sorted_counts[1][1]
-    if top_count == 0:
+        score = 0
+        for kw, weight, word_boundary in keywords:
+            if _keyword_matches(text, kw, word_boundary):
+                score += weight
+        scores[domain] = score
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_domain, top_score = sorted_scores[0]
+    second_score = sorted_scores[1][1]
+    if top_score == 0:
         return AutomationDomain.UNKNOWN
-    if top_count == second_count:
-        return AutomationDomain.UNKNOWN  # 동률 — 모호
-    return top_domain
+    if top_score > second_score:
+        return top_domain
+    # 가중치 동률 — LLM fallback (allow_llm_fallback + 비-pytest 환경에만)
+    tied_domains = [d for d, s in sorted_scores if s == top_score]
+    if allow_llm_fallback:
+        llm_choice = _llm_classify_domain(user_request, tied_domains)
+        if llm_choice is not None:
+            return llm_choice
+    return AutomationDomain.UNKNOWN
+
+
+def _llm_classify_domain(
+    user_request: str, tied_domains: list[AutomationDomain]
+) -> Optional[AutomationDomain]:
+    """가중치 휴리스틱이 동률을 낼 때 LLM 으로 1회 분류 (PR #80).
+
+    pytest 환경에선 None 반환 — FakeProvider 호환 + 테스트 결정론 보장.
+    실 LLM 환경에선 ``NexusAlphaLLM`` 으로 short prompt + JSON 응답 강제.
+
+    Args:
+        user_request: 원본 자연어 요청.
+        tied_domains: 동률을 낸 도메인 후보 목록 (보통 2~3개).
+
+    Returns:
+        선택된 ``AutomationDomain`` (UNKNOWN 도 허용) — LLM 호출 실패 또는
+        파싱 실패 시 None.
+    """
+    import sys
+
+    # pytest 환경 — FakeProvider 호환 위해 LLM 우회
+    if "pytest" in sys.modules:
+        return None
+
+    try:
+        from src.llm import NexusAlphaLLM
+    except ImportError:
+        return None
+
+    candidate_values = ", ".join(d.value for d in tied_domains)
+    system = (
+        "당신은 자동화 도메인 분류 분석가입니다. 사용자의 자연어 요청을 받아 "
+        "주어진 후보 중 가장 적합한 단일 도메인을 선택해 JSON 한 줄로 응답합니다."
+    )
+    prompt = (
+        f"사용자 요청: {user_request}\n\n"
+        f"후보 도메인 (휴리스틱 가중치 동률): [{candidate_values}]\n\n"
+        "후보 중 가장 적합한 1개를 선택하세요. 분류 기준:\n"
+        "- web_scraping: 웹페이지 크롤링·스크래핑\n"
+        "- desktop_automation: 데스크톱 앱·OS 자동화 (RPA)\n"
+        "- api_integration: 외부 API 호출·webhook 수신\n"
+        "- data_parser: 파일 (Excel/PDF/CSV/JSON) 파싱·추출\n"
+        "- devops: 컨테이너화·CI/CD·배포 자동화\n\n"
+        "응답 형식 (JSON 한 줄, 다른 텍스트 금지):\n"
+        '{"domain": "<선택>"}'
+    )
+    try:
+        llm = NexusAlphaLLM()
+        response = llm.call(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ]
+        )
+    except Exception:
+        return None
+
+    # JSON 추출 — 첫 ``{...}`` 블록만
+    match = re.search(r"\{[^}]*\"domain\"\s*:\s*\"([a-z_]+)\"[^}]*\}", response or "")
+    if not match:
+        return None
+    chosen_value = match.group(1)
+    for domain in tied_domains:
+        if domain.value == chosen_value:
+            return domain
+    # 후보 목록에 없는 값 — 부적절 응답
+    return None
 
 
 # ---------------------------------------------------------------------------
