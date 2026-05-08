@@ -572,6 +572,44 @@ _DOMAIN_TO_ENTRY_FILENAME: dict[AutomationDomain, str] = {
 }
 
 
+def _inject_track_b_entry_filename_directive(
+    description: str, domain: AutomationDomain
+) -> str:
+    """PR #86 — pytest_task description 에 entry 파일명 강제 directive 추가.
+
+    배경 (PR #84 Track B 풀체인 E2E 검증에서 발견된 회귀):
+        Track A 의 ``_build_pytest_author_task`` description 은 entry 파일명을
+        컨텍스트 (code_task) 에서 LLM 이 추론하도록 위임. Track A Calculator
+        시나리오는 calculator.py 일관 산출로 안정적이었으나, Track B web_scraping
+        E2E 에서 LLM 이 ``scraper`` 로 변형 → ImportError → code_qa /
+        functional / robustness 연쇄 fail.
+
+    처방 (방어선 4 패턴 — 결정론적 후처리):
+        PR #82 의 ``_DOMAIN_TO_ENTRY_FILENAME`` 을 description 에 직접 주입.
+        LLM 자유 영역 차단 — Calculator 외 시나리오에서도 같은 패턴 안정.
+
+    Args:
+        description: ``_build_pytest_author_task`` 가 생성한 원본 description.
+        domain: 결정된 ``AutomationDomain``.
+
+    Returns:
+        directive 추가된 description. 도메인이 ``_DOMAIN_TO_ENTRY_FILENAME``
+        에 없으면 (devops 등) 변경 없이 원본 반환.
+    """
+    expected_entry = _DOMAIN_TO_ENTRY_FILENAME.get(domain)
+    if not expected_entry:
+        return description
+    entry_module = expected_entry.removesuffix(".py")
+    return description + (
+        f"\n\n## Track B entry 파일명 강제 (PR #86) 🚨\n"
+        f"엔트리 파일은 정확히 ``{expected_entry}`` 입니다 — "
+        f"``import {entry_module}`` 로 작성하세요. **다른 파일명/모듈명 추론 "
+        f"절대 금지**. PR #84 web_scraping E2E 검증에서 LLM 이 ``scraper`` 로 "
+        f"변형 → ImportError → QA gate fail 회귀 사례 차단. "
+        f"테스트 파일명은 ``test_{entry_module}.py`` 권장.\n"
+    )
+
+
 def _run_track_b_qa_loop(
     domain: AutomationDomain,
     code_task: Task,
@@ -607,6 +645,10 @@ def _run_track_b_qa_loop(
 
     pytest_author = create_pytest_author_agent(verbose=verbose)
     pytest_task = _build_pytest_author_task(pytest_author, code_task)
+    # PR #86 — Pytest Author entry 파일명 강제 directive 주입 (PR #84 회귀 차단)
+    pytest_task.description = _inject_track_b_entry_filename_directive(
+        pytest_task.description, domain
+    )
     pytest_crew = Crew(
         agents=[pytest_author],
         tasks=[pytest_task],
