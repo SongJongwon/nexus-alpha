@@ -15,13 +15,15 @@
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 풀체인** (PR #70~#83)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **Track B 풀체인 실 LLM E2E 검증**: ✅ **3 layer fix 누적 → QA gate PASS 도달 ⭐⭐⭐**
->    - PR #84 (1차): `import scraper` → ImportError → 14.26분 → 후보 F 도출
->    - PR #87 (2차): `import scrape` ✅ + `playwright` 만 stub → ModuleNotFoundError → 7.78분 → 후보 G 도출
->    - **PR #89 (3차): code_qa PASS (15 tests, exit=0) ⭐⭐⭐ → 14.80분 (retry=1)**
->    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md) + [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md)
->    - 결정형 후처리 패턴 *재귀적 적용* empirical 입증 (3 layer)
-> **다음 1순위 후보**: 검증 스크립트 Track B 인지 강화 (PR #90) / DevOps 별도 분기 / Streamlit UI
+> **Track B 풀체인 실 LLM E2E 검증**: ✅ **active QA 4/4 도달 ⭐⭐⭐ (Track A 와 같은 패턴)**
+>    - PR #84 (1차): `import scraper` ImportError → 14.26분
+>    - PR #87 (2차): `playwright.async_api` mismatch → 7.78분
+>    - PR #89 (3차): code_qa PASS (15 tests) → 14.80분 (retry=1)
+>    - **PR #91 (4차): 4 도구 모두 PASS — code_qa + functional (10/10) + gui_test + robustness (9/9), retry=0, 6.35분 ⭐⭐⭐**
+>    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md) + [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md) + [progress/track_b_pr90_verification.md](./progress/track_b_pr90_verification.md)
+>    - 결정형 후처리 패턴 *재귀적 적용* empirical 입증 (3 layer + propagate)
+>    - **Track A + Track B 양 Track 모두 active 4/4 도달** — Nexus Alpha 핵심 비전 완성
+> **다음 1순위 후보**: Track B publish 검증 (gh release 발행) / DevOps 별도 분기 / Streamlit UI
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -608,7 +610,21 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - Build: Scrape.exe **19.88 MB** SHA256 검증 통과
     - **3 layer fix (PR #78 + #86 + #88) 누적 효과 empirical 입증**
     - 보고서: [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md)
-84. ⏳ **본 PR #89 (PR #88 효과 검증 결과 docs — QA gate PASS milestone)** — WORK_STATUS + 보고서
+84. ~~**PR #89 (PR #88 검증 결과 docs — QA gate PASS milestone)**~~ ✅ `4319354`
+85. ~~**PR #90 — 검증 스크립트 Track B 인지 강화 (4 필드 propagate)**~~ ✅ `f033e45`
+    - WorkflowResult 매핑에 4 필드 추가 propagate (pytest_suite / executor_result / update_module_spec / publish_result)
+    - pytest 710 → **714 passed** (+4, 회귀 0)
+86. ~~**PR #90 효과 실 LLM 재검증 (후보 A 4차) — Track B active 4/4 ⭐⭐⭐**~~ ✅
+    - 같은 명령 ("네이버 쇼핑 가격 크롤링 스크립트")
+    - **결과: 4 도구 모두 PASS** — code_qa (skipped=15) + functional (10/10) + gui_test (1 screenshot) + robustness (9/9)
+    - elapsed **6.35분 (retry=0)** — 4 회 검증 중 가장 빠름
+    - artifact_category=cli (Track A 의 PR #73 `--force-cli` 와 같은 패턴)
+    - DoD **3/3 PASS** (5_executor_success ✅, 6_qa_overall_passed ✅, 7_qa_iterations_within_budget ✅)
+    - publish/release (1~4) 만 N/A (의도적 미활성)
+    - Build: Scrape.exe **32.81 MB** SHA256 검증 통과
+    - **Track A + Track B 양 Track 모두 active 4/4 도달 — Nexus Alpha 핵심 비전 완성** ⭐⭐⭐
+    - 보고서: [progress/track_b_pr90_verification.md](./progress/track_b_pr90_verification.md)
+87. ⏳ **본 PR #91 (PR #90 효과 검증 결과 docs — Track B active 4/4 milestone)** — WORK_STATUS + 보고서
 
 ---
 
