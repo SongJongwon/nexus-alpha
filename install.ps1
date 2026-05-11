@@ -70,6 +70,54 @@ function Fail {
     exit 1
 }
 
+# ─── PR #117 — Python 3.13 자동 설치 (winget) ────────────────────────────
+# 기존 Python 버전 (3.10/3.11/3.12/3.14 등) 은 *영향 없음* — Python 공식
+# 인스톨러는 메이저.마이너 버전별로 별도 디렉터리에 side-by-side 설치.
+# 본 함수 종료 시 ``$script:PYTHON_VENV_EXE='py'``, ``$script:PYTHON_VENV_ARGS=@('-3.13')``
+# 설정 → Install-Venv (Step 3/6) 가 ``py -3.13 -m venv`` 사용.
+function Install-Python313ViaWinget {
+    Write-Warn2 'Python 3.13 자동 설치 시도 (winget) — 기존 Python 버전은 side-by-side 보존'
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        Fail @"
+winget 이 PATH 에 없어 Python 3.13 자동 설치 불가 (Windows 10 1809+ / Windows 11 기본 탑재).
+
+수동 설치:
+  https://www.python.org/downloads/release/python-3137/
+설치 후 install.ps1 재실행.
+"@
+    }
+
+    # --silent + 약관 자동 수락 — 비인터랙티브 설치
+    & winget install --id Python.Python.3.13 -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Fail "winget Python 3.13 자동 설치 실패 (exit=$LASTEXITCODE). 수동: https://www.python.org/downloads/release/python-3137/"
+    }
+    Write-Ok 'winget Python 3.13 설치 완료 (기존 Python 버전 미영향)'
+
+    # py launcher 로 새 3.13 검출 — 현재 PowerShell 세션 PATH 미갱신 가능성 대응
+    $launcherVer = $null
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        $launcherVer = (& py -3.13 --version 2>&1 | Out-String).Trim()
+    }
+    if ($LASTEXITCODE -ne 0 -or $launcherVer -notmatch 'Python\s+3\.13') {
+        Fail @"
+winget 으로 Python 3.13 설치 후에도 ``py -3.13`` 가용 안 됨.
+PowerShell 세션 재시작 후 install.ps1 재실행 권장:
+
+  exit  # PowerShell 종료
+  # 새 PowerShell 창 열고 다시:
+  irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
+"@
+    }
+    Write-Ok "py -3.13 검출: $launcherVer (venv 생성에 사용)"
+
+    # PR #114 fallback 변수 — Install-Venv 가 ``py -3.13 -m venv`` 호출
+    $script:PYTHON_VENV_EXE  = 'py'
+    $script:PYTHON_VENV_ARGS = @('-3.13')
+}
+
 # ─── 1. 사전 검사 ───────────────────────────────────────────────────────────
 function Test-Prereqs {
     Write-Step 'Step 1/6 — 사전 요구사항 확인'
@@ -115,12 +163,18 @@ git 이 PATH 에 없습니다.
 
     $py = Get-Command python -ErrorAction SilentlyContinue
     if (-not $py) {
-        Fail @"
-python 이 PATH 에 없습니다.
-
-  설치: winget install --id Python.Python.3.13 -e
-        또는 https://www.python.org/downloads/release/python-3130/
-"@
+        # PR #117 — python 미설치 시 winget 으로 Python 3.13 자동 설치 후 진행
+        Write-Warn2 'python 이 PATH 에 없음 → Python 3.13 자동 설치 시도'
+        Install-Python313ViaWinget
+        # 자동 설치 성공 시 PYTHON_VENV_EXE/ARGS 설정됨 → gh CLI 만 마저 검증 후 return
+        $gh = Get-Command gh -ErrorAction SilentlyContinue
+        if ($gh) {
+            Write-Ok "gh CLI: $((gh --version | Select-Object -First 1))"
+        } else {
+            Write-Warn2 'gh CLI 미설치 — Draft Release 발행 단계는 skip 됩니다.'
+            Write-Warn2 '  설치: winget install --id GitHub.cli -e  (선택)'
+        }
+        return
     }
     $pyVersion = (& python --version 2>&1).ToString().Trim()
     # PR #110 — CrewAI 1.14.1 의 Python 지원 범위는 ``>=3.10,<3.14``.
@@ -150,25 +204,14 @@ python 이 PATH 에 없습니다.
                 $script:PYTHON_VENV_ARGS = @('-3.13')
                 Write-Ok "py -3.13 fallback: $launcherVer (venv 생성에 사용)"
             } else {
-                # py launcher 없거나 3.13 미설치 → Fail
-                Fail @"
-현재 $pyVersion — CrewAI 1.14.1 은 Python 3.10 ~ 3.13.x 만 지원하며, ``py -3.13`` launcher
-fallback 도 사용 불가능합니다.
-
-해결책:
-
-  1. Python 3.13 설치 (권장):
-       winget install --id Python.Python.3.13 -e
-       또는 https://www.python.org/downloads/release/python-3137/
-
-  2. 설치 후 install.ps1 재실행 — ``py -3.13`` 으로 자동 venv 생성 (PR #114).
-
-  3. (대체) PATH 환경변수 순서 조정: Python 3.13 디렉터리를 3.14 보다 위로.
-"@
+                # PR #117 — py -3.13 fallback 도 실패 → winget 으로 자동 설치
+                Write-Warn2 'py -3.13 launcher 가용 불가 → Python 3.13 자동 설치 시도 (기존 버전 보존)'
+                Install-Python313ViaWinget
             }
         } else {
-            # 3.10 미만 (3.9, 3.8 등 EOL)
-            Fail "현재 $pyVersion — CrewAI 1.14.1 은 Python 3.10 ~ 3.13.x 만 지원. 설치: winget install --id Python.Python.3.13 -e"
+            # 3.10 미만 (3.9, 3.8 등 EOL) — PR #117 자동 설치
+            Write-Warn2 "현재 $pyVersion (CrewAI 미지원) → Python 3.13 자동 설치 시도 (기존 버전 보존)"
+            Install-Python313ViaWinget
         }
     } else {
         Write-Warn2 "Python 버전 파싱 실패 ($pyVersion) — 계속 진행하지만 의존성 호환 미보장."

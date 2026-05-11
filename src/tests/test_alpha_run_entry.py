@@ -430,6 +430,67 @@ def test_install_ps1_auto_py313_fallback_for_python_314_plus() -> None:
     )
 
 
+def test_install_ps1_auto_winget_python_install() -> None:
+    """install.ps1 이 Python 3.13 미설치 시 winget 으로 자동 설치 (PR #117).
+
+    배경:
+        PR #114 의 ``py -3.13`` fallback 은 *Python 3.13 이 이미 어딘가 설치된*
+        경우에만 작동. 3.13 자체가 없으면 (또는 3.14+ 단독 환경) 여전히 사용자
+        수동 ``winget install Python.Python.3.13`` 필요.
+
+    PR #117 처방:
+        ``Install-Python313ViaWinget`` 함수 신설 — 3 시나리오에서 자동 호출:
+        1. ``python`` 이 PATH 에 없음 (전혀 미설치)
+        2. ``python`` 이 3.14+ 이고 ``py -3.13`` launcher fallback 도 실패
+        3. ``python`` 이 3.10 미만 (3.9 / 3.8 등 EOL)
+
+        자동 설치는 ``winget install --id Python.Python.3.13 -e --silent``
+        + 약관 자동 수락. Python 공식 인스톨러는 메이저.마이너 별로 별도 디렉터리
+        에 설치 — 기존 다른 Python 버전 *영향 없음* (side-by-side).
+
+        설치 후 ``py -3.13 --version`` 검증 → 성공 시 ``$script:PYTHON_VENV_EXE='py'``
+        + ``$script:PYTHON_VENV_ARGS=@('-3.13')`` 설정 → Install-Venv 가 자동 사용.
+
+    회귀 차단 — 본 테스트가 깨지면 사용자가 3.14 단독 / 3.9 단독 / 미설치
+    환경에서 ``irm | iex`` 시 다시 수동 winget 안내로 회귀.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 신규 함수 존재
+    assert "function Install-Python313ViaWinget" in text, (
+        "Install-Python313ViaWinget 함수 정의 누락"
+    )
+    # winget 명령 키워드
+    assert "winget install --id Python.Python.3.13" in text, (
+        "winget install --id Python.Python.3.13 호출 누락"
+    )
+    assert "--silent" in text, "--silent 비인터랙티브 설치 플래그 누락"
+    assert "--accept-source-agreements" in text and "--accept-package-agreements" in text, (
+        "winget 약관 자동 수락 플래그 누락 (사용자 비인터랙티브 보장)"
+    )
+    # 3 시나리오 모두 자동 설치 호출
+    install_calls = text.count("Install-Python313ViaWinget")
+    # 1 정의 + 3 호출 = 최소 4 occurrences
+    assert install_calls >= 4, (
+        f"Install-Python313ViaWinget 호출 횟수 부족 ({install_calls} 회) — "
+        "3 시나리오 (python 미설치 / 3.14+ fallback fail / <3.10) 모두 자동 설치 호출 필요"
+    )
+    # side-by-side 안내 — 기존 Python 버전 보존 메시지
+    assert "side-by-side" in text or "기존 Python 버전" in text, (
+        "side-by-side 설치 (기존 버전 보존) 안내 누락"
+    )
+    # 자동 설치 후 PYTHON_VENV_EXE/ARGS 설정 — Install-Venv 가 py -3.13 사용하도록
+    import re as _re
+    install_func_match = _re.search(
+        r"function Install-Python313ViaWinget\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert install_func_match is not None, "Install-Python313ViaWinget 함수 본문 추출 실패"
+    install_body = install_func_match.group(1)
+    assert "$script:PYTHON_VENV_EXE" in install_body, (
+        "Install-Python313ViaWinget 가 $script:PYTHON_VENV_EXE 미설정 — Install-Venv 와 미연결"
+    )
+    assert "'-3.13'" in install_body, "py -3.13 launcher 인자 미설정"
+
+
 # ---------------------------------------------------------------------------
 # PR #115 — scripts/run.py 의 _prompt_track / _prompt_build (Build 입력 혼동 회피)
 # ---------------------------------------------------------------------------
