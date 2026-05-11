@@ -1,11 +1,12 @@
-# 🚀 Nexus Alpha 구성안 v6 — Phase 6 Track B 완성 + 양 Track DoD 7/7 + 안정성 80% + 최종 배포 비전 확정
+# 🚀 Nexus Alpha 구성안 v6 — Alpha 진입점 완성 + 🌐 Public 전환 + 외부 검증 성공 + 차세대 RV 비전
 
-**━ 사용자의 한 마디에서 *데스크탑/웹 앱* 안에서 업무 자동화 완성까지 ━**
+**━ 사용자의 한 마디에서 *데스크탑/웹 앱 + .exe* 까지 ━**
 
 > **v5 대비 핵심 변경**: Phase 6 Track B 5명 + Update Checker 풀체인 통합 + active QA 4/4 + Track B 워크플로 통합
-> **2026-05-11 갱신**: **Track B DoD 7/7 ALL PASSED (PR #97)** + 안정성 80% 도달 (PR #100) + **최종 배포 비전 확정** (Electron/Tauri 데스크탑 + 웹 dual-channel)
+> **2026-05-11 (PR #101 시점)**: Track B DoD 7/7 ALL PASSED + 안정성 80% + 최종 배포 비전 Electron/Tauri 확정
+> **2026-05-11 (PR #119 세션 마무리)**: ✅ **Alpha 진입점 완성** (install.ps1 + run.py) + 🌐 **repo PUBLIC 전환** + **외부 PC 검증 성공** (Calculator.exe 10.73 MB) + ⭐ **§11 RV 비전 신설** (4 신규 에이전트, DoD 9/9, 후보 V 1순위)
 > **최종 목표**: 사용자가 한 마디로 **업무 자동화 완성품(.exe 포함)** 받기 — *Electron/Tauri 앱 또는 브라우저 안에서*
-> **최초 작성일**: 2026년 4월 17일 | **본 버전 (v6) 갱신일**: **2026년 5월 11일** (PR #101 시점)
+> **최초 작성일**: 2026년 4월 17일 | **본 버전 (v6) 갱신일**: **2026년 5월 11일** (PR #119 세션 마무리 시점)
 
 ---
 
@@ -564,6 +565,92 @@ PyInstaller `.exe` (~10 MB) 와 일관성 — Tauri 가 우선 후보. Beta 단�
 
 ---
 
-*본 문서는 구성안 v6이며, **2026년 5월 11일 PR #101 시점** 의 최신 버전입니다.*
-*조직 구조는 46명 고정이며, 도구 컴포넌트 (build_executor / distribution_executor / `_integrate_update_checker` / `run_dod_stability.py`) 는 정원 외.*
-*v7 후보: Phase 8 (C-Level 완성) + Phase 9 (본부 1/2/5/6 완성) + 외부 UI layer (Streamlit Beta).*
+## 11. v6 두 번째 갱신 — Alpha 진입점 완성 + 🌐 Public 전환 + 차세대 RV 비전 (5/11 세션 마무리)
+
+본 섹션은 PR #102~#118 의 누적 변경을 §10 의 *전제 조건* 표와 연결.
+
+### 11-1. Alpha 진입점 완성 (PR #102~#117, 16 PR)
+
+§10-2 로드맵의 **Alpha 단계** 가 ✅ **완료**:
+
+```powershell
+# 외부 사용자가 한 줄로 설치 — 5/11 다른 PC 에서 실증
+irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
+```
+
+6-step 자동 (사전검사 → clone → venv → .env → smoke → 완료) — 18 PR 누적 fix 로
+*외부 PC 환경 robust* 도달:
+
+- **Python 호환성** (#105, #110, #112, #114, #117): 3.10~3.13 허용 + 3.14 차단 + `py -3.13` fallback + winget 자동 설치
+- **git 동기화 강건성** (#106, #107, #108): `fetch + reset --hard` + `.broken.{ts}` 백업 + 자동 reclone
+- **NativeCommandError 차단** (#109): Windows PS 5.1 `2>&1` 결함 fix
+- **.env 자동화** (#104): `.env.example` template + 자동 복사
+- **자연어 입력창** (#102, #115): `scripts/run.py` Track A/B 자동 라우팅 + Build 별도 prompt
+- **보안 + Public 전환** (#103): LangFuse public key + 이메일 placeholder → 🌐 PUBLIC 안전 전환
+
+### 11-2. 외부 PC Alpha 테스트 성공
+
+```
+다른 PC ($HOME\nexus-alpha 신규 환경)
+  ↓
+irm | iex → 6-step 완주
+  ↓
+scripts/run.py → "계산기 만들어줘"
+  ↓
+Calculator.exe 빌드 (10.73 MB) ⭐
+```
+
+**Nexus Alpha v4 비전 (자연어 → .exe) 이 *개발 환경 외부* 에서 empirical 검증됨**.
+
+### 11-3. 알파 테스트 발견 — 기존 QA 의 한계 5건
+
+| PR | 결함 | 기존 QA 가 못 잡은 이유 |
+|---|---|---|
+| #109 | PowerShell NativeCommandError | pytest 는 Python 만, 실행 시점 결함 미커버 |
+| #110/#117 | Python 3.14 / winget 자동 설치 | pytest 는 .venv 만, 외부 Python 버전 미커버 |
+| #112/#114 | `.venv` 검출 / `py -3.13` fallback | install 시점 분기 미커버 |
+| #115 | `run.py` 'b' 키 혼동 | UX 결함, code path 정상 |
+| #106/#107 | git pull 실패 broken state | 외부 의존 결함 |
+
+→ **5/5 모두 사용자 직접 보고로 발견**. pytest 784 PASS 인 상태에서도 *실 사용자 환경* fail.
+
+### 11-4. ⭐ §11 RV (Runtime Verification) 비전 신설 (PR #118)
+
+차세대 QA layer — 코드-level (pytest) + runtime-level (.exe 실행 + UI 동작):
+
+| 신규 에이전트 | 역할 | 도구 |
+|---|---|---|
+| ① Exe Runtime Tester | `.exe` sandbox 실행 + exit/stdout | psutil + subprocess |
+| ② UI Automation Specialist | 클릭/키입력/윈도우 자동 조작 | PyAutoGUI / Playwright / WinAppDriver |
+| ③ Runtime Failure Analyzer | fail trace 분석 + actionable feedback | LLM + pattern matching |
+| ④ Auto-Fix Coordinator | Engineer 재호출 + 재빌드 trigger | `qa_feedback_loop` 패턴 확장 |
+
+**DoD 확장** 7 → 9 항목 (`exe_runtime_passed` + `ui_test_passed` 신규).
+
+**Phase 로드맵**:
+- **Phase A** (후보 V ⭐⭐⭐ 1순위): Exe Runtime Tester + DoD 8 (1~2 PR)
+- Phase B: UI Specialist + 시나리오 DSL (2~3 PR)
+- Phase C: Failure Analyzer + Coordinator + DoD 9 통합 (2~3 PR)
+
+### 11-5. 조직도 v10 — 본부 9 (RV) 신규 + 정원 46 → 50
+
+| | v9 (PR #101) | v10 (PR #119) |
+|---|---|---|
+| 본부 수 | 8 개 | **9 개** (RV 본부 신규) |
+| 정원 | 46 명 | **50 명** (RV 4 추가) |
+| 구현률 | 39/46 (85%) | **39/50 (78%)** (분모 확대) |
+
+### 11-6. 다음 단계 (v11 후보)
+
+| 우선순위 | 후보 | 작업 |
+|---|---|---|
+| ⭐⭐⭐ 1순위 | **후보 V — RV Phase A** | Exe Runtime Tester + `runtime_verify_workflow.py` + DoD 8 |
+| 2순위 | RV Phase B | UI Specialist + 시나리오 DSL |
+| 3순위 | 후보 U — Streamlit Beta | 외부 사용자 UI layer |
+| 후속 | RV Phase C / Phase 8/9 | DoD 9 통합 / C-Level / 본부 1/2/5/6 완성 |
+
+---
+
+*본 문서는 구성안 v6이며, **2026년 5월 11일 PR #119 (세션 마무리) 시점** 의 최신 버전입니다.*
+*조직 정원: v10 부터 **50 명** (RV 본부 4 명 신규). 도구 컴포넌트 (build_executor / distribution_executor / `_integrate_update_checker` / `run_dod_stability.py` / `install.ps1` / `scripts/run.py`) 는 정원 외.*
+*v7 후보: 후보 V (RV Phase A) → Phase B/C → 후보 U (Streamlit Beta) → Phase 8/9 (50/50 완성).*

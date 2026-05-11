@@ -1,9 +1,12 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-11 (PR #98~#101 머지 + **PR #102 — Alpha 진입점 (install.ps1 + scripts/run.py) ⭐** — irm 한 줄 설치 + 자연어 입력창)
-> **현재 브랜치**: `feat/alpha-installer-pr102` (PR #99~#101 모두 main 머지 완료, PR #102 신설)
-> **테스트**: pytest **771 passed** (750 → +21 PR #102 신규, 회귀 0)
-> **머지된 PR**: 97 → **101** (PR #102 open) — 5/11 세션 합산 +5 PR
+> **마지막 업데이트**: 2026-05-11 (세션 마무리 PR #119 — **PR #98~#118 머지 누계 +21 PR** + 🌐 **repo PUBLIC 전환 완료** + 다른 PC Alpha 테스트 성공 + 후보 V (Runtime Verification) 비전 설계)
+> **현재 브랜치**: `docs/session-close-pr119` (세션 마무리 — 모든 docs 일괄 갱신)
+> **테스트**: pytest **784 passed** (750 → +34 in PR #102~#117, 회귀 0)
+> **머지된 PR**: 97 → **118** (5/11 세션 합산 **+21 PR**: #98~#118)
+> **저장소**: 🌐 **PUBLIC 전환 완료** — https://github.com/SongJongwon/nexus-alpha
+> **다른 PC Alpha 테스트**: ✅ **`irm | iex` 한 줄 설치 → Calculator.exe (10.73 MB) 빌드 성공** — Nexus Alpha v4 비전 외부 검증 완료
+> **새 비전 (5/11 PR #118)**: ⭐ **§11 Runtime Verification (RV)** — 알파 테스트에서 발견된 *기존 QA 한계* (UI/실행 시점 결함 5건) 해결 위한 차세대 비전. 4 신규 에이전트 + 9-DoD 확장
 > **실 LLM E2E 검증**: **8 회 누적** — filename → import → code_qa → active 4/4 → publish → infinite-short → dep env → **DoD 7/7 ALL PASSED**
 > **active QA gating (Track A)**: 0/4 → 2/4 → 1/4 회귀 → 2/4 → **4/4 (`--force-cli` CLI)** ⭐⭐⭐
 > **Track B 방어선 2**: ✅ **PR #78 적용 + 5 도메인 sample 5/5 PASS 검증** ⭐⭐⭐
@@ -28,15 +31,34 @@
 > **후보 O (stub `__getattr__` fallback, PR #100)**: ✅ **directive 강화 + 1-iter 검증 PASS** — `expect` 심볼 명시 + `_UNIVERSAL_NOOP` fallback 두 layer. 방어선 패턴 **12 차** 재사용.
 > **후보 P (PR #100 적용 full 5-iter)**: ✅ **4/5 PASS (80%, +20%p vs PR #99 60%)** ⭐ — `expect` ImportError 0회 재발 (deterministic 차단 확인). ITER 3 fail = 새 fail mode (`urlparse(None)` 잘못된 예외 가정). 보고서: [progress/track_b_pr100_5iter_verify.md](./progress/track_b_pr100_5iter_verify.md)
 > **후보 Q (PR #101 — 예외 단정 보수적 규칙)**: ✅ **directive *13 차* 재사용 + code_qa-level fail 직접 차단 검증** — 1-iter 에서 code_qa PASS (6 tests, `urlparse(None)` 류 fail 0회 재발). functional/robustness 의 orthogonal LLM variance 는 별도 후속 (PR #102 후보). 보고서: [progress/track_b_pr101_exception_directive.md](./progress/track_b_pr101_exception_directive.md) ⭐
-> **PR #102 (Alpha 진입점)**: ✅ **install.ps1 + scripts/run.py 신설** — `irm ... | iex` 한 줄 설치 + 자연어 입력창 (Track A/B 자동 라우팅 휴리스틱). 21 신규 pytest PASS. README 에 irm 설치 가이드 추가. Alpha 단계 empirical 진입.
-> **다음 1순위 후보**: **후보 V (RV Phase A — Exe Runtime Tester)** ⭐⭐⭐ / 후보 R (PR #101 5-iter sweep) / 후보 U (Streamlit Beta UI) / 후보 S/T (Post-processing / Sticky category)
+> **Alpha 진입점 PR Sequence (#102~#117)**: ✅ **install.ps1 (irm 한 줄) + scripts/run.py (자연어 입력창) + 12 후속 fix**:
+>    - PR #102: 기초 install.ps1 + run.py 신설 (irm 한 줄, Track A/B 자동 라우팅, 21 pytest)
+>    - PR #103: 보안 — LangFuse public key + 이메일 placeholder 교체 (Public 전환 전 정리)
+>    - PR #104: .env.example template + install.ps1 자동 복사 (.env 자동 생성)
+>    - PR #105: Python 버전 체크 수치 비교 — `3.1[3-9]` 정규식 → `-ge 13` (PR #110 에서 반전)
+>    - PR #106: git pull 실패 시 backup + fresh clone (사용자 .env 보존)
+>    - PR #107: `git pull --ff-only` → `git fetch + reset --hard` (destructive sync)
+>    - PR #108: 'git pull' 사용자 노출 텍스트 정리 (실 동작은 #107 부터 fetch+reset)
+>    - **PR #109: NativeCommandError 결함 fix (Windows PS 5.1 `2>&1` 제거)** ⚠️ — 알파 테스트 실패 1번
+>    - **PR #110: Python 3.14+ 차단 + 3.13 설치 안내 (PR #105 forward-proof 반전)** ⚠️ — 알파 테스트 실패 2번
+>    - PR #111: crewai 버전 unpin (>=1.14.1,<1.15.0) — 1.14.4 호환 검증, 777 PASS
+>    - **PR #112: .venv 기존 검출 시 Python 체크 skip** — 알파 테스트 발견 워크플로
+>    - PR #113: README 빠른 시작 — Python 3.13 필수 명시 + 수동 설치 5-step
+>    - **PR #114: 시스템 python 3.14+ 감지 시 `py -3.13` 자동 fallback** — 알파 테스트 자동화
+>    - PR #115: `run.py` 인터랙티브 prompt — `b` 키 Track B 혼동 회피 + Build 별도 prompt
+>    - PR #116: install 경로 `$env:USERPROFILE` → `$HOME` (literal 일관성)
+>    - **PR #117: Python 3.13 자동 winget 설치** ⭐ — 기존 버전 side-by-side 보존
+> **PR #118 — §11 RV 비전 신설**: 알파 테스트 5 PR 의 *기존 QA 한계* 분석 + 차세대 비전 설계 (10 서브섹션, 4 신규 에이전트, DoD 9-항목 확장).
+> **다음 1순위 후보**: **후보 V (RV Phase A — Exe Runtime Tester + DoD 8)** ⭐⭐⭐ / 후보 R (PR #101 5-iter sweep) / 후보 U (Streamlit Beta UI)
 > **최종 배포 비전 (5/11 확정)**: ✅ **install.ps1 (Alpha)** → Streamlit (Beta) → Electron/Tauri (Release). 자연어 입력 → .exe + Draft Release URL. 상세: [context/next_session_context.md §10](./context/next_session_context.md).
-> **차세대 QA 비전 (5/11 PR #118)**: ⭐ **§11 Runtime Verification (RV)** — .exe 실행 + UI 자동 조작 (PyAutoGUI/Playwright) + Engineer 자동 피드백 + 재빌드 루프. Alpha 테스트 5 PR 모두 *기존 QA 가 못 잡은 결함* → DoD 7/7 → **9/9** 확장 (exe_runtime + ui_test). 상세: [context/next_session_context.md §11](./context/next_session_context.md).
+> **차세대 QA 비전 (5/11 PR #118)**: ⭐ **§11 Runtime Verification (RV)** — .exe 실행 + UI 자동 조작 (PyAutoGUI/Playwright) + Engineer 자동 피드백 + 재빌드 루프. DoD 7/7 → **9/9** 확장 (exe_runtime + ui_test). 상세: [context/next_session_context.md §11](./context/next_session_context.md).
+> **외부 PC 알파 테스트 결과 (5/11)**: ✅ **`irm | iex` 한 줄 설치 → 6 step 완주 → Calculator.exe 10.73 MB 빌드 성공** — Nexus Alpha v4 비전 외부 환경 empirical 검증 완료. 발견된 5 결함은 모두 *기존 QA 미커버* → §11 RV 비전 필요성 입증.
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
-> **최신 조직도 v9 (5/11)**: [architecture/Nexus_Alpha_조직도_v9.md](./architecture/Nexus_Alpha_조직도_v9.md) ⭐ (PR #97~#101 + 최종 배포 비전 반영)
+> **최신 조직도 v10 (5/11 세션 마무리)**: [architecture/Nexus_Alpha_조직도_v10.md](./architecture/Nexus_Alpha_조직도_v10.md) ⭐⭐⭐ (PR #102~#118 + Alpha 외부 검증 + RV 본부 신규 4 명 + 후보 V)
+> **이전 조직도 v9 (5/11 PR #101)**: [architecture/Nexus_Alpha_조직도_v9.md](./architecture/Nexus_Alpha_조직도_v9.md)
 > **이전 조직도 v8 (5/7)**: [architecture/Nexus_Alpha_조직도_v8.md](./architecture/Nexus_Alpha_조직도_v8.md)
-> **최신 구성안 v6 (5/11 갱신)**: [architecture/Nexus_Alpha_구성안_v6.md](./architecture/Nexus_Alpha_구성안_v6.md)
+> **최신 구성안 v6 (5/11 세션 마무리)**: [architecture/Nexus_Alpha_구성안_v6.md](./architecture/Nexus_Alpha_구성안_v6.md) — Alpha 완성 + RV 비전 반영
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
 > **10차 E2E 11차 보고서 (PR #66 Update Checker 실 통합 검증)**: [progress/e2e_10th_verification_post_pr66.md](./progress/e2e_10th_verification_post_pr66.md) ⭐⭐⭐
 > **10차 E2E 10차 보고서 (PR #64 완전 회복)**: [progress/e2e_10th_verification_post_pr64.md](./progress/e2e_10th_verification_post_pr64.md)
