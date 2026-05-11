@@ -182,12 +182,12 @@ def test_install_ps1_skips_python_check_when_venv_exists() -> None:
     assert "시스템 python" in text and "skip" in text, (
         "시스템 python skip 메시지 누락 (사용자 투명성)"
     )
-    # skip 분기가 PR #110 의 strict 분기 *앞에* 위치 (early return)
-    import re as _re
+    # skip 분기가 시스템 python 체크 *앞에* 위치 (early return).
+    # 안정적 anchor: "Get-Command python" (시스템 python 체크의 첫 단계).
     skip_pos = text.find("기존 .venv")
-    strict_pos = text.find("Python 3.10 ~ 3.13.x 만 지원합니다")
+    strict_pos = text.find("Get-Command python")
     assert skip_pos > 0 and strict_pos > skip_pos, (
-        ".venv skip 분기가 PR #110 strict 분기보다 *뒤에* 배치됨 — early return 미작동"
+        ".venv skip 분기가 시스템 python 체크보다 *뒤에* 배치됨 — early return 미작동"
     )
 
 
@@ -214,8 +214,8 @@ def test_install_ps1_python_version_check_rejects_3_14_plus() -> None:
     # PR #110 정상 범위 비교 키워드 (3.10 ~ 3.13 = CrewAI 1.14.1 지원)
     assert "minor -ge 10" in text, "minor >= 10 lower bound missing"
     assert "minor -le 13" in text, "minor <= 13 upper bound missing"
-    # 3.14+ 차단 분기
-    assert "minor -ge 14" in text, "3.14+ rejection branch missing"
+    # 3.14+ 차단/fallback 분기 (PR #114 에서 즉시 Fail 대신 py -3.13 fallback 추가)
+    assert "minor -ge 14" in text, "3.14+ branch missing"
     # PR #105 의 forward-proof 분기가 *허용* 로직에 잔존하면 안 됨.
     # 새 로직: 허용은 ``$major -eq 3 -and $minor -ge 10 -and $minor -le 13``.
     import re as _re
@@ -377,3 +377,54 @@ def test_main_release_without_repo_exits_2(run_mod, capsys) -> None:
     assert rc == 2
     captured = capsys.readouterr()
     assert "--repo" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# PR #114 — 3.14+ 자동 py -3.13 fallback (Test-Prereqs + Install-Venv)
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_auto_py313_fallback_for_python_314_plus() -> None:
+    """install.ps1 이 시스템 python 3.14+ 감지 시 자동으로 ``py -3.13`` fallback (PR #114).
+
+    배경:
+        PR #110 은 3.14+ 시 즉시 Fail + 수동 안내. 사용자가 매번 ``py -3.13 -m venv ...``
+        수동 수행해야 함 (PR #112 의 .venv 검출 후 재실행 워크플로).
+
+    PR #114 처방:
+        Test-Prereqs 가 3.14+ 감지 시 ``Get-Command py`` + ``py -3.13 --version`` 확인:
+        - launcher 있고 3.13 사용 가능 → ``$script:PYTHON_VENV_EXE='py'``,
+          ``$script:PYTHON_VENV_ARGS=@('-3.13')`` 설정 후 진행
+        - launcher 없거나 3.13 미설치 → Fail (3.13 설치 안내)
+
+        Install-Venv 가 ``$script:PYTHON_VENV_EXE`` + ``$script:PYTHON_VENV_ARGS`` 로
+        venv 생성 → ``py -3.13 -m venv .venv`` 자동 실행.
+
+    회귀 차단 — 본 테스트가 깨지면 3.14 환경 사용자가 수동 venv 생성으로 되돌아감.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # script-scoped 변수 (Test-Prereqs 와 Install-Venv 간 공유)
+    assert "$script:PYTHON_VENV_EXE" in text, (
+        "$script:PYTHON_VENV_EXE 변수 누락 — Install-Venv 가 venv 생성 명령 모름"
+    )
+    assert "$script:PYTHON_VENV_ARGS" in text, "$script:PYTHON_VENV_ARGS 변수 누락"
+    # 3.14+ fallback 의 핵심 키워드
+    assert "py -3.13" in text, "py -3.13 launcher 참조 누락"
+    assert "Get-Command py" in text, "py launcher 존재 확인 누락"
+    assert "py -3.13 --version" in text, "py -3.13 버전 검증 누락"
+    assert "fallback" in text.lower() or "fallback" in text, "fallback 키워드 누락"
+    # Install-Venv 가 새 변수 사용
+    import re as _re
+    install_venv_match = _re.search(
+        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert install_venv_match is not None, "Install-Venv 함수 추출 실패"
+    install_body = install_venv_match.group(1)
+    assert "$script:PYTHON_VENV_EXE" in install_body, (
+        "Install-Venv 에서 $script:PYTHON_VENV_EXE 미사용 — Test-Prereqs 변수 미연결"
+    )
+    # 기존 hardcoded "& python -m venv" 가 fallback 변수로 교체되었어야 함
+    body_no_comments = _re.sub(r"#.*", "", install_body)
+    assert "& python -m venv" not in body_no_comments, (
+        "Install-Venv 안에 hardcoded '& python -m venv' 잔존 — PR #114 fallback 변수 미적용"
+    )
