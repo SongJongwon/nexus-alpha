@@ -261,8 +261,9 @@ USE_API_KEY=false
 # (LLM_PROVIDER=api_key 일 때만)
 # ANTHROPIC_API_KEY=sk-ant-...
 
-LANGFUSE_PUBLIC_KEY="pk-lf-09fedad5-dcbf-4b8e-8f5d-f741922da92b"
-LANGFUSE_SECRET_KEY="sk-lf-...(로컬 .env)..."
+# LangFuse 키는 *로컬 .env* 에서만 관리 — public 저장소에 절대 commit 금지 (PR #103 보안 조치)
+LANGFUSE_PUBLIC_KEY="pk-lf-<your-public-key>"
+LANGFUSE_SECRET_KEY="sk-lf-<your-secret-key>"
 LANGFUSE_HOST="https://cloud.langfuse.com"
 ```
 
@@ -270,9 +271,9 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 - **저장소**: https://github.com/SongJongwon/nexus-alpha
 - **기본 브랜치**: `main`
 - **인증**: `gh` CLI 2.91.0+ (`gh auth login --web` 권장)
-- **Git 전역**:
-  - `user.name` = `머지봇_송종원`
-  - `user.email` = `jwsong@ymx.co.kr`
+- **Git 전역** (사용자별로 다름):
+  - `user.name` = `<your-name>`
+  - `user.email` = `<your-email>`
 
 ---
 
