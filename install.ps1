@@ -107,6 +107,12 @@ git 이 PATH 에 없습니다.
     }
 
     # Python 3.13
+    # PR #114 — 시스템 python 3.14+ 감지 시 ``py -3.13`` 자동 fallback 으로 venv 생성.
+    # $script:PYTHON_VENV_EXE + $script:PYTHON_VENV_ARGS 가 Install-Venv 에서 venv 생성에 사용됨.
+    # 기본은 system 'python' — 3.14+ 일 때만 'py -3.13' 으로 전환.
+    $script:PYTHON_VENV_EXE  = 'python'
+    $script:PYTHON_VENV_ARGS = @()
+
     $py = Get-Command python -ErrorAction SilentlyContinue
     if (-not $py) {
         Fail @"
@@ -119,7 +125,7 @@ python 이 PATH 에 없습니다.
     $pyVersion = (& python --version 2>&1).ToString().Trim()
     # PR #110 — CrewAI 1.14.1 의 Python 지원 범위는 ``>=3.10,<3.14``.
     # 3.14+ 에서 의존성 (chromadb / instructor / pydantic-core) 빌드 실패 (사용자 보고).
-    # PR #105 의 forward-proof (4.x 허용) 는 의존성 현실과 맞지 않아 본 PR 에서 *반전*.
+    # PR #114 — 3.14+ 시 즉시 Fail 대신 ``py -3.13`` launcher 자동 fallback 시도.
     if ($pyVersion -match 'Python\s+(\d+)\.(\d+)') {
         $major = [int]$matches[1]
         $minor = [int]$matches[2]
@@ -131,23 +137,35 @@ python 이 PATH 에 없습니다.
                 Write-Ok "python: $pyVersion (3.13 권장, 현재 버전도 호환)"
             }
         } elseif ($major -gt 3 -or ($major -eq 3 -and $minor -ge 14)) {
-            # 3.14+ 또는 4.x — CrewAI 1.14.1 의존성 빌드 fail
-            Fail @"
-현재 $pyVersion — CrewAI 1.14.1 은 Python 3.10 ~ 3.13.x 만 지원합니다.
-3.14+ / 4.x 에서 의존성 (chromadb / instructor / pydantic-core) 빌드 실패.
+            # PR #114 — 3.14+ 자동 fallback: ``py -3.13`` launcher 시도
+            Write-Warn2 "시스템 python: $pyVersion (CrewAI 1.14.x 미지원). ``py -3.13`` launcher 시도..."
+            $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+            $launcherVer = $null
+            if ($pyLauncher) {
+                $launcherVer = (& py -3.13 --version 2>&1 | Out-String).Trim()
+            }
+            if ($pyLauncher -and $LASTEXITCODE -eq 0 -and $launcherVer -match 'Python\s+3\.13') {
+                # py launcher 의 3.13 사용 가능 → venv 생성에 사용
+                $script:PYTHON_VENV_EXE  = 'py'
+                $script:PYTHON_VENV_ARGS = @('-3.13')
+                Write-Ok "py -3.13 fallback: $launcherVer (venv 생성에 사용)"
+            } else {
+                # py launcher 없거나 3.13 미설치 → Fail
+                Fail @"
+현재 $pyVersion — CrewAI 1.14.1 은 Python 3.10 ~ 3.13.x 만 지원하며, ``py -3.13`` launcher
+fallback 도 사용 불가능합니다.
 
-해결책 (택일):
+해결책:
 
-  1. Python 3.13 신규 설치 (권장):
+  1. Python 3.13 설치 (권장):
        winget install --id Python.Python.3.13 -e
        또는 https://www.python.org/downloads/release/python-3137/
 
-  2. 3.13 + 3.14 동시 설치된 경우 (py launcher 활용):
-       py -3.13 -m venv `$HOME\nexus-alpha\.venv
-       후 install.ps1 재실행 (.venv 검출 → 의존성만 설치)
+  2. 설치 후 install.ps1 재실행 — ``py -3.13`` 으로 자동 venv 생성 (PR #114).
 
-  3. PATH 환경변수 순서 조정: Python 3.13 디렉터리를 3.14 보다 위로
+  3. (대체) PATH 환경변수 순서 조정: Python 3.13 디렉터리를 3.14 보다 위로.
 "@
+            }
         } else {
             # 3.10 미만 (3.9, 3.8 등 EOL)
             Fail "현재 $pyVersion — CrewAI 1.14.1 은 Python 3.10 ~ 3.13.x 만 지원. 설치: winget install --id Python.Python.3.13 -e"
@@ -293,14 +311,25 @@ function Install-Venv {
     if (Test-Path $venvPython) {
         Write-Ok '.venv 이미 존재 — 의존성만 재설치'
     } else {
+        # PR #114 — $script:PYTHON_VENV_EXE / $script:PYTHON_VENV_ARGS 는 Test-Prereqs 에서 설정.
+        # 기본값 'python' (3.10~3.13 정상) 또는 'py -3.13' (3.14+ 자동 fallback).
+        # 미설정 (.venv 이미 존재해서 Test-Prereqs 가 early return 한 경우) → 'python' 기본.
+        if (-not $script:PYTHON_VENV_EXE) { $script:PYTHON_VENV_EXE = 'python' }
+        if ($null -eq $script:PYTHON_VENV_ARGS) { $script:PYTHON_VENV_ARGS = @() }
+        $venvCmdArgs = $script:PYTHON_VENV_ARGS + @('-m', 'venv', '.venv')
+
         Push-Location $INSTALL_DIR
         try {
-            & python -m venv .venv | Out-Null
-            if ($LASTEXITCODE -ne 0) { Fail '가상환경 생성 실패 (python -m venv .venv)' }
+            & $script:PYTHON_VENV_EXE $venvCmdArgs | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $cmdStr = "$($script:PYTHON_VENV_EXE) $($script:PYTHON_VENV_ARGS -join ' ') -m venv .venv".Trim()
+                Fail "가상환경 생성 실패 ($cmdStr)"
+            }
         } finally {
             Pop-Location
         }
-        Write-Ok '가상환경 생성: .venv'
+        $cmdSummary = "$($script:PYTHON_VENV_EXE) $($script:PYTHON_VENV_ARGS -join ' ')".Trim()
+        Write-Ok "가상환경 생성: .venv (via $cmdSummary -m venv)"
     }
 
     Push-Location $INSTALL_DIR
