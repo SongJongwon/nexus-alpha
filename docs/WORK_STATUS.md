@@ -1,9 +1,9 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-11 (PR #98~#101 — 후보 N/O/P/Q empirical 사이클, directive *13 차* 재사용 + 최종 배포 비전 Electron/Tauri 확정)
-> **현재 브랜치**: `feat/candidate-q-exception-directive-pr101` (PR #99 → PR #100 → PR #101 stack)
-> **테스트**: pytest **750 passed** (727 → +23 in PR #100/#101, 회귀 0)
-> **머지된 PR**: 97 → **101** (5/11 세션 추가 +4: #98 마무리 / #99 후보 N / #100 후보 O / #101 후보 Q)
+> **마지막 업데이트**: 2026-05-11 (PR #98~#101 머지 + **PR #102 — Alpha 진입점 (install.ps1 + scripts/run.py) ⭐** — irm 한 줄 설치 + 자연어 입력창)
+> **현재 브랜치**: `feat/alpha-installer-pr102` (PR #99~#101 모두 main 머지 완료, PR #102 신설)
+> **테스트**: pytest **771 passed** (750 → +21 PR #102 신규, 회귀 0)
+> **머지된 PR**: 97 → **101** (PR #102 open) — 5/11 세션 합산 +5 PR
 > **실 LLM E2E 검증**: **8 회 누적** — filename → import → code_qa → active 4/4 → publish → infinite-short → dep env → **DoD 7/7 ALL PASSED**
 > **active QA gating (Track A)**: 0/4 → 2/4 → 1/4 회귀 → 2/4 → **4/4 (`--force-cli` CLI)** ⭐⭐⭐
 > **Track B 방어선 2**: ✅ **PR #78 적용 + 5 도메인 sample 5/5 PASS 검증** ⭐⭐⭐
@@ -28,8 +28,9 @@
 > **후보 O (stub `__getattr__` fallback, PR #100)**: ✅ **directive 강화 + 1-iter 검증 PASS** — `expect` 심볼 명시 + `_UNIVERSAL_NOOP` fallback 두 layer. 방어선 패턴 **12 차** 재사용.
 > **후보 P (PR #100 적용 full 5-iter)**: ✅ **4/5 PASS (80%, +20%p vs PR #99 60%)** ⭐ — `expect` ImportError 0회 재발 (deterministic 차단 확인). ITER 3 fail = 새 fail mode (`urlparse(None)` 잘못된 예외 가정). 보고서: [progress/track_b_pr100_5iter_verify.md](./progress/track_b_pr100_5iter_verify.md)
 > **후보 Q (PR #101 — 예외 단정 보수적 규칙)**: ✅ **directive *13 차* 재사용 + code_qa-level fail 직접 차단 검증** — 1-iter 에서 code_qa PASS (6 tests, `urlparse(None)` 류 fail 0회 재발). functional/robustness 의 orthogonal LLM variance 는 별도 후속 (PR #102 후보). 보고서: [progress/track_b_pr101_exception_directive.md](./progress/track_b_pr101_exception_directive.md) ⭐
-> **다음 1순위 후보**: 후보 R (PR #101 적용 full 5-iter sweep) / 후보 S (Post-processing 결정형 fallback) / 후보 T (Sticky artifact_category) / Electron/Tauri Alpha 시작
-> **최종 배포 비전 (확정 5/11)**: install.ps1 (Alpha) → Streamlit (Beta) → **Electron 또는 Tauri (Release)** — 데스크탑 + 웹 동시 지원 (Discord 방식). 자연어 입력 → .exe + 다운로드 URL 풀체인 그대로 wrap. 상세: [context/next_session_context.md](./context/next_session_context.md) §10 신규 섹션.
+> **PR #102 (Alpha 진입점)**: ✅ **install.ps1 + scripts/run.py 신설** — `irm ... | iex` 한 줄 설치 + 자연어 입력창 (Track A/B 자동 라우팅 휴리스틱). 21 신규 pytest PASS. README 에 irm 설치 가이드 추가. Alpha 단계 empirical 진입.
+> **다음 1순위 후보**: 후보 R (PR #101 적용 full 5-iter sweep, 안정성 측정) / **후보 U (Streamlit Beta UI)** ⭐ / 후보 S (Post-processing fallback) / 후보 T (Sticky artifact_category)
+> **최종 배포 비전 (5/11 확정)**: ✅ **install.ps1 (Alpha)** → Streamlit (Beta) → Electron/Tauri (Release) — 데스크탑 + 웹 동시 지원 (Discord 방식). 자연어 입력 → .exe + Draft Release URL. 상세: [context/next_session_context.md §10](./context/next_session_context.md).
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v9 (5/11)**: [architecture/Nexus_Alpha_조직도_v9.md](./architecture/Nexus_Alpha_조직도_v9.md) ⭐ (PR #97~#101 + 최종 배포 비전 반영)
