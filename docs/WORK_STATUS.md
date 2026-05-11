@@ -1,7 +1,7 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-11 (PR #78~#97 머지 + **후보 N 5-iter 안정성 검증 = 3/5 PASS (60%)** ⚠️ — `expect` 심볼 누락 N-failure 식별)
-> **현재 브랜치**: `feat/candidate-n-dod-stability-pr99` (5-iter sweep + 보고서)
+> **마지막 업데이트**: 2026-05-11 (PR #78~#97 머지 + **후보 N (PR #99) 60%** → **후보 O (PR #100) directive 12 차 재사용 + 1-iter 검증 PASS** ⭐)
+> **현재 브랜치**: `feat/candidate-o-stub-getattr-pr100` (PR #99 위에 stack)
 > **테스트**: pytest **727 passed** (572 → +155, 회귀 0, 31.90s)
 > **머지된 PR**: 75 → **97** (5/8~5/11 세션 합산 +22: #78~#97)
 > **실 LLM E2E 검증**: **8 회 누적** — filename → import → code_qa → active 4/4 → publish → infinite-short → dep env → **DoD 7/7 ALL PASSED**
@@ -24,8 +24,10 @@
 >    - 보고서: [progress/track_b_dod_7of7_milestone.md](./progress/track_b_dod_7of7_milestone.md) 외 6개
 >    - **결정형 후처리 패턴 *11 차* 재사용** — `external_dependent` 의미적 SKIP 메커니즘 도달
 >    - **Track A + Track B 양 Track 모두 DoD 7/7 ALL PASSED — Nexus Alpha v4 비전 완전 입증** ⭐⭐⭐
-> **후보 N (DoD 안정성 5-iter)**: **3/5 = 60% PASS** ⚠️ — 인프라 5 항목 100% 안정, 6_qa_overall_passed 만 변동. ITER 2/5 동일 root cause (`expect` ImportError, stub 누락) → N-failure rule = *결정적 결함*. 보고서: [progress/track_b_dod_stability_5iter.md](./progress/track_b_dod_stability_5iter.md)
-> **다음 1순위 후보**: 후보 O (Pytest Author stub `__getattr__` fallback, 5/5 목표) / DevOps 별도 분기 / Streamlit UI
+> **후보 N (DoD 안정성 5-iter, PR #99)**: **3/5 = 60% PASS** ⚠️ — ITER 2/5 동일 root cause (`expect` ImportError) = N-failure rule trigger. 보고서: [progress/track_b_dod_stability_5iter.md](./progress/track_b_dod_stability_5iter.md)
+> **후보 O (stub `__getattr__` fallback, PR #100)**: ✅ **directive 강화 + 1-iter 검증 PASS** — `expect` 심볼 명시 + `_UNIVERSAL_NOOP` fallback 두 layer. 방어선 패턴 **12 차** 재사용.
+> **후보 P (PR #100 적용 full 5-iter)**: ✅ **4/5 PASS (80%, +20%p vs PR #99 60%)** ⭐ — `expect` ImportError 0회 재발 (deterministic 차단 확인). ITER 3 fail 은 *새 fail mode* — Pytest Author 가 `urlparse(None)` 이 raise 한다 잘못 가정 (`pytest.raises` DID NOT RAISE). attempt 1 + 2 동일 → 단일 iter 내 N-failure. 보고서: [progress/track_b_pr100_5iter_verify.md](./progress/track_b_pr100_5iter_verify.md) ⭐
+> **다음 1순위 후보**: 후보 Q (PR #101 — 잘못된 예외 가정 차단 directive) / Post-processing fallback / DevOps 별도 분기
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
