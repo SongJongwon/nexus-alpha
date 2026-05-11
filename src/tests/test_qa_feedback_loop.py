@@ -512,11 +512,18 @@ def test_detect_external_dependent_with_multiple_deps_one_missing(
     assert detect_artifact_category(target_script=script) == "external_dependent"
 
 
-def test_detect_cli_takes_precedence_over_external_dependent(
+def test_detect_external_dependent_takes_precedence_over_cli_when_deps_missing(
     tmp_path, monkeypatch
 ) -> None:
-    """CLI 마커가 외부 dep 보다 우선 — argparse 가 있으면 cli (의미적 카테고리)."""
-    script = tmp_path / "cli_with_dep.py"
+    """PR #96 — argparse + playwright 미설치 → external_dependent (CLI 우선 X).
+
+    배경: PR #95 우선순위는 CLI > external_dependent 였으나, PR #96 검증에서
+    scrape.py 가 argparse + playwright 둘 다 import 시 CLI 분류 → functional
+    /robustness 정상 실행 → ModuleNotFoundError 회귀 발견. subprocess 가 dep
+    미설치로 fail 하면 CLI 의미 무관 — external_dependent 가 *우선*해야 의미적
+    SKIP 가능.
+    """
+    script = tmp_path / "cli_with_missing_dep.py"
     script.write_text(
         "import argparse\n"
         "from playwright.async_api import async_playwright\n",
@@ -529,8 +536,59 @@ def test_detect_cli_takes_precedence_over_external_dependent(
         "find_spec",
         lambda name, *a, **kw: None,  # 전부 미설치
     )
-    # CLI 우선 (argparse 마커 + sys.argv 의도 명확)
+    # PR #96 — dep 미설치 시 external_dependent 우선 (CLI 마커 무시)
+    assert detect_artifact_category(target_script=script) == "external_dependent"
+
+
+def test_detect_cli_when_all_deps_installed(
+    tmp_path, monkeypatch
+) -> None:
+    """PR #96 — argparse + dep 모두 설치됨 → cli (정상 실행 가능 + CLI 의미)."""
+    script = tmp_path / "cli_with_installed_dep.py"
+    script.write_text(
+        "import argparse\nimport requests\n",
+        encoding="utf-8",
+    )
+    import importlib.util
+
+    class _FakeSpec:
+        pass
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "requests":
+            return _FakeSpec()  # 설치됨
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+    # dep 모두 설치 → cli 분류 (functional/robustness 정상 가동 가능)
     assert detect_artifact_category(target_script=script) == "cli"
+
+
+def test_detect_gui_takes_precedence_over_external_dependent(
+    tmp_path, monkeypatch
+) -> None:
+    """PR #96 — GUI > external_dependent (PR #50 기존 동작 보존).
+
+    GUI 카테고리는 stdin 기반 도구가 event loop 와 미스매치이므로 어쨌든 SKIP.
+    external_dependent 도 같은 SKIP 결과 — GUI 우선해도 외부 동작 변화 없음.
+    """
+    script = tmp_path / "gui_with_missing_dep.py"
+    script.write_text(
+        "import tkinter as tk\n"
+        "from playwright.async_api import async_playwright\n",
+        encoding="utf-8",
+    )
+    import importlib.util
+
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a, **kw: None,
+    )
+    # GUI 우선 (PR #50 기존 동작)
+    assert detect_artifact_category(target_script=script) == "gui"
 
 
 def test_external_dependent_category_skips_functional_and_robustness() -> None:

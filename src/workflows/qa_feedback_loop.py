@@ -205,9 +205,20 @@ def detect_artifact_category(
         ``"unknown"``: source / exe 모두 접근 불가.
 
     Note:
-        검사 우선순위: GUI > CLI > external_dependent > library.
-        GUI/CLI 마커가 *동시에* 외부 dep 사용 시 GUI/CLI 가 우선 — functional/
-        robustness 가 어떻게든 의미적 SKIP 되므로 충돌 없음.
+        검사 우선순위 (PR #96 — priority fix): GUI > external_dependent > CLI > library.
+
+        Rationale:
+          - GUI: stdin 기반 도구가 event loop 와 미스매치 → SKIP. external_dep
+            여부 무관 — 같은 SKIP 결과.
+          - **external_dependent (PR #96 — CLI 보다 *우선*):** subprocess.run
+            ([sys.executable, script]) 이 ``ModuleNotFoundError`` 로 즉시 fail.
+            CLI 마커 (argparse) 가 있어도 dep 미설치면 *실 실행 불가* — CLI 의
+            의미 무관. PR #95 적용 후 발견된 회귀 (PR #96 검증) — scrape.py 가
+            argparse + playwright 둘 다 import 시 CLI 우선 → external_dependent
+            SKIP 미발동 → 0/10 fail. 수정: external_dependent 가 CLI 보다 우선.
+          - CLI: external dep 모두 설치된 경우의 분류 — functional/robustness
+            가 정상 실행 가능.
+          - library: 위 모두 해당 안 됨.
     """
     if target_script is not None:
         script_path = Path(target_script)
@@ -220,13 +231,14 @@ def detect_artifact_category(
                 lower = content.lower()
                 if any(kw.lower() in lower for kw in _GUI_FRAMEWORK_KEYWORDS):
                     return "gui"
-                if any(kw.lower() in lower for kw in _CLI_KEYWORDS):
-                    return "cli"
-                # PR #95 — 외부 dep import + 미설치 감지
+                # PR #96 — external_dependent 가 CLI 보다 우선.
+                # subprocess 실행 시 ModuleNotFoundError 회귀가 CLI 의미보다 더 결정적.
                 used_deps = _detect_used_external_deps(content)
                 missing = [d for d in used_deps if not _is_module_installed(d)]
                 if missing:
                     return "external_dependent"
+                if any(kw.lower() in lower for kw in _CLI_KEYWORDS):
+                    return "cli"
                 return "library"
 
     if target_exe is not None:
