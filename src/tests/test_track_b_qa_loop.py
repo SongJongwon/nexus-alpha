@@ -30,9 +30,11 @@ from src.workflows.automate_workflow import (
     AutomationDomain,
     _DOMAIN_TO_ENTRY_FILENAME,
     _QA_LOOP_SKIP_DOMAINS,
+    _extract_imported_symbols_from_track_b_code_block,
     _extract_imports_from_track_b_code_block,
     _inject_track_b_entry_filename_directive,
     _inject_track_b_import_directive,
+    _inject_track_b_stub_getattr_directive,
     run_automate_workflow,
 )
 
@@ -514,3 +516,214 @@ def test_qa_loop_actually_injects_import_directive_into_pytest_task(
     # 추출된 imports 가 directive 본문에 포함
     assert "playwright.async_api" in pytest_desc
     assert "import asyncio" in pytest_desc
+    # PR #100 directive — stub 심볼 enumeration + __getattr__ fallback
+    assert "PR #100" in pytest_desc
+    assert "__getattr__" in pytest_desc
+    assert "_UNIVERSAL_NOOP" in pytest_desc
+
+
+# ---------------------------------------------------------------------------
+# PR #100 — _extract_imported_symbols_from_track_b_code_block (후보 O)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_symbols_single_module_inline_comma_list() -> None:
+    """``from playwright.async_api import async_playwright, expect, TimeoutError``
+    → {모듈: [3 심볼]}."""
+    md = (
+        "## 5단\n"
+        "```python\n"
+        "# file: scrape.py\n"
+        "from playwright.async_api import async_playwright, expect, TimeoutError\n"
+        "import csv\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert symbols == {
+        "playwright.async_api": ["async_playwright", "expect", "TimeoutError"]
+    }
+
+
+def test_extract_symbols_strips_alias() -> None:
+    """``import X as Y`` 의 alias 는 제거되고 원본 심볼명만 보존."""
+    md = (
+        "```python\n"
+        "from playwright.async_api import async_playwright as ap, TimeoutError as PWT\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert symbols == {
+        "playwright.async_api": ["async_playwright", "TimeoutError"]
+    }
+
+
+def test_extract_symbols_multiline_parens() -> None:
+    """``from X import (\\n    a,\\n    b,\\n    c,\\n)`` 멀티라인 괄호 import 도 파싱."""
+    md = (
+        "```python\n"
+        "from playwright.async_api import (\n"
+        "    async_playwright,\n"
+        "    expect,\n"
+        "    TimeoutError as PWTimeoutError,\n"
+        ")\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert symbols == {
+        "playwright.async_api": ["async_playwright", "expect", "TimeoutError"]
+    }
+
+
+def test_extract_symbols_multiple_modules() -> None:
+    """여러 ``from X import ...`` 라인 → 각 모듈 별 심볼 매핑."""
+    md = (
+        "```python\n"
+        "from playwright.async_api import async_playwright, expect\n"
+        "from urllib.parse import urljoin, urlparse\n"
+        "from bs4 import BeautifulSoup\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert symbols == {
+        "playwright.async_api": ["async_playwright", "expect"],
+        "urllib.parse": ["urljoin", "urlparse"],
+        "bs4": ["BeautifulSoup"],
+    }
+
+
+def test_extract_symbols_dedupes_within_module() -> None:
+    """같은 모듈에 같은 심볼 중복 등장 시 한 번만 등록."""
+    md = (
+        "```python\n"
+        "from playwright.async_api import async_playwright\n"
+        "from playwright.async_api import async_playwright, expect\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert symbols == {"playwright.async_api": ["async_playwright", "expect"]}
+
+
+def test_extract_symbols_ignores_plain_import_lines() -> None:
+    """``import X`` (from 없음) 은 심볼 enumeration 의미 없음 → 제외."""
+    md = (
+        "```python\n"
+        "import csv\n"
+        "import sys\n"
+        "import asyncio\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert symbols == {}
+
+
+def test_extract_symbols_empty_for_no_python_block() -> None:
+    """python 블록 부재 / 빈 입력 → 빈 dict."""
+    assert _extract_imported_symbols_from_track_b_code_block("") == {}
+    assert _extract_imported_symbols_from_track_b_code_block("그냥 한국어") == {}
+    md = "```js\nfrom x import y\n```\n"
+    assert _extract_imported_symbols_from_track_b_code_block(md) == {}
+
+
+def test_extract_symbols_skips_star_import() -> None:
+    """``from X import *`` 는 enumeration 의미 없음 → 모듈 매핑 X."""
+    md = (
+        "```python\n"
+        "from os.path import *\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert symbols == {}
+
+
+# ---------------------------------------------------------------------------
+# PR #100 — _inject_track_b_stub_getattr_directive (후보 O)
+# ---------------------------------------------------------------------------
+
+
+def test_inject_stub_getattr_directive_enumerates_module_and_symbols() -> None:
+    """모듈 + 심볼들이 directive 본문에 명시되어야 한다."""
+    symbol_map = {
+        "playwright.async_api": ["async_playwright", "expect", "TimeoutError"],
+    }
+    result = _inject_track_b_stub_getattr_directive("BASE\n", symbol_map)
+    assert result.startswith("BASE\n")
+    assert "PR #100" in result
+    assert "playwright.async_api" in result
+    assert "``async_playwright``" in result
+    assert "``expect``" in result
+    assert "``TimeoutError``" in result
+
+
+def test_inject_stub_getattr_directive_includes_universal_noop_template() -> None:
+    """``__getattr__`` fallback + ``_UNIVERSAL_NOOP`` 클래스 템플릿이 포함되어야 한다."""
+    result = _inject_track_b_stub_getattr_directive(
+        "BASE\n", {"playwright.async_api": ["expect"]}
+    )
+    assert "__getattr__" in result
+    assert "_UNIVERSAL_NOOP" in result
+    assert "__aenter__" in result
+    assert "__aexit__" in result
+
+
+def test_inject_stub_getattr_directive_skip_for_empty_map() -> None:
+    """빈 매핑 → directive 미추가 (방어적)."""
+    assert _inject_track_b_stub_getattr_directive("BASE\n", {}) == "BASE\n"
+
+
+def test_inject_stub_getattr_directive_truncates_long_lists() -> None:
+    """심볼 > 12개 → 첫 12개만 + overflow 표기."""
+    symbols = [f"sym{i}" for i in range(20)]
+    result = _inject_track_b_stub_getattr_directive(
+        "BASE\n", {"playwright.async_api": symbols}
+    )
+    assert "``sym0``" in result
+    assert "``sym11``" in result
+    assert "외 8개" in result
+    assert "``sym12``" not in result
+
+
+def test_inject_stub_getattr_directive_truncates_many_modules() -> None:
+    """모듈 > 8개 → 첫 8 모듈만 enumerate + overflow 표기."""
+    many_modules = {f"mod{i}": ["a"] for i in range(12)}
+    result = _inject_track_b_stub_getattr_directive("BASE\n", many_modules)
+    assert "``mod0``" in result
+    assert "``mod7``" in result
+    assert "외 4 모듈" in result
+    # 9 번째 (index 8) 부터 직접 enumerate 안 됨
+    assert "``mod8``: ``a``" not in result
+
+
+def test_inject_stub_getattr_directive_is_idempotent_pure() -> None:
+    """같은 입력 → 같은 출력 (deterministic, 부수효과 없음)."""
+    sm1 = {"X": ["a", "b"]}
+    sm2 = {"X": ["a", "b"]}
+    r1 = _inject_track_b_stub_getattr_directive("BASE\n", sm1)
+    r2 = _inject_track_b_stub_getattr_directive("BASE\n", sm2)
+    assert r1 == r2
+    # 입력 dict 변형 없음
+    assert sm1 == {"X": ["a", "b"]}
+
+
+def test_extract_symbols_pr99_iter2_real_payload() -> None:
+    """PR #99 ITER 2 실제 산출 (`expect` 누락) 의 import 라인이 정확히 파싱되어야 한다.
+
+    회귀 차단 — 본 테스트가 깨지면 PR #100 directive 가 실 LLM 산출에서
+    심볼을 enumerate 하지 못함을 의미. PR #99 N-failure rule 재발 위험.
+    """
+    # ITER 2 attempt 1 의 실제 scrape.py:20 패턴
+    md = (
+        "본문\n"
+        "```python\n"
+        "# file: scrape.py\n"
+        "from playwright.async_api import (\n"
+        "    async_playwright,\n"
+        "    expect,\n"
+        "    TimeoutError as PWTimeoutError,\n"
+        ")\n"
+        "```\n"
+    )
+    symbols = _extract_imported_symbols_from_track_b_code_block(md)
+    assert "playwright.async_api" in symbols
+    assert "expect" in symbols["playwright.async_api"]
+    assert "async_playwright" in symbols["playwright.async_api"]
+    assert "TimeoutError" in symbols["playwright.async_api"]

@@ -608,6 +608,95 @@ def _extract_imports_from_track_b_code_block(agent_output: str) -> list[str]:
     return imports
 
 
+def _extract_imported_symbols_from_track_b_code_block(
+    agent_output: str,
+) -> dict[str, list[str]]:
+    """첫 ```python``` 블록의 ``from X import a, b as c, ...`` 라인에서
+    *모듈 → 심볼 리스트* 매핑을 추출한다 (PR #100 — 후보 O).
+
+    배경 (PR #99 5-iter 안정성 검증에서 발견된 결정적 결함):
+        ITER 2 + 5 가 동일 root cause 로 fail:
+        ``ImportError: cannot import name 'expect' from 'playwright.async_api'``.
+        PR #88 의 ``_extract_imports_from_track_b_code_block`` 는 import *라인*
+        만 추출 → Pytest Author 가 stub 에 어떤 *심볼* 을 enumerate 해야 하는지
+        암묵적 추론에 의존 → ``expect`` 등 누락 발생.
+
+    처방 (PR #100 — Same N-failure rule 결정형 후처리 패턴):
+        ``from X import a, b, c as d, (e, f, g)`` 모두 파싱 → ``{X: [a, b, c, e, f, g]}``.
+        ``_inject_track_b_stub_getattr_directive`` 가 이 매핑을 directive 에
+        명시 + ``__getattr__`` fallback 강제 → 심볼 leak 차단.
+
+    파싱 규칙:
+        - ``from playwright.async_api import async_playwright, expect``
+            → ``{"playwright.async_api": ["async_playwright", "expect"]}``
+        - ``from playwright.async_api import async_playwright as ap``
+            → ``{"playwright.async_api": ["async_playwright"]}`` (alias 제거)
+        - ``from playwright.async_api import (\\n    async_playwright,\\n    expect,\\n)``
+            → 괄호 멀티라인 결합 후 동일 매핑
+        - ``import X`` (from 없음) → 매핑 미포함 (심볼 enumeration 불필요)
+
+    Returns:
+        ``{모듈명: [심볼1, 심볼2, ...]}`` — 같은 모듈 여러 줄이면 합산.
+        블록 부재 / from import 부재 시 빈 dict.
+    """
+    if not agent_output:
+        return {}
+    matches = _PYTHON_FENCE_PATTERN.findall(agent_output)
+    if not matches:
+        return {}
+    code = matches[0]
+    # 멀티라인 괄호 import 결합 — `from X import (\n  a,\n  b,\n)` 는 한 줄 처럼 처리
+    flattened = _flatten_multiline_imports(code)
+
+    mapping: dict[str, list[str]] = {}
+    pattern = re.compile(
+        r"^\s*from\s+([\w\.]+)\s+import\s+(.+?)\s*$", re.MULTILINE
+    )
+    for module, symbols_blob in pattern.findall(flattened):
+        symbols_blob = symbols_blob.strip().lstrip("(").rstrip(")")
+        parts = [p.strip() for p in symbols_blob.split(",") if p.strip()]
+        symbols: list[str] = []
+        for part in parts:
+            # `name` 또는 `name as alias` → 원본 name 만 보존
+            head = part.split(" as ", 1)[0].strip()
+            # 별표 import (``from X import *``) 는 stub 강제 의미 없음 → skip
+            if head and head != "*" and head.isidentifier():
+                symbols.append(head)
+        if symbols:
+            mapping.setdefault(module, []).extend(symbols)
+    # 중복 제거 (순서 보존)
+    for module, syms in mapping.items():
+        seen: set[str] = set()
+        unique: list[str] = []
+        for s in syms:
+            if s not in seen:
+                unique.append(s)
+                seen.add(s)
+        mapping[module] = unique
+    return mapping
+
+
+_MULTILINE_FROM_IMPORT_PATTERN = re.compile(
+    r"^(\s*from\s+[\w\.]+\s+import\s*)\(([^)]*)\)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _flatten_multiline_imports(code: str) -> str:
+    """``from X import (\\n  a,\\n  b,\\n)`` 의 줄바꿈을 제거 → 한 줄로 결합.
+
+    pattern 매칭이 한 줄 단위로 작동하도록 사전 변환. 단순 ``import X`` 나
+    한 줄 ``from X import a, b`` 는 변경 없음.
+    """
+
+    def _join(match: re.Match[str]) -> str:
+        head, body = match.group(1), match.group(2)
+        flat = " ".join(part.strip() for part in body.splitlines() if part.strip())
+        return f"{head}{flat}"
+
+    return _MULTILINE_FROM_IMPORT_PATTERN.sub(_join, code)
+
+
 def _inject_track_b_import_directive(
     description: str, imports: list[str]
 ) -> str:
@@ -633,6 +722,84 @@ def _inject_track_b_import_directive(
         f"``ModuleNotFoundError: No module named 'playwright.async_api'; "
         f"'playwright' is not a package`` 회귀 사례 (PR #87 검증). "
         f"async API 면 ``pytest.mark.asyncio`` 또는 ``asyncio.run`` 으로 호출.\n"
+    )
+
+
+def _inject_track_b_stub_getattr_directive(
+    description: str, symbol_map: dict[str, list[str]]
+) -> str:
+    """PR #100 — pytest_task description 에 stub 심볼 enumeration +
+    ``__getattr__`` fallback 강제 directive 추가.
+
+    배경 (PR #99 5-iter 안정성 검증, 후보 N):
+        ITER 2 + 5 가 동일 ``cannot import name 'expect' from 'playwright.async_api'``
+        ImportError 로 fail → Pytest Author 가 ``expect`` 등 일부 심볼을 stub 에
+        enumerate 하지 않음 (PR #88 directive 가 *심볼 단위* 가 아닌 *라인 단위*
+        강제였기 때문).
+
+    처방 (방어선 패턴 *12 차* 재사용):
+        - 각 stubbed 모듈의 *심볼 enumeration* 을 description 에 명시
+        - 추가 fallback: ``def __getattr__(name): return _StubNoop`` 형태로
+          미정의 심볼도 안전 noop 반환 → 심볼 leak 차단
+        - 빈 매핑 (``from X import`` 부재) → directive 미추가
+
+    Args:
+        description: 이미 ``_inject_track_b_entry_filename_directive`` +
+            ``_inject_track_b_import_directive`` 가 chain 으로 적용된 텍스트.
+        symbol_map: ``_extract_imported_symbols_from_track_b_code_block`` 산출.
+
+    Returns:
+        directive 가 추가된 description. 빈 매핑이면 그대로 반환.
+    """
+    if not symbol_map:
+        return description
+    # 모듈별 심볼 enumeration 블록 (최대 8 모듈 / 각 12 심볼)
+    lines: list[str] = []
+    for module, symbols in list(symbol_map.items())[:8]:
+        truncated = symbols[:12]
+        overflow = (
+            f" (... 외 {len(symbols) - 12}개)" if len(symbols) > 12 else ""
+        )
+        sym_str = ", ".join(f"``{s}``" for s in truncated)
+        lines.append(f"  - ``{module}``: {sym_str}{overflow}")
+    if len(symbol_map) > 8:
+        lines.append(f"  - (... 외 {len(symbol_map) - 8} 모듈)")
+    symbol_block = "\n".join(lines)
+    return description + (
+        f"\n## stub 심볼 enumeration + ``__getattr__`` fallback 강제 (PR #100) 🚨\n"
+        f"각 stubbed 모듈에 다음 심볼들을 *명시 등록* + *fallback* 두 layer 모두 "
+        f"갖춰야 합니다 (PR #99 검증에서 ``expect`` 누락 ImportError 반복 사례):\n"
+        f"{symbol_block}\n\n"
+        f"**필수 패턴**:\n"
+        f"  1. 위 심볼들을 ``_sub.<symbol> = <stub_obj>`` 로 *명시 등록*\n"
+        f"  2. 추가로 ``__getattr__`` fallback 으로 *미정의 심볼 도 안전 noop* 반환:\n"
+        f"     ```python\n"
+        f"     class _StubModule(types.ModuleType):\n"
+        f"         def __getattr__(self, name):\n"
+        f"             if name.startswith('_'):\n"
+        f"                 raise AttributeError(name)\n"
+        f"             # 미정의 심볼 → 콜러블 + 컨텍스트매니저 + async 호환 noop\n"
+        f"             return _UNIVERSAL_NOOP\n"
+        f"     ```\n"
+        f"  3. 이렇게 두 layer 갖추면 LLM 이 enumerate 누락해도 fallback 이 흡수.\n"
+        f"  4. ``_UNIVERSAL_NOOP`` 은 *모든 호출* 을 받는 객체 — 다음 예시 권장:\n"
+        f"     ```python\n"
+        f"     class _Noop:\n"
+        f"         def __call__(self, *a, **k): return self\n"
+        f"         def __getattr__(self, name):\n"
+        f"             if name.startswith('_'):\n"
+        f"                 raise AttributeError(name)\n"
+        f"             return self\n"
+        f"         async def __aenter__(self): return self\n"
+        f"         async def __aexit__(self, *a): return False\n"
+        f"         def __enter__(self): return self\n"
+        f"         def __exit__(self, *a): return False\n"
+        f"         def __await__(self):\n"
+        f"             import asyncio\n"
+        f"             return asyncio.sleep(0).__await__()\n"
+        f"     _UNIVERSAL_NOOP = _Noop()\n"
+        f"     ```\n"
+        f"이 패턴은 PR #99 의 ITER 2/5 fail (5-iter 60%) 을 결정적으로 차단합니다.\n"
     )
 
 
@@ -718,6 +885,11 @@ def _run_track_b_qa_loop(
     entry_imports = _extract_imports_from_track_b_code_block(code_task_output)
     pytest_task.description = _inject_track_b_import_directive(
         pytest_task.description, entry_imports
+    )
+    # PR #100 — stub 심볼 enumeration + __getattr__ fallback directive (PR #99 ITER 2/5 차단)
+    symbol_map = _extract_imported_symbols_from_track_b_code_block(code_task_output)
+    pytest_task.description = _inject_track_b_stub_getattr_directive(
+        pytest_task.description, symbol_map
     )
     pytest_crew = Crew(
         agents=[pytest_author],
