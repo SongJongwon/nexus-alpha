@@ -15,17 +15,15 @@
 > **풀체인 외부 통합**: ✅ **Update Checker** (PR #66) + ✅ **Track B 풀체인** (PR #70~#83)
 > **본부 3 (개발)**: 1/9 (11%) → **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68)
 > **전체 구현률**: 34/46 (74%) → **39/46 (85%)** ⭐⭐
-> **Track B 풀체인 실 LLM E2E 검증**: ✅ **6 회 검증 — 결정형 후처리 4 layer + dependency 이슈 적발** ⭐⭐⭐
->    - PR #84 (1차): filename mismatch → 14.26분
->    - PR #87 (2차): import path mismatch → 7.78분
->    - PR #89 (3차): code_qa PASS → 14.80분 (retry=1)
->    - PR #91 (4차): active 4/4 → 6.35분 (retry=0)
->    - PR #92 (5차): publish 4 항목 PASS + Draft Release → 20.43분
->    - **PR #94 (6차): infinite-short 차단 + 6/7 → 16.77분 (dependency 이슈 발견)**
->    - 보고서: [progress/track_b_full_chain_verification_post_pr84.md](./progress/track_b_full_chain_verification_post_pr84.md) + [progress/track_b_pr86_verification.md](./progress/track_b_pr86_verification.md) + [progress/track_b_pr88_verification.md](./progress/track_b_pr88_verification.md) + [progress/track_b_pr90_verification.md](./progress/track_b_pr90_verification.md) + [progress/track_b_publish_verification_pr92.md](./progress/track_b_publish_verification_pr92.md) + [progress/track_b_pr93_verification.md](./progress/track_b_pr93_verification.md)
->    - **DoD 6/7 PASS** — 6_qa fail 원인이 LLM tool 선택 variance (PR #91 requests vs PR #94 playwright dependency)
->    - **결정형 후처리 패턴 4 layer 누적**: 본문(#78) + filename(#86) + import(#88) + retry(#93)
-> **다음 1순위 후보**: dependency-aware QA gating (후보 L) / DevOps 별도 분기 / Streamlit UI
+> **Track B 풀체인 실 LLM E2E 검증**: 🎉 **DoD 7/7 ALL PASSED ⭐⭐⭐** (8 회 검증, 11 PR 누적)
+>    - PR #84 (1차): filename → PR #87 (2차) import path → PR #89 (3차) code_qa PASS
+>    - PR #91 (4차): active 4/4 → PR #92 (5차) publish PASS → PR #94 (6차) infinite-short 차단
+>    - PR #95 (7차): dep-aware gating 도입, priority 결함 발견
+>    - **PR #97 (8차): DoD 7/7 ALL PASSED ⭐⭐⭐ — 13.06분, 18 tests, Draft Release**
+>    - 보고서: [progress/track_b_dod_7of7_milestone.md](./progress/track_b_dod_7of7_milestone.md) 외 6개
+>    - **결정형 후처리 패턴 *11 차* 재사용** — `external_dependent` 의미적 SKIP 메커니즘 도달
+>    - **Track A + Track B 양 Track 모두 DoD 7/7 ALL PASSED — Nexus Alpha v4 비전 완전 입증** ⭐⭐⭐
+> **다음 1순위 후보**: DoD 7/7 안정성 반복 검증 / DevOps 별도 분기 / Streamlit UI
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
@@ -648,7 +646,26 @@ v5 doc 의 "비전 피벗으로 RPA 특화 에이전트 미구축" 결정을 *�
     - PR #91 (requests, .venv 설치) vs PR #94 (playwright, 미설치) 의 LLM tool 선택 variance
     - 후보 L 도출: dependency-aware QA gating (detect_artifact_category 확장)
     - 보고서: [progress/track_b_pr93_verification.md](./progress/track_b_pr93_verification.md)
-92. ⏳ **본 PR #94 (PR #93 검증 결과 docs)** — WORK_STATUS + 보고서 + 후보 L
+92. ~~**PR #94 (PR #93 검증 결과 docs)**~~ ✅ `ffadb8d`
+93. ~~**PR #95 — dependency-aware QA gating (external_dependent 카테고리)**~~ ✅ `a1d2dc9`
+    - `_EXTERNAL_DEPS` (14개 Track B 도메인 dep) + `_detect_used_external_deps` + `_is_module_installed`
+    - `_classify_skipped` external_dependent → functional/robustness 의미적 SKIP
+    - pytest 718 → **725 passed** (+7) / 방어선 패턴 *10 차* 재사용
+94. ~~**PR #96 — priority fix (external_dependent > CLI)**~~ ✅ `2450c48`
+    - PR #95 검증에서 발견 — scrape.py 가 argparse + playwright 시 CLI 분류 → SKIP 미발동 → 회귀
+    - priority 재조정: GUI > **external_dependent** > CLI > library
+    - pytest 725 → **727 passed** (+2) / 방어선 패턴 *11 차* 재사용
+95. ~~**Track B DoD 7/7 ALL PASSED ⭐⭐⭐ (검증 8차)**~~ ✅
+    - 명령: PR #92/#94/#95 와 동일 (publish 활성, tag `v0.1.0-track-b-test-pr96`)
+    - **결과: 종합 ALL PASSED** — 1~5 publish/release/executor + 6_qa + 7_within_budget 모두 ✅
+    - artifact_category=external_dependent (PR #95+#96 정확 작동)
+    - QA: code_qa PASS (18 tests) + gui PASS + functional/robustness 의미적 SKIPPED
+    - retry=1 (attempt 1 code_qa fail → attempt 2 PASS — qa_feedback_loop 효과)
+    - Build: Scrape.exe + Draft Release: https://github.com/SongJongwon/nexus-alpha/releases/tag/untagged-4eee26ef5576e098023d
+    - elapsed 13.06분
+    - **Track A + Track B 양 Track 모두 DoD 7/7 — Nexus Alpha v4 비전 완전 empirical 입증**
+    - 보고서: [progress/track_b_dod_7of7_milestone.md](./progress/track_b_dod_7of7_milestone.md)
+96. ⏳ **본 PR #97 (DoD 7/7 ALL PASSED milestone docs)** — WORK_STATUS + 보고서
 
 ---
 
