@@ -123,8 +123,14 @@ python 이 PATH 에 없습니다.
 }
 
 # ─── 2. 저장소 clone / update ───────────────────────────────────────────────
+# PR #109 — 모든 native command 호출은 ``| Out-Null`` 만 사용 (``2>&1`` 사용 금지).
+# 이유: Windows PowerShell 5.1 + ``$ErrorActionPreference = 'Stop'`` 조합에서
+# ``& nativecmd 2>&1`` 은 stderr 각 줄을 NativeCommandError ErrorRecord 로 wrap
+# 하여 스크립트를 중단시킴 (사용자 보고: "From https://... 오류로 실패"). 본 PR
+# 부터 stderr 는 console 로 흘러 사용자가 git/pip 진행 상황을 볼 수 있다.
+# (실패 검출은 ``$LASTEXITCODE`` 가 안정적으로 작동).
 function Invoke-CleanClone {
-    & git clone --branch $BRANCH "https://github.com/$REPO.git" $INSTALL_DIR 2>&1 | Out-Null
+    & git clone --branch $BRANCH "https://github.com/$REPO.git" $INSTALL_DIR | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "git clone 실패 (https://github.com/$REPO.git)" }
     Write-Ok "clone 완료"
 }
@@ -139,7 +145,7 @@ function Update-ExistingRepo {
     # (installer 사용자는 일반적으로 코드 수정 안 함 — 의도된 동작).
     Push-Location $INSTALL_DIR
     try {
-        & git fetch origin $BRANCH 2>&1 | Out-Null
+        & git fetch origin $BRANCH | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Write-Warn2 'git fetch 실패 — fresh clone 으로 전환'
             return $false
@@ -147,13 +153,13 @@ function Update-ExistingRepo {
         $localBranch = (& git branch --show-current).Trim()
         if ($localBranch -ne $BRANCH) {
             # 다른 브랜치 → 강제 checkout (-B 로 브랜치 생성 또는 재설정)
-            & git checkout -B $BRANCH "origin/$BRANCH" 2>&1 | Out-Null
+            & git checkout -B $BRANCH "origin/$BRANCH" | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 Write-Warn2 "git checkout $BRANCH 실패 — fresh clone 으로 전환"
                 return $false
             }
         }
-        & git reset --hard "origin/$BRANCH" 2>&1 | Out-Null
+        & git reset --hard "origin/$BRANCH" | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Write-Warn2 "git reset --hard origin/$BRANCH 실패 (.git 손상 가능) — fresh clone 으로 전환"
             return $false
@@ -245,7 +251,7 @@ function Install-Venv {
     } else {
         Push-Location $INSTALL_DIR
         try {
-            & python -m venv .venv 2>&1 | Out-Null
+            & python -m venv .venv | Out-Null
             if ($LASTEXITCODE -ne 0) { Fail '가상환경 생성 실패 (python -m venv .venv)' }
         } finally {
             Pop-Location
@@ -255,7 +261,7 @@ function Install-Venv {
 
     Push-Location $INSTALL_DIR
     try {
-        & $venvPython -m pip install --upgrade pip 2>&1 | Out-Null
+        & $venvPython -m pip install --upgrade pip | Out-Null
         & $venvPython -m pip install -r requirements.txt
         if ($LASTEXITCODE -ne 0) { Fail '의존성 설치 실패 (pip install -r requirements.txt)' }
     } finally {
