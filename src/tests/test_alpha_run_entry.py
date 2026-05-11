@@ -83,6 +83,37 @@ def test_install_ps1_has_env_initialization_step() -> None:
     assert "Step 6/6" in text
 
 
+def test_install_ps1_pull_failure_resets_and_reclones() -> None:
+    """install.ps1 이 git pull 실패 시 fresh clone 으로 자동 복구 (PR #106).
+
+    배경:
+        PR #102/#104 의 ``Get-Repo`` 는 git pull --ff-only 실패 시 *경고만* 출력
+        하고 계속 진행 → 사용자 환경이 broken 상태로 남아 후속 단계 (pip /
+        smoke test) 가 mysterious fail.
+
+    PR #106 처방:
+        - ``Update-ExistingRepo`` 가 fetch/checkout/pull 단계별 ``$LASTEXITCODE``
+          확인 → 어느 단계든 실패 시 ``$false`` 반환
+        - ``Reset-InstallDirAndClone`` 가 ``.env`` 백업 → 기존 폴더 ``Rename-Item``
+          으로 ``.broken.{ts}`` 처리 → ``Invoke-CleanClone`` → ``.env`` 복원
+
+    회귀 차단 — 본 테스트가 깨지면 install.ps1 이 pull 실패에서 자동 복구
+    안 되어 사용자가 수동 정리를 강제 당함.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 3 신규 헬퍼 함수
+    assert "function Update-ExistingRepo" in text
+    assert "function Reset-InstallDirAndClone" in text
+    assert "function Invoke-CleanClone" in text
+    # pull 실패 recover 로직 키워드
+    assert "fresh clone" in text, "fresh clone 복구 메시지 누락"
+    assert ".broken." in text, ".broken.{timestamp} 백업 패턴 누락"
+    # .env 보존 (사용자 시크릿 손실 방지)
+    assert "envBackup" in text or "env_backup" in text, ".env 백업 로직 누락"
+    # 안전한 rename 패턴 (즉시 Remove-Item -Recurse 가 아닌)
+    assert "Rename-Item" in text, "Rename-Item 안전 백업 누락"
+
+
 def test_install_ps1_python_version_check_uses_numeric_comparison() -> None:
     """install.ps1 의 Python 버전 체크가 3.13+ 모두 허용 (PR #105).
 
