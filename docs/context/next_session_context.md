@@ -331,10 +331,24 @@ PR #95 dependency-aware QA gating 도입 + PR #96 priority fix (external_depende
 
 **Track A + Track B 양 Track 모두 DoD 7/7 — Nexus Alpha v4 비전 완전 입증.**
 
-### 후보 N (신규, 선택) — DoD 7/7 안정성 반복 검증 🟢
+### 후보 N → ⚠️ 완료 (PR #99) — 5-iter 결과 3/5 PASS (60%)
 
-본 8차 검증은 1 회 PASS. 안정성 입증을 위해 *3~5 회 반복 검증* 시 모두 DoD 7/7
-도달 여부 확인. 회당 ~13분.
+5-iter 안정성 검증 결과 *60%* 도달 — PR #97 의 1/1 PASS 가 대표적이지 않음
+empirical 입증. 인프라 5 항목은 5/5 = 100% 안정, **6_qa_overall_passed** 만
+변동. ITER 2 + ITER 5 가 동일 root cause (`ImportError: cannot import name
+'expect' from 'playwright.async_api'`) — Pytest Author 의 stub 에 `expect`
+심볼 누락 → *N-failure rule* trigger (LLM variance 아님, 결정적 결함).
+
+보고서: `docs/progress/track_b_dod_stability_5iter.md`.
+산출: `outputs/dod_stability_20260511_{100350,104920}/`.
+도구: `scripts/run_dod_stability.py` (신설).
+
+### 후보 O (신규, 1순위) — Pytest Author stub `__getattr__` fallback ⭐
+
+후보 N 의 N-failure 해결. `playwright.async_api` stub 에 `__getattr__` 추가
+→ 모든 미정의 심볼 (`expect`, `Selectors`, 등) 자동 no-op 반환. 또는 자주
+사용되는 심볼 명시 enumeration. 예상 20~50 라인, 후 재 5-iter 검증으로 5/5
+도달 목표.
 
 ### 후보 B (DevOps 별도 분기) 🟡
 
