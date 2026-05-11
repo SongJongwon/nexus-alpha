@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-05-08** (PR #78~#84 — Track B 풀체인 시퀀스 완성)
+> 마지막 업데이트: **2026-05-11** (PR #78~#97 — 🎉 Track B DoD 7/7 ALL PASSED, Nexus Alpha v4 비전 양 Track 완전 입증)
 
 ---
 
@@ -12,23 +12,25 @@
 |---|---|
 | 프로젝트명 | Nexus Alpha — 업무 자동화/RPA 전문 AI 가상 기업 시스템 |
 | 최종 비전 (v4) | **자연어 한 마디 → .exe + Draft Release + 자동 업데이트 체크** 풀체인 자동 도달 |
-| 현재 단계 | **Track A active 4/4 + Track B 풀체인 (schema → 휴리스틱 → QA → Build → Release) 완성** |
+| 현재 단계 | 🎉 **양 Track 모두 DoD 7/7 ALL PASSED** — Nexus Alpha v4 비전 완전 empirical 입증 |
 | 작업 루트 | `C:\projects\nexus-alpha` |
 | 주 언어 | Python 3.13.13 (가상환경 `.venv/`) |
 | 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph 1.1.6 |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key 전환 가능 |
 | 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
-| 테스트 하네스 | pytest 9.0.3 — **687 passed** (572 → +115, 회귀 0) |
-| **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (단일 에이전트 + schema + 휴리스틱 + QA + Build + Release 풀체인)** |
+| 테스트 하네스 | pytest 9.0.3 — **727 passed** (572 → +155, 회귀 0, 31.90s) |
+| **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (단일 에이전트 + schema + 휴리스틱 + QA + Build + Release + dep-aware gating)** |
 | **조직도 v8** | **46명 중 39명 구현 (85%)** |
 | **본부 3 (개발)** | **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐ |
-| **active QA gating** | **4/4 (--force-cli CLI 시나리오)** ⭐⭐⭐ |
-| **Track B 풀체인** | **schema (PR #78) + 휴리스틱 (PR #80) + QA (PR #81) + Build (PR #82) + Release (PR #83) 완성** ⭐⭐⭐ |
+| **Track A DoD** | **7/7 ALL PASSED (PR #51) + active 4/4 (PR #73 `--force-cli`)** ⭐⭐⭐ |
+| **Track B DoD** | **7/7 ALL PASSED (PR #97, 5/11) + active 4/4 (PR #91)** ⭐⭐⭐ |
+| **방어선 패턴 재사용** | **11 차 누적** (PR #59 → #64 → #66 → #78 → #83 → #86 → #88 → #93 → #95 → #96) |
+| **실 LLM E2E 검증** | **8 회 누적** (5/8 ~ 5/11) — verification → fix → re-verify 사이클 5 회 |
 | GitHub | https://github.com/SongJongwon/nexus-alpha (`main` + 작업 브랜치) |
-| 최신 main 커밋 | PR #83 머지 — Track B + Release (Update Checker + gh release create) |
-| 마지막 E2E 산출 | `outputs/automate_workflow_20260508_090456/` (devops 정확 분류 후 9,570 B) |
+| 최신 main 커밋 | PR #97 머지 — Track B DoD 7/7 ALL PASSED milestone |
+| 마지막 E2E 산출 | `outputs/automate_workflow_20260511_094611/` (DoD 7/7 ALL PASSED, 18 tests + Draft Release) |
 
-**한 문장 요약**: Track A는 풀체인 안정 + active QA 4/4 자연 도달 + Update Checker 풀체인 통합 모두 달성, **Track B 도 풀체인 시퀀스 (schema 강제 → 가중치 휴리스틱 → QA loop → PyInstaller Build → Update Checker + gh release) 완성 — Track A 와 동일한 산출 안정성 도달**.
+**한 문장 요약**: 🎉 **Track A + Track B 양 Track 모두 DoD 7/7 ALL PASSED 도달** — *결정형 후처리 패턴의 재귀적 적용* (11 차 재사용) 으로 LLM variance 점진적 deterministic 흡수 패턴 empirical 완성. Nexus Alpha v4 비전 (자연어 → .exe + Draft Release URL) 완전 입증.
 
 ---
 
@@ -388,26 +390,23 @@ git status && git log --oneline -5
 ```
 프로젝트 루트는 C:\projects\nexus-alpha 입니다.
 docs/context/next_session_context.md 를 먼저 읽어서 현재 상태와
-PR #84 까지의 설계 결정을 파악해 주세요.
+PR #97 까지의 설계 결정을 파악해 주세요.
 
-현재 상태:
-- 머지된 PR: #84까지
-- pytest: 687 passed (572 → +115, 회귀 0)
+현재 상태 (2026-05-11 마무리):
+- 머지된 PR: #98까지 (5/8~5/11 세션 +22 PR)
+- pytest: 727 passed (572 → +155, 회귀 0)
 - 전체 구현률: 39/46 (85%)
 - 본부 3 (개발): 6/9 (67%)
-- active QA: 4/4 자연 도달 (Track A --force-cli)
-- Track A 풀체인: Update Checker 통합 완료 (PR #66)
-- Track B 풀체인 시퀀스 완성:
-  * PR #78 방어선 2 schema (5 도메인)
-  * PR #80 휴리스틱 (가중치 + 단어 경계 + LLM fallback)
-  * PR #81 QA loop (pytest_author + code_qa)
-  * PR #82 Build (PyInstaller .exe)
-  * PR #83 Release (Update Checker + gh release create)
-  * PR #84 E2E CLI 플래그 통합
+- 🎉 Track A DoD 7/7 ALL PASSED (PR #51) + active 4/4 (PR #73)
+- 🎉 Track B DoD 7/7 ALL PASSED (PR #97) + active 4/4 (PR #91)
+- 방어선 패턴 11 차 재사용 누적
+- 실 LLM E2E 검증 8 회 누적
+
+→ Nexus Alpha v4 비전 양 Track 완전 empirical 입증.
 
 다음 1순위 후보 (next_session_context.md §6 참조):
-- A) Track B 풀체인 실 LLM E2E 검증 (Recommended)
-- B) DevOps 별도 분기 (Trivy + docker build)
+- N) DoD 7/7 안정성 3~5 회 반복 검증 (회당 ~13분)
+- B) DevOps 별도 분기 (Trivy + docker build) — 5/5 도메인 완성
 - C) Streamlit UI / Vector DB / Credential Vault
 - D) UI/UX Analyst backstory 강화
 - E) 휴리스틱 더 강화 (compound + 동의어 사전)
