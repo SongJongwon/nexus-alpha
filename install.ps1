@@ -32,7 +32,7 @@ $ProgressPreference    = 'SilentlyContinue'
 # ─── 기본 설정 ──────────────────────────────────────────────────────────────
 $REPO       = if ($env:NEXUS_ALPHA_REPO)   { $env:NEXUS_ALPHA_REPO }   else { 'SongJongwon/nexus-alpha' }
 $BRANCH     = if ($env:NEXUS_ALPHA_BRANCH) { $env:NEXUS_ALPHA_BRANCH } else { 'main' }
-$INSTALL_DIR = if ($env:NEXUS_ALPHA_DIR)    { $env:NEXUS_ALPHA_DIR }    else { Join-Path $env:USERPROFILE 'nexus-alpha' }
+$INSTALL_DIR = if ($env:NEXUS_ALPHA_DIR)    { $env:NEXUS_ALPHA_DIR }    else { Join-Path $HOME 'nexus-alpha' }
 $PYTHON_MIN = '3.13'
 
 function Write-Banner {
