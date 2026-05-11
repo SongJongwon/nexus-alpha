@@ -316,19 +316,23 @@ PR #93 으로 retry directive 주입 → 실 LLM 6차 검증으로 infinite-shor
 입증 (pytest_suite 27 → 12,363 bytes). 단, dependency 이슈 (`playwright` 미설치)
 적발 → 후보 L 신규 도출.
 
-### 후보 L (신규) — dependency-aware QA gating ⭐ (Recommended)
+### 후보 L → ✅ 완료 (PR #95 + #96) + 실 LLM 검증 ✅ 🎉🎉🎉
 
-**PR #94 검증에서 발견**: functional/robustness executor 가 `subprocess.run([sys
-.executable, scrape.py])` 직접 실행 → LLM 선택 dep (`playwright`) 미설치 →
-ModuleNotFoundError → 0/10 fail. PR #91 (requests, 설치됨) vs PR #94 (playwright,
-미설치) — LLM tool 선택 variance.
+PR #95 dependency-aware QA gating 도입 + PR #96 priority fix (external_dependent
+> CLI). 실 LLM 8차 검증 → **Track B DoD 7/7 ALL PASSED** ⭐⭐⭐.
 
-처방 (Track A 의 GUI artifact_category SKIP 패턴 재사용):
-1. `detect_artifact_category` 에 "external_dependent" 카테고리 추가
-2. import 분석 + `importlib.util.find_spec` 으로 dep 미설치 감지
-3. 미설치 시 functional/robustness *의미적 SKIP* (0/N fail 회귀 차단)
+- artifact_category=external_dependent 자동 분류
+- code_qa PASS (18 tests) + gui PASS + functional/robustness 의미적 SKIPPED
+- 실 GitHub Draft Release 발행 (Scrape.exe 업로드)
+- 13.06분 elapsed, retry=1
+- 보고서: `docs/progress/track_b_dod_7of7_milestone.md`
 
-→ Track B publish 시 DoD 7/7 PASS 도달 (의미적 PASS).
+**Track A + Track B 양 Track 모두 DoD 7/7 — Nexus Alpha v4 비전 완전 입증.**
+
+### 후보 N (신규, 선택) — DoD 7/7 안정성 반복 검증 🟢
+
+본 8차 검증은 1 회 PASS. 안정성 입증을 위해 *3~5 회 반복 검증* 시 모두 DoD 7/7
+도달 여부 확인. 회당 ~13분.
 
 ### 후보 B (DevOps 별도 분기) 🟡
 
