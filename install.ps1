@@ -131,6 +131,12 @@ function Invoke-CleanClone {
 
 function Update-ExistingRepo {
     # 반환: $true (정상 업데이트) / $false (실패 — caller 가 Reset-InstallDirAndClone 호출)
+    #
+    # PR #107 — git pull --ff-only 대신 git fetch + git reset --hard 사용.
+    # *destructive sync* — 추적 파일의 로컬 변경 모두 폐기 후 origin/$BRANCH 강제 동기화.
+    # 안전성: .env / .venv / outputs / logs / items.csv 등 모두 .gitignore 또는
+    # untracked → reset 영향 없음. 추적된 src/, docs/, scripts/ 의 사용자 수정만 폐기
+    # (installer 사용자는 일반적으로 코드 수정 안 함 — 의도된 동작).
     Push-Location $INSTALL_DIR
     try {
         & git fetch origin $BRANCH 2>&1 | Out-Null
@@ -140,18 +146,19 @@ function Update-ExistingRepo {
         }
         $localBranch = (& git branch --show-current).Trim()
         if ($localBranch -ne $BRANCH) {
-            & git checkout $BRANCH 2>&1 | Out-Null
+            # 다른 브랜치 → 강제 checkout (-B 로 브랜치 생성 또는 재설정)
+            & git checkout -B $BRANCH "origin/$BRANCH" 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 Write-Warn2 "git checkout $BRANCH 실패 — fresh clone 으로 전환"
                 return $false
             }
         }
-        & git pull --ff-only origin $BRANCH 2>&1 | Out-Null
+        & git reset --hard "origin/$BRANCH" 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Warn2 'git pull --ff-only 실패 (로컬 divergence / 강제 푸시 / 미커밋 변경 가능) — fresh clone 으로 전환'
+            Write-Warn2 "git reset --hard origin/$BRANCH 실패 (.git 손상 가능) — fresh clone 으로 전환"
             return $false
         }
-        Write-Ok "git pull 완료"
+        Write-Ok "git fetch + reset --hard origin/$BRANCH 완료 (로컬 변경 폐기)"
         return $true
     } finally {
         Pop-Location
