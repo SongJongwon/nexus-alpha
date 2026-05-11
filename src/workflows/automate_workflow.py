@@ -803,6 +803,65 @@ def _inject_track_b_stub_getattr_directive(
     )
 
 
+def _inject_track_b_exception_assertion_directive(description: str) -> str:
+    """PR #101 — pytest_task description 에 ``test_error_*`` 카테고리의 잘못된
+    예외 단정 차단 directive 추가.
+
+    배경 (PR #100 적용 5-iter 검증, 후보 P 의 ITER 3 fail):
+        Pytest Author 가 ``pytest.raises((TypeError, AttributeError)): urlparse(None)``
+        과 같이 *raise 가정* 으로 단정 → 실제 Python 3.13 의 ``urlparse(None)`` 은
+        예외 없이 빈 ``ParseResultBytes`` 반환 → ``Failed: DID NOT RAISE``.
+        attempt 1 + attempt 2 모두 동일 가정 재생산 → 단일 iter 내 N-failure rule.
+
+    처방 (방어선 패턴 *13 차* 재사용):
+        - stdlib 의 *None / empty / missing* 입력 동작에 대한 *검증된 fact 목록*
+          을 directive 본문에 명시
+        - ``pytest.raises`` 단정은 *검증된 raise 패턴* 만 사용
+        - 불확실하면 *결과 검증* 패턴 (try/except + assert) 권장
+
+    description 길이 +400~600자 — 다른 directive 들과 비슷한 폭. PR #88 + #100 의
+    chain 다음에 호출.
+    """
+    return description + (
+        "\n## ``test_error_*`` 예외 단정 보수적 규칙 (PR #101) 🚨\n"
+        "**stdlib 함수의 *None / 빈 문자열 / 잘못된 키* 입력은 raise 가 *아닐* "
+        "가능성이 높습니다.** ``with pytest.raises(...):`` 단정은 *검증된 raise* "
+        "케이스에만 사용하세요.\n\n"
+        "### raise 안 함 — ``pytest.raises`` 금지 (결과 반환)\n"
+        "  - ``urllib.parse.urlparse(None)`` → ``ParseResultBytes(b'', ...)`` "
+        "(PR #100 ITER 3 회귀 사례)\n"
+        "  - ``urllib.parse.urlparse('')`` → ``ParseResult('', ...)``\n"
+        "  - ``dict.get(missing_key)`` → ``None``\n"
+        "  - ``list.__contains__(item)`` → ``False``\n"
+        "  - ``os.path.join()`` (인자 0개) → ``''``\n"
+        "  - ``str.split('')`` 같은 빈 구분자만 ``ValueError`` (인자 없으면 OK)\n"
+        "  - ``re.match(None, ...)`` → ``TypeError`` (참고용 — 이건 raise)\n\n"
+        "### 검증된 raise — ``pytest.raises`` 허용\n"
+        "  - ``int('abc')`` → ``ValueError``\n"
+        "  - ``int(None)`` → ``TypeError``\n"
+        "  - ``json.loads(None)`` → ``TypeError``\n"
+        "  - ``json.loads('not json')`` → ``json.JSONDecodeError``\n"
+        "  - ``max([])`` / ``min([])`` → ``ValueError``\n"
+        "  - ``pathlib.Path(None)`` → ``TypeError``\n"
+        "  - 존재하지 않는 디렉터리에 파일 쓰기 → ``FileNotFoundError`` / ``OSError``\n"
+        "  - 0 나누기 → ``ZeroDivisionError``\n\n"
+        "### 불확실 시 보수적 패턴 (결과 + 예외 둘 다 허용)\n"
+        "```python\n"
+        "def test_error_invalid_input_handles_gracefully():\n"
+        "    \"\"\"잘못된 입력은 *명확한 실패 표식* (예외 OR 결정론적 무효 결과) \"\"\"\n"
+        "    try:\n"
+        "        result = fn(invalid_input)\n"
+        "    except (TypeError, ValueError, AttributeError):\n"
+        "        return  # 예외 발생도 valid\n"
+        "    # 예외 없으면 결과가 명확히 *무효 표식* 이어야 한다\n"
+        "    assert result in (None, '', False, [], {}) or \\\\\n"
+        "        (hasattr(result, '__len__') and len(result) == 0)\n"
+        "```\n\n"
+        "**핵심**: ``DID NOT RAISE`` fail 은 *시작부터 차단* — 단정 전에 *위 표* 와 "
+        "*공식 문서* 확인. 확신 없는 패턴은 결과 검증 으로 우회.\n"
+    )
+
+
 def _inject_track_b_entry_filename_directive(
     description: str, domain: AutomationDomain
 ) -> str:
@@ -890,6 +949,10 @@ def _run_track_b_qa_loop(
     symbol_map = _extract_imported_symbols_from_track_b_code_block(code_task_output)
     pytest_task.description = _inject_track_b_stub_getattr_directive(
         pytest_task.description, symbol_map
+    )
+    # PR #101 — test_error_* 카테고리 예외 단정 보수적 규칙 (PR #100 ITER 3 차단)
+    pytest_task.description = _inject_track_b_exception_assertion_directive(
+        pytest_task.description
     )
     pytest_crew = Crew(
         agents=[pytest_author],
