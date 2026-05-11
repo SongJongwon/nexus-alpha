@@ -86,6 +86,26 @@ git 이 PATH 에 없습니다.
     }
     Write-Ok "git: $(git --version)"
 
+    # PR #112 — 기존 .venv 검출 시 시스템 python 체크 skip.
+    # 사용자가 ``py -3.13 -m venv $HOME\nexus-alpha\.venv`` 로 *수동* 으로 venv 만든
+    # 경우 (시스템 python 이 3.14+ 여도) 설치 흐름 진행 가능. PR #110 안내 §2 워크플로
+    # 직접 지원.
+    $existingVenvPython = Join-Path $INSTALL_DIR '.venv\Scripts\python.exe'
+    if (Test-Path $existingVenvPython) {
+        $venvVersion = (& $existingVenvPython --version 2>&1).ToString().Trim()
+        Write-Ok "python (기존 .venv): $venvVersion"
+        Write-Warn2 '시스템 python 버전 체크 skip — .venv 가 이미 검증된 환경으로 간주'
+        # gh CLI 만 마저 검증 후 함수 종료
+        $gh = Get-Command gh -ErrorAction SilentlyContinue
+        if ($gh) {
+            Write-Ok "gh CLI: $((gh --version | Select-Object -First 1))"
+        } else {
+            Write-Warn2 'gh CLI 미설치 — Draft Release 발행 단계는 skip 됩니다.'
+            Write-Warn2 '  설치: winget install --id GitHub.cli -e  (선택)'
+        }
+        return
+    }
+
     # Python 3.13
     $py = Get-Command python -ErrorAction SilentlyContinue
     if (-not $py) {

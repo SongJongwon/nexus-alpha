@@ -155,6 +155,42 @@ def test_install_ps1_uses_reset_hard_not_pull() -> None:
     )
 
 
+def test_install_ps1_skips_python_check_when_venv_exists() -> None:
+    """install.ps1 이 기존 .venv 검출 시 시스템 python 체크 skip (PR #112).
+
+    배경:
+        PR #110 의 ``minor -ge 14 → Fail`` 정책이 ``py -3.13 -m venv`` 로 수동 venv 만든
+        사용자에게도 적용되어 install 진행 불가 (시스템 ``python`` 이 3.14 라도
+        venv 는 3.13). PR #110 안내 §2 워크플로 (3.13/3.14 공존 환경) 가
+        Step 1/6 에서 미리 차단됨.
+
+    PR #112 처방:
+        - ``Test-Path $INSTALL_DIR\\.venv\\Scripts\\python.exe`` 검출 시 시스템
+          python 체크 skip
+        - 대신 venv 의 python 버전을 표시 (투명성)
+        - gh CLI 체크는 그대로 수행 후 함수 종료 (``return``)
+
+    회귀 차단 — 본 테스트가 깨지면 PR #110 안내 §2 워크플로 (수동 venv) 가 다시
+    Step 1/6 차단에 부딪힘.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # PR #112 skip 분기 키워드
+    assert "existingVenvPython" in text or "기존 .venv" in text, (
+        "기존 .venv 검출 skip 분기 누락"
+    )
+    assert "\\.venv\\Scripts\\python.exe" in text, "venv python 경로 빌드 누락"
+    assert "시스템 python" in text and "skip" in text, (
+        "시스템 python skip 메시지 누락 (사용자 투명성)"
+    )
+    # skip 분기가 PR #110 의 strict 분기 *앞에* 위치 (early return)
+    import re as _re
+    skip_pos = text.find("기존 .venv")
+    strict_pos = text.find("Python 3.10 ~ 3.13.x 만 지원합니다")
+    assert skip_pos > 0 and strict_pos > skip_pos, (
+        ".venv skip 분기가 PR #110 strict 분기보다 *뒤에* 배치됨 — early return 미작동"
+    )
+
+
 def test_install_ps1_python_version_check_rejects_3_14_plus() -> None:
     """install.ps1 의 Python 버전 체크가 3.14+ 를 차단 (PR #110, PR #105 forward-proof 반전).
 
