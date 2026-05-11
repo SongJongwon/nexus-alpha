@@ -25,8 +25,9 @@
 >    - **결정형 후처리 패턴 *11 차* 재사용** — `external_dependent` 의미적 SKIP 메커니즘 도달
 >    - **Track A + Track B 양 Track 모두 DoD 7/7 ALL PASSED — Nexus Alpha v4 비전 완전 입증** ⭐⭐⭐
 > **후보 N (DoD 안정성 5-iter, PR #99)**: **3/5 = 60% PASS** ⚠️ — ITER 2/5 동일 root cause (`expect` ImportError) = N-failure rule trigger. 보고서: [progress/track_b_dod_stability_5iter.md](./progress/track_b_dod_stability_5iter.md)
-> **후보 O (stub `__getattr__` fallback, PR #100)**: ✅ **directive 강화 + 1-iter 검증 PASS (6.41min, retry=0)** — `expect` 심볼 명시 + `_UNIVERSAL_NOOP` fallback 두 layer 로 PR #99 N-failure 차단. 방어선 패턴 **12 차** 재사용. 보고서: [progress/track_b_pr100_stub_getattr.md](./progress/track_b_pr100_stub_getattr.md) ⭐
-> **다음 1순위 후보**: PR #100 머지 후 *full 5-iter sweep* (5/5 도달 확인) / Post-processing fallback (PR #101) / Sticky artifact_category (PR #102) / DevOps 별도 분기
+> **후보 O (stub `__getattr__` fallback, PR #100)**: ✅ **directive 강화 + 1-iter 검증 PASS** — `expect` 심볼 명시 + `_UNIVERSAL_NOOP` fallback 두 layer. 방어선 패턴 **12 차** 재사용.
+> **후보 P (PR #100 적용 full 5-iter)**: ✅ **4/5 PASS (80%, +20%p vs PR #99 60%)** ⭐ — `expect` ImportError 0회 재발 (deterministic 차단 확인). ITER 3 fail 은 *새 fail mode* — Pytest Author 가 `urlparse(None)` 이 raise 한다 잘못 가정 (`pytest.raises` DID NOT RAISE). attempt 1 + 2 동일 → 단일 iter 내 N-failure. 보고서: [progress/track_b_pr100_5iter_verify.md](./progress/track_b_pr100_5iter_verify.md) ⭐
+> **다음 1순위 후보**: 후보 Q (PR #101 — 잘못된 예외 가정 차단 directive) / Post-processing fallback / DevOps 별도 분기
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
 > **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)

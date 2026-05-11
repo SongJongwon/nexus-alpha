@@ -357,13 +357,37 @@ PR #100 으로 directive 2 layer 도입 (방어선 패턴 *12 차* 재사용):
 산출: `outputs/automate_workflow_20260511_123613/`, `outputs/dod_stability_20260511_123440/`.
 pytest: 727 → **742** (+15 PR #100 신규 테스트, 회귀 0).
 
-### 후보 P (신규, 1순위) — PR #100 적용 full 5-iter sweep
+### 후보 P → ✅ 완료 — PR #100 적용 5-iter = 4/5 PASS (80%)
 
-PR #100 적용 후 *full 5-iter sweep* 으로 PR #99 의 3/5 → **5/5 도달** empirical
-입증. 회당 ~7-13min (PR #100 directive 효과로 retry=0 first-shot 비율 ↑),
-총 ~35-65분.
+PR #100 적용 후 5-iter 결과:
 
-`.venv/Scripts/python.exe scripts/run_dod_stability.py --iterations 5`
+| 지표 | PR #99 (baseline) | PR #100 | Δ |
+|---|---|---|---|
+| Stability | 3/5 = 60% | **4/5 = 80%** | **+20%p** ✅ |
+| 평균 elapsed | 12.27min | 11.80min | -3.8% |
+| `expect` ImportError | 2회 | **0회** | **결정적 차단** ⭐ |
+| 새 fail mode | — | 1회 (ITER 3) | (잘못된 예외 가정) |
+
+핵심: PR #100 의 메인 목표 (PR #99 N-failure 차단) 는 *완전 달성*. ITER 3 fail
+은 새 카테고리 — Pytest Author 가 `urlparse(None)` 이 `TypeError/AttributeError`
+raise 한다고 *잘못 가정*. attempt 1 + attempt 2 모두 같은 가정 재생산 → 단일
+iter 내 N-failure rule trigger = *결정적 결함*.
+
+보고서: `docs/progress/track_b_pr100_5iter_verify.md`.
+산출: `outputs/dod_stability_20260511_130207/`.
+
+### 후보 Q (신규, 1순위) — 잘못된 예외 가정 차단 directive (PR #101 예정)
+
+후보 P 의 새 fail mode 해결. Pytest Author 의 `test_error_*` 카테고리에 directive
+추가:
+
+- `urlparse(None)`, `dict.get(missing)`, `os.path.join()` 등 stdlib *None/empty*
+  입력은 raise *없이 결과 반환* 임을 명시
+- `pytest.raises` 단정 시 보수적 패턴 (`try/except` + 결과 검증) 권장
+- 또는 명시된 입력 패턴에서만 `pytest.raises` 허용
+
+예상 작업: ~10-30 라인 directive 추가, `_inject_track_b_*` 패턴 재사용
+(방어선 패턴 *13 차* 재사용). 후 재 5-iter 검증으로 5/5 목표.
 
 ### 후보 B (DevOps 별도 분기) 🟡
 
