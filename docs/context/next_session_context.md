@@ -680,5 +680,184 @@ User (다운로드 / 공유 / 자동 업데이트 체크)
 
 ---
 
-*본 문서는 PR #101 시점 (2026-05-11) 기준입니다. 다음 세션 1순위는 §6 후보 R/S/T (안정성 보강) 또는 §10-6 후보 U (Streamlit Beta) 중 선택.*
+## 11. 🧪 Runtime Verification (RV) 비전 — .exe-level QA + UI 자동 조작 + Auto-Fix Loop (5/11 추가 — Alpha 테스트 후 도출)
+
+> 본 섹션은 PR #102~#117 의 Alpha installer empirical 실행에서 발견된 **현재 QA
+> 의 구조적 한계** 를 해결하기 위한 차세대 비전. 코드 정적 검증 (pytest) 너머의
+> **runtime + UX 검증** layer 신설 — 사용자 환경에서 실제 .exe 가 실제 사용자
+> 시나리오로 동작하는지까지 자동 검증.
+
+### 11-1. Motivation — Alpha 테스트에서 발견한 QA 의 한계
+
+오늘 (2026-05-11) Alpha installer 실 사용 cycle 에서 본 5 개의 *infrastructure
+issue* 는 **모두 기존 QA 로 잡히지 않았던 결함**:
+
+| PR | 발견된 issue | 기존 QA 가 못 잡은 이유 |
+|---|---|---|
+| PR #109 | Windows PowerShell 5.1 ``NativeCommandError`` (`2>&1 \| Out-Null` → stderr line 첫 줄에서 스크립트 중단) | pytest 는 *Python* 코드만 검증. PowerShell 실행 시점 결함 미커버 |
+| PR #110/#117 | Python 3.14 미지원 + winget 자동 설치 흐름 | pytest 는 *.venv 환경* 만 검증 — installer 의 다른 Python 버전 호환성 미커버 |
+| PR #112/#114 | ``.venv`` 존재 시 skip / ``py -3.13`` fallback | pytest 는 *post-install* 환경만. *install 시점* 분기 미커버 |
+| PR #115 | scripts/run.py 의 ``b`` 입력 → Track B (Build 와 혼동) | UX/UI 결함 — code path 는 정상이라 pytest fail 안 됨 |
+| PR #106/#107 | ``git pull --ff-only`` 실패 시 broken state | install 시점 외부 의존 (git, network) 결함 |
+
+**공통 패턴**: pytest 727~784 passed 인 상태에서도 *실제 사용자가 만나는 환경* 에서
+fail. **5/5 모두 사용자 직접 보고로 발견** — 자동 QA 가 못 잡음.
+
+**구조적 한계**:
+
+1. **pytest 의 한계** — Python 코드의 *논리적 정합성* 만 검증. .exe runtime / 사용자 UI 동작 / OS 환경 호환성 미커버.
+2. **functional_test_executor 의 한계** — subprocess 로 *.py* 실행 (exit code 검증). *.exe* 실행 안 함.
+3. **gui_test_executor 의 한계** — 스크린샷 캡처 (screenshots=1, critical=0). *사용자 동작 시뮬레이션* 안 함.
+4. **robustness_tester 의 한계** — *결정적 입력* 9 케이스. *실 사용자 시나리오* 미커버.
+
+→ **gap**: *built .exe 가 실제 사용자 시나리오에서 동작* 하는지 검증 수단 없음.
+
+### 11-2. Vision Statement
+
+```
+[현재] 자연어 → .exe + Draft Release URL  (M5, DoD 7/7)
+            ↓ pytest 통과만 보장 — 실 사용자 동작 ❓
+
+[차세대 RV] 자연어 → .exe → *.exe 실행 + 사용자 시나리오 자동 통과* → Draft Release URL
+            ↓ pytest + 실 runtime 통과 ✅ + UI 동작 통과 ✅
+```
+
+**한 문장**: 빌드된 .exe 를 *sandbox 에서 실행* + *PyAutoGUI/Playwright 로 사용자 시나리오 자동 수행* + *fail 시 Engineer 에 actionable 피드백 + 자동 재빌드 루프 (max N 회)*.
+
+### 11-3. Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Track A/B 풀체인 (현재)                                  │
+│ ─────────────────────────────                            │
+│ Engineer → Pytest → code_qa/functional/gui/robustness    │
+│ → Build (.exe) → Publish (Draft Release)                 │
+└──────────────────┬───────────────────────────────────────┘
+                   ↓ (PR #118+ 신규)
+┌──────────────────────────────────────────────────────────┐
+│ Runtime Verification (RV) 본부 — 신규                    │
+│ ─────────────────────────────                            │
+│  ① Exe Runtime Tester   : .exe sandbox 실행 + exit/stdout │
+│  ② UI Automation Tester : PyAutoGUI/Playwright/WinAppDriver│
+│  ③ Failure Analyzer      : trace 분석 + actionable fix   │
+│  ④ Auto-Fix Coordinator  : Engineer routing + 재빌드 트리거│
+└──────────────────┬───────────────────────────────────────┘
+                   ↓ (PASS or max_iter)
+            Publish (Draft Release) ← *RV PASS 후* 만
+```
+
+### 11-4. 신규 에이전트 4 종 (RV 본부)
+
+본부 9 (신규) 또는 본부 4 (품질 검증) 확장 — 4 명 추가:
+
+| # | 직책 | 역할 | 주요 도구 |
+|---|---|---|---|
+| 1 | **Exe Runtime Tester** | 빌드된 .exe 를 sandbox 실행 — 시작 시간 / 종료코드 / stdout-stderr capture / 메모리 peak | ``subprocess`` + ``psutil`` + Windows Job Objects (격리) |
+| 2 | **UI Automation Specialist** | 사용자 시나리오 자동 수행 (클릭 / 키 입력 / 윈도우 detect) | **GUI**: PyAutoGUI + Pillow / **Electron-Tauri**: Playwright / **Win32**: WinAppDriver |
+| 3 | **Runtime Failure Analyzer** | .exe 실행 fail / UI test fail 의 trace 분석 → *해당 Engineer 가 actionable 한* 피드백 생성 | trace pattern matching + LLM (Pytest Author 패턴 재사용) |
+| 4 | **Auto-Fix Coordinator** | Engineer 에게 RV failure 라우팅 + 재빌드 trigger + iteration budget 관리 | qa_feedback_loop 패턴 확장 |
+
+### 11-5. 신규 도구 / 의존성
+
+```python
+# requirements.txt 추가 후보
+psutil>=5.9            # 프로세스 모니터링 (CPU/mem/exit)
+pyautogui>=0.9         # native Windows GUI 자동 조작 (이미 본부 3 의 Desktop Automation Specialist 가 사용 중 — 공유)
+playwright>=1.40       # Electron/Tauri/web UI (이미 본부 3 의 Web Scraping Specialist 가 사용 중 — 공유)
+# (선택) WinAppDriver — Win32 UI Automation (별도 설치 필요)
+```
+
+기존 의존성 재활용 — 추가 설치 최소화.
+
+### 11-6. 신규 워크플로
+
+`src/workflows/runtime_verify_workflow.py` 신설:
+
+```python
+def run_runtime_verification(
+    build_result: BuildResult,    # PyInstaller 산출 .exe 경로
+    test_scenarios: list[dict],   # UI 시나리오 (자연어 또는 구조화)
+    max_iterations: int = 3,
+    timeout_per_run_sec: int = 60,
+) -> RuntimeVerifyResult:
+    """
+    Loop:
+      1. Exe Runtime Tester — .exe 실행 + 기본 healthcheck
+      2. UI Automation Tester — 시나리오 수행
+      3. fail 시:
+         - Failure Analyzer → 피드백 메시지
+         - Auto-Fix Coordinator → Engineer 재호출
+         - 재빌드 (qa_feedback_loop 패턴 재사용)
+      4. iteration_count >= max_iterations → 최종 결과 반환
+
+    Returns RuntimeVerifyResult(
+        all_passed: bool,
+        iteration_count: int,
+        exe_runtime: ExeRuntimeResult,
+        ui_test: UITestResult,
+        feedback_history: list[str],
+    )
+    """
+```
+
+### 11-7. DoD 확장 — 9 항목
+
+기존 7 + RV 2 신규:
+
+| # | 항목 | 검증 |
+|---|---|---|
+| 1 | publish_success | (기존) |
+| 2 | release_url_issued | (기존) |
+| 3 | download_urls_count >= 1 | (기존) |
+| 4 | is_draft | (기존) |
+| 5 | executor_success | (기존) |
+| 6 | qa_overall_passed | (기존) |
+| 7 | qa_iterations_within_budget | (기존) |
+| **8** | **exe_runtime_passed** ⭐ | .exe 실행 시 ``exit_code == 0`` + ``stderr`` 에 critical error 없음 |
+| **9** | **ui_test_passed** ⭐ | UI 시나리오 전체 PASS (예: 계산기 "1+1=" → 결과 "2") |
+
+### 11-8. Today's Alpha 테스트 issue 5 건 → RV 가 잡았어야 하는 것
+
+| PR | 결함 | RV 시 결과 |
+|---|---|---|
+| PR #109 | install.ps1 의 ``2>&1 \| Out-Null`` NativeCommandError | Exe Runtime Tester 가 *install.ps1 자체를 sandbox 실행* → Step 2/6 의 stderr 노이즈 검출 |
+| PR #110/#117 | Python 3.14 미지원 + winget 자동 설치 | Exe Runtime Tester 가 *다른 Python 버전 환경* 에서 install 자동 회귀 |
+| PR #112/#114 | ``.venv`` 검출 + ``py -3.13`` fallback | UI Automation Tester 가 *.venv 존재 / 부재* 두 시나리오 자동 dispatch |
+| PR #115 | ``run.py`` 의 'b' 입력 Track B/Build 혼동 | UI Automation Tester 가 *실 사용자 키 입력* 시뮬레이션 → 'b' 결과 검증 |
+| PR #106/#107 | git pull 실패 시 broken state | Exe Runtime Tester 가 *기존 .git 손상* 시나리오 자동 재현 |
+
+→ RV 가 있었으면 *5/5 모두 자동 발견* 가능 (사용자 직접 보고 불필요).
+
+### 11-9. 구현 로드맵 — 3 phase
+
+**Phase A (foundation)** — 1~2 PR:
+- ``src/agents/runtime_verify/exe_runtime_tester.py``
+- ``src/workflows/runtime_verify_workflow.py`` (단일 .exe 실행 + exit code 검증만)
+- pytest 추가 — FakeProvider 호환 정적 검증
+
+**Phase B (UI automation)** — 2~3 PR:
+- ``src/agents/runtime_verify/ui_automation_specialist.py``
+- PyAutoGUI / Playwright dispatch 휴리스틱 (GUI vs Electron vs Win32)
+- 시나리오 DSL 정의 (자연어 → PyAutoGUI 호출 sequence)
+
+**Phase C (auto-fix loop)** — 2~3 PR:
+- ``src/agents/runtime_verify/runtime_failure_analyzer.py``
+- ``src/agents/runtime_verify/auto_fix_coordinator.py``
+- ``qa_feedback_loop`` 패턴 확장 — Engineer 재호출 + 재빌드 trigger
+- DoD 9/9 통합 (run_e2e_10th_verification.py + run_dod_stability.py)
+
+### 11-10. 후보 V (신규, RV Phase A 1순위)
+
+PR #118 머지 후 다음 후보:
+
+**후보 V** — RV Phase A 착수:
+- 단일 ``Exe Runtime Tester`` 에이전트 + ``runtime_verify_workflow.py`` 단순 버전
+- DoD 8 (exe_runtime_passed) 만 우선 도입
+- ``scripts/run_dod_stability.py --iterations 3`` 재실시 — DoD 8/8 stability 측정
+
+작업량: ~300~500 라인 + pytest 15 추가 예상.
+
+---
+
+*본 문서는 PR #118 시점 (2026-05-11) 기준입니다. 다음 세션 1순위는 §6 후보 R/S/T (안정성 보강) / §10-6 후보 U (Streamlit Beta) / **§11-10 후보 V (RV Phase A 착수)** 중 선택.*
 *조직도 v9 / 구성안 v6 (5/11 갱신) / 세션 로그 (5/11) 와 함께 4중 보호 — 세션 인계 시 본 문서 1장으로 충분.*
