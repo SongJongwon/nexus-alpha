@@ -2,13 +2,20 @@
 
 자기 진화형 소프트웨어 공장 — *"한 마디 요청 → .exe 완성품"*
 
-## 🚀 Alpha 한 줄 설치 (Windows PowerShell 5.1+)
+## 🚀 빠른 시작 (Windows)
+
+> ⚠️ **Python 3.13 필수** — CrewAI 1.14.x 가 Python 3.14 미지원 (의존성 빌드 실패).
+> 3.14 사용자는 [수동 설치](#b-수동-설치-모든-환경-python-314-포함) 사용.
+
+### A. 자동 설치 (Python 3.13 환경 한정)
+
+시스템 `python` 이 3.13.x 인 경우 PowerShell 한 줄:
 
 ```powershell
 irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
 ```
 
-설치 후:
+설치 후 실행:
 
 ```powershell
 cd $HOME\nexus-alpha
@@ -16,6 +23,42 @@ cd $HOME\nexus-alpha
 # 또는 자연어 한 줄로
 .\.venv\Scripts\python.exe scripts\run.py --request "계산기 만들어줘"
 ```
+
+> 🛑 **현재 `irm` 방식은 시스템 `python` 이 3.13 인 경우에만 동작합니다.**
+> Python 3.14+ 환경에선 Step 1/6 에서 차단되며 아래 수동 설치 안내가 출력됩니다.
+
+### B. 수동 설치 (모든 환경, Python 3.14 포함)
+
+Python 3.14 가 설치된 환경에서도 `py -3.13` launcher 로 3.13 전용 venv 를 만들어 우회.
+
+1. **Python 3.13 설치**:
+   ```powershell
+   winget install --id Python.Python.3.13 -e
+   ```
+   또는 https://www.python.org/downloads/release/python-3137/ 직접 다운로드.
+
+2. **저장소 받기**:
+   ```powershell
+   git clone https://github.com/SongJongwon/nexus-alpha.git $HOME\nexus-alpha
+   ```
+
+3. **가상환경 생성** — `py -3.13` 으로 3.13 명시:
+   ```powershell
+   py -3.13 -m venv $HOME\nexus-alpha\.venv
+   ```
+
+4. **의존성 설치**:
+   ```powershell
+   cd $HOME\nexus-alpha
+   .\.venv\Scripts\pip install -r requirements.txt
+   ```
+
+5. **실행**:
+   ```powershell
+   .\.venv\Scripts\python scripts\run.py
+   # 또는 자연어 한 줄로
+   .\.venv\Scripts\python scripts\run.py --request "계산기 만들어줘"
+   ```
 
 배포 로드맵: **Alpha (install.ps1)** → Beta (Streamlit) → Release (Electron/Tauri).
 자세한 비전: [docs/context/next_session_context.md §10](docs/context/next_session_context.md).
@@ -55,8 +98,8 @@ Nexus Alpha는 사용자의 반복 업무 또는 소프트웨어 요구를 분�
 
 ## 🛠️ 기술 스택
 
-- **언어**: Python 3.13
-- **오케스트레이션**: CrewAI 1.14.1 (Process.sequential, 버전 고정) + LangGraph (v3 도입 예정)
+- **언어**: Python 3.13 (3.14 미지원 — CrewAI 1.14.x 의 `requires_python = ">=3.10,<3.14"` 제약)
+- **오케스트레이션**: CrewAI `>=1.14.1,<1.15.0` (Process.sequential) + LangGraph (v3 도입 예정)
 - **LLM 연동**: Claude Agent SDK (MAX 구독) / Anthropic API Key
 - **모니터링**: LangFuse Cloud v4 (OpenTelemetry 기반)
 - **테스트**: pytest 9 + pytest-mock + pytest-socket (Linux opt-in)
@@ -71,11 +114,13 @@ Nexus Alpha는 사용자의 반복 업무 또는 소프트웨어 요구를 분�
 - 📁 체계적인 프로젝트 구조 — 역할별 에이전트 디렉터리 분리
 - 🌐 Cross-platform 지원 (Windows / macOS / Linux)
 
-## 🚀 설치 및 실행
+## 🛠️ 개발자 / 크로스플랫폼 상세 설치
+
+> 위 "빠른 시작" 으로 안 되는 macOS/Linux 환경 또는 개발자용 상세 안내.
 
 ### 사전 준비
 
-- Python 3.13 이상
+- **Python 3.13** (3.14+ 미지원 — CrewAI 1.14.x 의 `requires_python = ">=3.10,<3.14"` 제약)
 - (선택) Claude Code 로그인 (MAX 구독 모드 사용 시)
 - (선택) Anthropic API Key (`sk-ant-...`) — API Key 모드 사용 시
 
