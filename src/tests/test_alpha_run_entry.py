@@ -84,20 +84,18 @@ def test_install_ps1_has_env_initialization_step() -> None:
 
 
 def test_install_ps1_pull_failure_resets_and_reclones() -> None:
-    """install.ps1 이 git pull 실패 시 fresh clone 으로 자동 복구 (PR #106).
+    """install.ps1 이 git 동기화 실패 시 fresh clone 으로 자동 복구 (PR #106).
 
     배경:
         PR #102/#104 의 ``Get-Repo`` 는 git pull --ff-only 실패 시 *경고만* 출력
-        하고 계속 진행 → 사용자 환경이 broken 상태로 남아 후속 단계 (pip /
-        smoke test) 가 mysterious fail.
+        하고 계속 진행 → 사용자 환경이 broken 상태.
 
     PR #106 처방:
-        - ``Update-ExistingRepo`` 가 fetch/checkout/pull 단계별 ``$LASTEXITCODE``
-          확인 → 어느 단계든 실패 시 ``$false`` 반환
-        - ``Reset-InstallDirAndClone`` 가 ``.env`` 백업 → 기존 폴더 ``Rename-Item``
-          으로 ``.broken.{ts}`` 처리 → ``Invoke-CleanClone`` → ``.env`` 복원
+        - ``Update-ExistingRepo`` 가 단계별 ``$LASTEXITCODE`` 확인 → 실패 시 $false 반환
+        - ``Reset-InstallDirAndClone`` 가 ``.env`` 백업 → ``.broken.{ts}`` rename →
+          fresh clone → ``.env`` 복원
 
-    회귀 차단 — 본 테스트가 깨지면 install.ps1 이 pull 실패에서 자동 복구
+    회귀 차단 — 본 테스트가 깨지면 install.ps1 이 동기화 실패에서 자동 복구
     안 되어 사용자가 수동 정리를 강제 당함.
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
@@ -105,13 +103,56 @@ def test_install_ps1_pull_failure_resets_and_reclones() -> None:
     assert "function Update-ExistingRepo" in text
     assert "function Reset-InstallDirAndClone" in text
     assert "function Invoke-CleanClone" in text
-    # pull 실패 recover 로직 키워드
+    # 동기화 실패 recover 로직 키워드
     assert "fresh clone" in text, "fresh clone 복구 메시지 누락"
     assert ".broken." in text, ".broken.{timestamp} 백업 패턴 누락"
     # .env 보존 (사용자 시크릿 손실 방지)
     assert "envBackup" in text or "env_backup" in text, ".env 백업 로직 누락"
     # 안전한 rename 패턴 (즉시 Remove-Item -Recurse 가 아닌)
     assert "Rename-Item" in text, "Rename-Item 안전 백업 누락"
+
+
+def test_install_ps1_uses_reset_hard_not_pull() -> None:
+    """install.ps1 이 git pull --ff-only 대신 git fetch + reset --hard 사용 (PR #107).
+
+    배경:
+        PR #102~#106 의 ``Update-ExistingRepo`` 는 ``git pull --ff-only`` 사용.
+        로컬 추적 파일 수정 / divergence 시 자주 fail → Reset-InstallDirAndClone
+        (PR #106) fallback 으로 우회. 비용: ``.broken.{ts}`` 폴더 누적.
+
+    PR #107 처방:
+        ``git fetch origin $BRANCH`` + ``git reset --hard origin/$BRANCH`` 으로
+        *destructive sync* — 추적 파일 로컬 변경 모두 폐기. .env / .venv /
+        outputs 등 untracked 는 보존 (.gitignore 효과).
+
+    효과:
+        대부분 경우 reset --hard 만으로 동기화 성공 → ``.broken.{ts}`` fallback
+        가능성 감소. 사용자 의도 (installer 는 코드 수정자 아님) 와 일치.
+
+    회귀 차단 — 본 테스트가 깨지면 git pull 으로 회귀 또는 reset --hard 누락.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 신규 패턴: git fetch + reset --hard origin/$BRANCH
+    assert "git fetch origin" in text, "git fetch origin 누락"
+    assert "git reset --hard" in text, "git reset --hard 누락"
+    assert 'origin/$BRANCH' in text, 'origin/$BRANCH 참조 누락'
+    # Update-ExistingRepo 함수 본문에 git pull 잔존 없음
+    import re
+    match = re.search(
+        r"function Update-ExistingRepo\s*\{(.*?)\n\}\n", text, re.DOTALL
+    )
+    assert match is not None, "Update-ExistingRepo 함수 추출 실패"
+    update_body = match.group(1)
+    # 주석 (#로 시작) 제거 후 git pull 호출 부재 검증
+    import re as _re
+    body_no_comments = _re.sub(r"#.*", "", update_body)
+    assert "git pull" not in body_no_comments, (
+        "Update-ExistingRepo 안에 git pull 실 호출 잔존 — PR #107 reset --hard 로 전환 미완료"
+    )
+    # destructive sync 안내 주석
+    assert "destructive" in text or "로컬 변경 폐기" in text, (
+        "destructive sync 의도 주석 누락 — 사용자 혼란 위험"
+    )
 
 
 def test_install_ps1_python_version_check_uses_numeric_comparison() -> None:
