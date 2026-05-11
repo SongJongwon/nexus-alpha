@@ -424,3 +424,161 @@ def test_detect_gui_takes_precedence_over_cli_when_both_imports(tmp_path) -> Non
         "import argparse\nimport tkinter as tk\n", encoding="utf-8"
     )
     assert detect_artifact_category(target_script=script) == "gui"
+
+
+# ---------------------------------------------------------------------------
+# PR #95 — external_dependent 카테고리 (Track B 도메인 산출 functional/robustness
+# SKIP 메커니즘)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_external_dependent_when_playwright_missing(
+    tmp_path, monkeypatch
+) -> None:
+    """Track B web_scraping 산출 (playwright import) + .venv 미설치 → external_dependent."""
+    script = tmp_path / "scrape.py"
+    script.write_text(
+        "from playwright.async_api import async_playwright\n"
+        "import asyncio\n",
+        encoding="utf-8",
+    )
+    # importlib.util.find_spec 가 playwright 미설치 시뮬레이션
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "playwright":
+            return None  # 미설치
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    assert detect_artifact_category(target_script=script) == "external_dependent"
+
+
+def test_detect_library_when_dep_actually_installed(tmp_path, monkeypatch) -> None:
+    """dep import + .venv 설치됨 → library (정상 가동 가능)."""
+    script = tmp_path / "scrape.py"
+    script.write_text(
+        "import requests\nfrom bs4 import BeautifulSoup\n",
+        encoding="utf-8",
+    )
+    # 모든 dep 가 설치된 것처럼 시뮬레이션
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+
+    class _FakeSpec:
+        pass
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name in ("requests", "bs4"):
+            return _FakeSpec()
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    # library 분류 (GUI/CLI 마커 없음 + external dep 모두 설치)
+    assert detect_artifact_category(target_script=script) == "library"
+
+
+def test_detect_external_dependent_with_multiple_deps_one_missing(
+    tmp_path, monkeypatch
+) -> None:
+    """여러 dep 중 *하나라도* 미설치 시 external_dependent."""
+    script = tmp_path / "app.py"
+    script.write_text(
+        "import requests\n"
+        "from playwright.async_api import async_playwright\n",
+        encoding="utf-8",
+    )
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+
+    class _FakeSpec:
+        pass
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "requests":
+            return _FakeSpec()  # 설치됨
+        if name == "playwright":
+            return None  # 미설치
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    assert detect_artifact_category(target_script=script) == "external_dependent"
+
+
+def test_detect_cli_takes_precedence_over_external_dependent(
+    tmp_path, monkeypatch
+) -> None:
+    """CLI 마커가 외부 dep 보다 우선 — argparse 가 있으면 cli (의미적 카테고리)."""
+    script = tmp_path / "cli_with_dep.py"
+    script.write_text(
+        "import argparse\n"
+        "from playwright.async_api import async_playwright\n",
+        encoding="utf-8",
+    )
+    import importlib.util
+
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a, **kw: None,  # 전부 미설치
+    )
+    # CLI 우선 (argparse 마커 + sys.argv 의도 명확)
+    assert detect_artifact_category(target_script=script) == "cli"
+
+
+def test_external_dependent_category_skips_functional_and_robustness() -> None:
+    """external_dependent 카테고리 → functional/robustness SKIPPED (PR #95)."""
+    results = {
+        "code_qa": FakeQAResult(success=True),
+        "functional": FakeQAResult(success=False, line="[FUNCTIONAL FAIL] 0/10"),
+        "robustness": FakeQAResult(success=False, line="[ROBUSTNESS FAIL] 0/9"),
+        "gui": FakeQAResult(success=True, line="[GUI PASS]"),
+    }
+    d = evaluate_qa_results(
+        results,
+        retry_count=0,
+        max_retries=3,
+        artifact_category="external_dependent",
+    )
+    assert d.overall_passed is True
+    assert d.failed_qa_tools == []
+    assert "functional" in d.skipped_qa_tools
+    assert "robustness" in d.skipped_qa_tools
+    # SKIPPED summary 본문에 PR #95 명시 (추적성)
+    summary = " ".join(d.summary_lines)
+    assert "PR #95" in summary or "external" in summary.lower()
+
+
+def test_external_dependent_does_not_skip_code_qa_or_gui() -> None:
+    """external_dependent 는 functional/robustness 만 SKIP — code_qa / gui 는 유효 게이트."""
+    results = {
+        "code_qa": FakeQAResult(success=False),
+        "gui": FakeQAResult(success=False),
+    }
+    d = evaluate_qa_results(
+        results,
+        retry_count=0,
+        max_retries=3,
+        artifact_category="external_dependent",
+    )
+    assert d.overall_passed is False
+    assert set(d.failed_qa_tools) == {"code_qa", "gui"}
+
+
+def test_external_deps_list_includes_track_b_domain_keys() -> None:
+    """``_EXTERNAL_DEPS`` 가 Track B 5 도메인 schema 의 핵심 dep 포함 (regression guard)."""
+    from src.workflows.qa_feedback_loop import _EXTERNAL_DEPS
+
+    # Track B schema 의 ``# file:`` 헤더와 직접 mapping 되는 도구
+    assert "playwright" in _EXTERNAL_DEPS  # web_scraping
+    assert "pyautogui" in _EXTERNAL_DEPS  # desktop_automation
+    assert "httpx" in _EXTERNAL_DEPS  # api_integration
+    assert "openpyxl" in _EXTERNAL_DEPS  # data_parser
+    # devops 는 .exe 빌드 부적합 → external_dependent 회피 의도
