@@ -97,16 +97,40 @@ python 이 PATH 에 없습니다.
 "@
     }
     $pyVersion = (& python --version 2>&1).ToString().Trim()
-    # PR #105 — 정규식 [3-9] 대신 *수치 비교* 로 3.13+ / 4.x 미래 버전 모두 허용.
+    # PR #110 — CrewAI 1.14.1 의 Python 지원 범위는 ``>=3.10,<3.14``.
+    # 3.14+ 에서 의존성 (chromadb / instructor / pydantic-core) 빌드 실패 (사용자 보고).
+    # PR #105 의 forward-proof (4.x 허용) 는 의존성 현실과 맞지 않아 본 PR 에서 *반전*.
     if ($pyVersion -match 'Python\s+(\d+)\.(\d+)') {
         $major = [int]$matches[1]
         $minor = [int]$matches[2]
-        # major > 3 (예: 4.x) OR (major == 3 AND minor >= 13) → 통과
-        if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 13)) {
-            Write-Ok "python: $pyVersion"
+        if ($major -eq 3 -and $minor -ge 10 -and $minor -le 13) {
+            # 3.10 ~ 3.13 (정상 범위)
+            if ($minor -eq 13) {
+                Write-Ok "python: $pyVersion"
+            } else {
+                Write-Ok "python: $pyVersion (3.13 권장, 현재 버전도 호환)"
+            }
+        } elseif ($major -gt 3 -or ($major -eq 3 -and $minor -ge 14)) {
+            # 3.14+ 또는 4.x — CrewAI 1.14.1 의존성 빌드 fail
+            Fail @"
+현재 $pyVersion — CrewAI 1.14.1 은 Python 3.10 ~ 3.13.x 만 지원합니다.
+3.14+ / 4.x 에서 의존성 (chromadb / instructor / pydantic-core) 빌드 실패.
+
+해결책 (택일):
+
+  1. Python 3.13 신규 설치 (권장):
+       winget install --id Python.Python.3.13 -e
+       또는 https://www.python.org/downloads/release/python-3137/
+
+  2. 3.13 + 3.14 동시 설치된 경우 (py launcher 활용):
+       py -3.13 -m venv `$HOME\nexus-alpha\.venv
+       후 install.ps1 재실행 (.venv 검출 → 의존성만 설치)
+
+  3. PATH 환경변수 순서 조정: Python 3.13 디렉터리를 3.14 보다 위로
+"@
         } else {
-            Write-Warn2 "현재 $pyVersion — Nexus Alpha 는 Python 3.13+ 필수 (CrewAI 1.14.1 호환)."
-            Write-Warn2 '3.12 이하에서는 의존성 오류 가능 — 계속 진행 / 문제 시 3.13 재설치 권장.'
+            # 3.10 미만 (3.9, 3.8 등 EOL)
+            Fail "현재 $pyVersion — CrewAI 1.14.1 은 Python 3.10 ~ 3.13.x 만 지원. 설치: winget install --id Python.Python.3.13 -e"
         }
     } else {
         Write-Warn2 "Python 버전 파싱 실패 ($pyVersion) — 계속 진행하지만 의존성 호환 미보장."

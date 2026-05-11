@@ -155,29 +155,49 @@ def test_install_ps1_uses_reset_hard_not_pull() -> None:
     )
 
 
-def test_install_ps1_python_version_check_uses_numeric_comparison() -> None:
-    """install.ps1 의 Python 버전 체크가 3.13+ 모두 허용 (PR #105).
+def test_install_ps1_python_version_check_rejects_3_14_plus() -> None:
+    """install.ps1 의 Python 버전 체크가 3.14+ 를 차단 (PR #110, PR #105 forward-proof 반전).
 
     배경:
-        PR #102 의 기존 regex ``^Python\\s+3\\.1[3-9]`` 는 3.13~3.19 만 매치.
-        3.20+, 4.x 미래 버전은 *경고* 표시 → false positive.
+        PR #105 는 ``major -gt 3 OR (major == 3 AND minor >= 13)`` 으로 4.x 까지
+        forward-proof 허용. 그러나 CrewAI 1.14.1 의 Python 지원 범위는 ``>=3.10,<3.14``
+        — 3.14+ 에서 의존성 (chromadb / instructor / pydantic-core) 빌드 실패.
+        사용자 보고로 PR #110 에서 정책 반전.
 
-    PR #105 처방:
-        ``-match 'Python\\s+(\\d+)\\.(\\d+)'`` + ``[int]`` cast + 수치 비교
-        (major > 3 OR (major == 3 AND minor >= 13)).
+    PR #110 처방:
+        - 3.10 ~ 3.13.x: 정상 통과 (CrewAI 호환 범위)
+        - 3.14+ / 4.x: ``Fail`` 호출 + 3.13 설치 안내 (winget + py launcher + PATH)
+        - 3.10 미만: ``Fail`` 호출 + 3.13 설치 안내
 
-    회귀 차단 — 본 테스트가 깨지면 install.ps1 이 미래 Python (3.20+, 4.x)
-    설치 환경에서 false positive 경고 표시.
+    회귀 차단 — 본 테스트가 깨지면 사용자가 3.14 에서 install 시 의존성 빌드
+    fail 단계까지 진행 후 mysterious 실패 (재발 사례).
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    # 기존 restrictive regex 가 제거되었는지
-    assert "3.1[3-9]" not in text, (
-        "Restrictive regex '3.1[3-9]' still present — should use numeric comparison"
+    # 기존 restrictive regex 가 제거되었는지 (PR #105 부터 유지)
+    assert "3.1[3-9]" not in text, "Restrictive regex from pre-PR #105 still present"
+    # PR #110 정상 범위 비교 키워드 (3.10 ~ 3.13 = CrewAI 1.14.1 지원)
+    assert "minor -ge 10" in text, "minor >= 10 lower bound missing"
+    assert "minor -le 13" in text, "minor <= 13 upper bound missing"
+    # 3.14+ 차단 분기
+    assert "minor -ge 14" in text, "3.14+ rejection branch missing"
+    # PR #105 의 forward-proof 분기가 *허용* 로직에 잔존하면 안 됨.
+    # 새 로직: 허용은 ``$major -eq 3 -and $minor -ge 10 -and $minor -le 13``.
+    import re as _re
+    accept_match = _re.search(
+        r"if\s*\(\s*\$major\s+-eq\s+3\s+-and\s+\$minor\s+-ge\s+10\s+-and\s+\$minor\s+-le\s+13\s*\)",
+        text,
     )
-    # 수치 비교 핵심 키워드
-    assert "minor -ge 13" in text, "Numeric '>= 13' comparison missing"
-    assert "major -gt 3" in text, "major > 3 comparison missing (future-proof)"
-    # 정규식 캡처 그룹 패턴
+    assert accept_match is not None, (
+        "허용 조건 '$major -eq 3 -and $minor -ge 10 -and $minor -le 13' 누락 — "
+        "PR #110 의 3.10~3.13 정상 범위 분기가 missing"
+    )
+    # 안내 메시지 핵심 키워드
+    assert "CrewAI 1.14.1" in text, "CrewAI 호환 안내 누락"
+    assert "py -3.13" in text, "py launcher 안내 누락"
+    assert "winget install --id Python.Python.3.13" in text, (
+        "winget 설치 안내 누락"
+    )
+    # 정규식 캡처 그룹 패턴 (유지)
     assert r"Python\s+(\d+)\.(\d+)" in text, "version capture regex missing"
 
 
