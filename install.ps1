@@ -97,11 +97,19 @@ python 이 PATH 에 없습니다.
 "@
     }
     $pyVersion = (& python --version 2>&1).ToString().Trim()
-    if ($pyVersion -notmatch '^Python\s+3\.1[3-9]') {
-        Write-Warn2 "현재 $pyVersion — Nexus Alpha 는 Python 3.13+ 권장 (CrewAI 1.14.1 호환)."
-        Write-Warn2 '3.12 이하에서는 일부 의존성 오류 가능 — 계속 진행하지만 문제 시 3.13 재설치 권장.'
+    # PR #105 — 정규식 [3-9] 대신 *수치 비교* 로 3.13+ / 4.x 미래 버전 모두 허용.
+    if ($pyVersion -match 'Python\s+(\d+)\.(\d+)') {
+        $major = [int]$matches[1]
+        $minor = [int]$matches[2]
+        # major > 3 (예: 4.x) OR (major == 3 AND minor >= 13) → 통과
+        if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 13)) {
+            Write-Ok "python: $pyVersion"
+        } else {
+            Write-Warn2 "현재 $pyVersion — Nexus Alpha 는 Python 3.13+ 필수 (CrewAI 1.14.1 호환)."
+            Write-Warn2 '3.12 이하에서는 의존성 오류 가능 — 계속 진행 / 문제 시 3.13 재설치 권장.'
+        }
     } else {
-        Write-Ok "python: $pyVersion"
+        Write-Warn2 "Python 버전 파싱 실패 ($pyVersion) — 계속 진행하지만 의존성 호환 미보장."
     }
 
     # gh CLI (선택 — Draft Release 발행용)

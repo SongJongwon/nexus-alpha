@@ -83,6 +83,32 @@ def test_install_ps1_has_env_initialization_step() -> None:
     assert "Step 6/6" in text
 
 
+def test_install_ps1_python_version_check_uses_numeric_comparison() -> None:
+    """install.ps1 의 Python 버전 체크가 3.13+ 모두 허용 (PR #105).
+
+    배경:
+        PR #102 의 기존 regex ``^Python\\s+3\\.1[3-9]`` 는 3.13~3.19 만 매치.
+        3.20+, 4.x 미래 버전은 *경고* 표시 → false positive.
+
+    PR #105 처방:
+        ``-match 'Python\\s+(\\d+)\\.(\\d+)'`` + ``[int]`` cast + 수치 비교
+        (major > 3 OR (major == 3 AND minor >= 13)).
+
+    회귀 차단 — 본 테스트가 깨지면 install.ps1 이 미래 Python (3.20+, 4.x)
+    설치 환경에서 false positive 경고 표시.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 기존 restrictive regex 가 제거되었는지
+    assert "3.1[3-9]" not in text, (
+        "Restrictive regex '3.1[3-9]' still present — should use numeric comparison"
+    )
+    # 수치 비교 핵심 키워드
+    assert "minor -ge 13" in text, "Numeric '>= 13' comparison missing"
+    assert "major -gt 3" in text, "major > 3 comparison missing (future-proof)"
+    # 정규식 캡처 그룹 패턴
+    assert r"Python\s+(\d+)\.(\d+)" in text, "version capture regex missing"
+
+
 def test_env_example_no_secret_values_committed() -> None:
     """``.env.example`` 에 sk-ant- / sk-lf- / pk-lf- 실 값이 없어야 한다.
 
