@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-05-11** (PR #78~#101 머지 + **PR #102 — Alpha 진입점 (install.ps1 + run.py) ⭐** — irm 한 줄 설치 + 자연어 입력창)
+> 마지막 업데이트: **2026-05-11 (세션 마무리, PR #119)** — PR #98~#118 누계 **+21 PR** 머지 + 🌐 **repo PUBLIC 전환** + 외부 PC Alpha 테스트 성공 (Calculator.exe **10.73 MB**) + **§11 Runtime Verification (RV) 비전** 신설 (4 신규 에이전트, DoD 9/9 확장)
 
 ---
 
@@ -18,7 +18,7 @@
 | 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph 1.1.6 |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key 전환 가능 |
 | 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
-| 테스트 하네스 | pytest 9.0.3 — **750 passed** (572 → +178, 회귀 0, ~30s) |
+| 테스트 하네스 | pytest 9.0.3 — **784 passed** (572 → +212, 회귀 0, ~30s) |
 | **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (단일 에이전트 + schema + 휴리스틱 + QA + Build + Release + dep-aware gating)** |
 | **조직도 v8** | **46명 중 39명 구현 (85%)** |
 | **본부 3 (개발)** | **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐ |
@@ -26,12 +26,15 @@
 | **Track B DoD** | **7/7 ALL PASSED (PR #97, 5/11) + active 4/4 (PR #91)** ⭐⭐⭐ |
 | **방어선 패턴 재사용** | **13 차 누적** (PR #59 → #64 → #66 → #78 → #83 → #86 → #88 → #93 → #95 → #96 → **#100 → #101**) |
 | **실 LLM E2E 검증** | **10+ 회 누적** — verification → fix → re-verify 사이클 7 회. 후보 N (5-iter 60%) → 후보 O (PR #100) → 후보 P (5-iter 80%, +20%p) → 후보 Q (PR #101) |
-| GitHub | https://github.com/SongJongwon/nexus-alpha (`main` + 작업 브랜치) |
-| 최신 main 커밋 (예상) | PR #97 머지 (PR #98~#101 는 stack — 본 세션 종료 시점 미머지) |
-| **새 검증 도구** | `scripts/run_dod_stability.py` (PR #99 신설) — N-iter 반복 검증 + aggregate.json |
+| GitHub | https://github.com/SongJongwon/nexus-alpha (🌐 **PUBLIC** — 5/11) |
+| 최신 main 커밋 | PR #118 머지 (PR #98~#118 모두 main 안착, 본 PR #119 = 세션 마무리 docs) |
+| Alpha 진입점 | ✅ `install.ps1` (irm 한 줄, 6-step, winget 자동 설치) + `scripts/run.py` (자연어 입력창) |
+| **외부 PC 알파 테스트** | ✅ **다른 PC 에서 irm 한 줄 → Calculator.exe 10.73 MB 빌드 성공** (5/11) |
+| **새 검증 도구** | `scripts/run_dod_stability.py` (PR #99) — N-iter 반복 검증 |
 | 마지막 E2E 산출 | `outputs/dod_stability_20260511_130207/` (PR #100 5-iter, 4/5 PASS) |
+| 차세대 비전 (5/11) | ⭐ **§11 Runtime Verification (RV)** — 4 신규 에이전트, DoD 9/9 확장, Alpha 5 결함 자동 차단 |
 
-**한 문장 요약**: 🎉 **Track A + Track B DoD 7/7 도달** + **후보 N→O→P→Q empirical 사이클로 LLM variance 의 finite-blind-spot 가설 입증** — directive 13 차 재사용. **최종 배포 형태 확정: Electron 또는 Tauri 기반 데스크탑+웹 동시 지원 앱** (자연어 → .exe + 다운로드 URL 풀체인 wrap).
+**한 문장 요약**: 🎉 **Track A + Track B DoD 7/7 도달** + **Alpha 진입점 완성** (install.ps1 + run.py) + 🌐 **repo Public 전환** + **외부 PC 검증 성공** (Calculator.exe 10.73 MB). 알파 테스트에서 발견한 *기존 QA 한계* 5건 → **§11 RV 비전 신설** (Phase A/B/C 로드맵, 후보 V 1순위).
 
 ---
 
