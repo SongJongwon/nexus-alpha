@@ -166,7 +166,7 @@ function Update-ExistingRepo {
 }
 
 function Reset-InstallDirAndClone {
-    # PR #106 — git pull 실패 시 기존 폴더 backup 후 fresh clone.
+    # PR #106 — git 동기화 실패 시 기존 폴더 backup 후 fresh clone (PR #107 기준 fetch/reset --hard).
     # .env 는 보존 (사용자 시크릿 손실 방지).
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $brokenLeaf  = "$(Split-Path $INSTALL_DIR -Leaf).broken.$timestamp"
@@ -218,10 +218,10 @@ function Get-Repo {
     }
 
     if (Test-Path (Join-Path $INSTALL_DIR '.git')) {
-        Write-Ok "기존 저장소 발견 — 업데이트 시도 (git pull)"
+        Write-Ok "기존 저장소 발견 — 업데이트 시도 (git fetch + reset --hard)"
         $updated = Update-ExistingRepo
         if (-not $updated) {
-            # PR #106 — pull 실패 시 backup + fresh clone (사용자 .env 보존)
+            # PR #106 — 동기화 실패 시 backup + fresh clone (사용자 .env 보존)
             Reset-InstallDirAndClone
         }
         return
