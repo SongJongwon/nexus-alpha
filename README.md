@@ -2,6 +2,24 @@
 
 자기 진화형 소프트웨어 공장 — *"한 마디 요청 → .exe 완성품"*
 
+## 🚀 Alpha 한 줄 설치 (Windows PowerShell 5.1+)
+
+```powershell
+irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
+```
+
+설치 후:
+
+```powershell
+cd $HOME\nexus-alpha
+.\.venv\Scripts\python.exe scripts\run.py
+# 또는 자연어 한 줄로
+.\.venv\Scripts\python.exe scripts\run.py --request "계산기 만들어줘"
+```
+
+배포 로드맵: **Alpha (install.ps1)** → Beta (Streamlit) → Release (Electron/Tauri).
+자세한 비전: [docs/context/next_session_context.md §10](docs/context/next_session_context.md).
+
 ## 🎯 최종 비전
 
 > 사용자가 **"계산기 만들어줘"** 라고 말하면, Nexus Alpha가 알아서

@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-05-11** (PR #78~#101 — Track B DoD 7/7 ALL PASSED + 후보 N→O→P→Q empirical 사이클 + **최종 배포 비전 Electron/Tauri 확정** ⭐)
+> 마지막 업데이트: **2026-05-11** (PR #78~#101 머지 + **PR #102 — Alpha 진입점 (install.ps1 + run.py) ⭐** — irm 한 줄 설치 + 자연어 입력창)
 
 ---
 
@@ -619,9 +619,9 @@ v6 발견 (PR #75): 방어선 2 도 재사용 필요 — Track B 에 적용 안 
 
 | 단계 | 진입 형태 | 사용 대상 | 마일스톤 |
 |---|---|---|---|
-| **Alpha** | `install.ps1` PowerShell 스크립트 | 내부 / 얼리 어답터 | Windows PoC 검증 |
-| **Beta** | **Streamlit** 웹 UI (`streamlit run app.py`) | 베타 테스터 / 외부 데모 | UX 검증 + 워크플로 시각화 |
-| **Release** | **Electron** 또는 **Tauri** 데스크탑 + 웹 dual-channel | 일반 사용자 | OS 통합 + auto-updater + 공식 배포 |
+| **Alpha** ✅ **PR #102** | `install.ps1` (irm 한 줄) + `scripts/run.py` (자연어 입력창) | 내부 / 얼리 어답터 | Windows PoC 진입 완료 |
+| **Beta** ⏳ | **Streamlit** 웹 UI (`streamlit run app.py`) | 베타 테스터 / 외부 데모 | UX 검증 + 워크플로 시각화 |
+| **Release** ⬜ | **Electron** 또는 **Tauri** 데스크탑 + 웹 dual-channel | 일반 사용자 | OS 통합 + auto-updater + 공식 배포 |
 
 ### 10-3. Electron vs Tauri — 차이
 
