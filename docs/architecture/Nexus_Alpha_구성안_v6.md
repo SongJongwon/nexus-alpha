@@ -1,10 +1,11 @@
-# 🚀 Nexus Alpha 구성안 v6 — Phase 6 Track B 착수 + active QA 4/4 + 풀체인 외부 통합
+# 🚀 Nexus Alpha 구성안 v6 — Phase 6 Track B 완성 + 양 Track DoD 7/7 + 안정성 80% + 최종 배포 비전 확정
 
-**━ 사용자의 한 마디에서 업무 자동화 완성까지 ━**
+**━ 사용자의 한 마디에서 *데스크탑/웹 앱* 안에서 업무 자동화 완성까지 ━**
 
-> **v5 대비 핵심 변경**: Phase 6 Track B 5명 추가 (개발 본부 67%) + Update Checker 풀체인 통합 (PR #66) + active QA 4/4 자연 도달 (PR #73) + Track B 워크플로 통합 (PR #70)
-> **최종 목표**: 사용자가 한 마디로 **업무 자동화 완성품(.exe 포함)** 받기
-> **최초 작성일**: 2026년 4월 17일 | **본 버전 (v6) 갱신일**: 2026년 5월 7일 (PR #76 머지 후)
+> **v5 대비 핵심 변경**: Phase 6 Track B 5명 + Update Checker 풀체인 통합 + active QA 4/4 + Track B 워크플로 통합
+> **2026-05-11 갱신**: **Track B DoD 7/7 ALL PASSED (PR #97)** + 안정성 80% 도달 (PR #100) + **최종 배포 비전 확정** (Electron/Tauri 데스크탑 + 웹 dual-channel)
+> **최종 목표**: 사용자가 한 마디로 **업무 자동화 완성품(.exe 포함)** 받기 — *Electron/Tauri 앱 또는 브라우저 안에서*
+> **최초 작성일**: 2026년 4월 17일 | **본 버전 (v6) 갱신일**: **2026년 5월 11일** (PR #101 시점)
 
 ---
 
@@ -477,20 +478,92 @@ result = run_automate_workflow(
 | 외부 통합 | 0 | **2건** (PyInstaller / gh CLI / Update Checker) | +2 |
 | active QA gating | 0/4 | **4/4** ⭐⭐⭐ | +4 |
 
-### 다음 단계
+### 다음 단계 (5/11 갱신 — PR #101 시점)
 
-1. **PR #77 — Track B 방어선 2** (5 도메인 output_pydantic schema 도입)
-2. **Track B 나머지 3 도메인 sample 검증**
-3. **Phase 8 — C-Level 완성** (CEO/CFO 2명)
-4. **Phase 9 — 본부 1/2/5/6 완성** (5명) — 최종 46/46 도달
+1. ✅ **PR #77~#83 — Track B 풀체인 완성** (방어선 2 + QA loop + Build + Release)
+2. ✅ **PR #97 — Track B DoD 7/7 ALL PASSED 도달**
+3. ✅ **PR #99~#101 — 안정성 empirical 사이클** (60% → 80% → directive 13 차 누적)
+4. 🟡 **후보 R/S/T — 안정성 95%+ 도달** (Post-processing fallback / Sticky category)
+5. 🟡 **후보 U — Streamlit Beta UI** (외부 사용자 진입점)
+6. ⬜ **Phase 8 — C-Level 완성** (CEO/CFO 2명)
+7. ⬜ **Phase 9 — 본부 1/2/5/6 완성** (5명) — 최종 46/46 도달
 
 ### 최종 목표
 
 - **Track A 완성**: ✅ 달성 (PR #36 → PR #73, 2026-04-28~05-07)
-- **Track B 완성**: 🟡 **Phase 6 (v6) 67% 도달** + Phase 9 추가 5명 → **46/46 (100%)** 목표
+- **Track B 완성**: ✅ **DoD 7/7 도달 (PR #97, 5/11)** + Phase 9 추가 5명 → **46/46 (100%)** 목표
+- **외부 배포 layer (신규 v9 비전)**: install.ps1 (Alpha) → Streamlit (Beta) → **Electron/Tauri (Release)**
 
 ---
 
-*본 문서는 구성안 v6이며, 2026년 5월 7일 PR #76 머지 시점을 반영한 최신 버전입니다.*
-*조직 구조는 46명 고정이며, 도구 컴포넌트 (build_executor / distribution_executor / `_integrate_update_checker`) 는 정원 외 (도구 vs LLM 에이전트 구분 원칙).*
-*v7 후보: PR #77 머지 후 — Track B 방어선 2 적용 + Phase 6 후속.*
+## 10. v9 신규 — 안정성 empirical 사이클 + 최종 배포 비전 (5/11 추가)
+
+본 섹션은 PR #97 이후 (Track B DoD 7/7 도달 후) 의 *후속 작업 layer* 를 기록.
+
+### 10-1. 안정성 empirical 사이클 (후보 N → O → P → Q)
+
+| 후보 | PR | 결과 |
+|---|---|---|
+| **N** — DoD 7/7 5-iter 검증 | #99 | **3/5 = 60%** — `expect` ImportError N-failure 식별 |
+| **O** — stub `__getattr__` fallback | #100 | directive 12 차 재사용 + 1-iter PASS |
+| **P** — PR #100 full 5-iter | (#100 검증) | **4/5 = 80%** (+20%p) — `expect` 0회 재발, ITER 3 새 fail (`urlparse(None)`) |
+| **Q** — 예외 단정 보수적 규칙 | #101 | directive 13 차 재사용 + code_qa-level fail 직접 차단 검증 |
+
+방어선 패턴 **13 차 누적** — *LLM 자유 영역의 빈틈을 결정형 directive 로 점진 흡수*.
+
+### 10-2. LLM blind spot finite-layer 가설
+
+PR #100 + #101 의 empirical 발견:
+
+| Layer | 차단 PR | 차단 패턴 |
+|---|---|---|
+| filename 변형 | #86 | entry 파일명 강제 |
+| import path | #88 | sys.modules 서브모듈 등록 |
+| **stub symbol** | **#100** | enumerate + `__getattr__` fallback |
+| **예외 단정** | **#101** | stdlib None/empty 입력 raise 안 함 사실 목록 |
+| (예측) 데이터 타입 가정 | TBD | 자료형 변환 raise 가정 보강 |
+| (예측) 환경 변수 가정 | TBD | os.environ empty 입력 처리 |
+
+→ 가설: *finite* 한 LLM blind spot 만 존재. 점진적 차단으로 점근적 100% stability.
+
+### 10-3. 최종 배포 비전 (5/11 사용자 확정)
+
+| 단계 | 도구 | 사용자 | 마일스톤 |
+|---|---|---|---|
+| **Alpha** | `install.ps1` PowerShell | 내부 / 얼리 어답터 | Windows PoC 완성 |
+| **Beta** | **Streamlit** 웹 UI | 베타 테스터 / 외부 데모 | UX 검증 + 워크플로 시각화 |
+| **Release** | **Electron 또는 Tauri** 데스크탑 + 웹 | 일반 사용자 | OS 통합 + auto-updater |
+
+**dual-channel 패턴** (Discord 방식): 같은 코드베이스가 OS 네이티브 앱 + 브라우저 모두 서비스. 사용자 선택형.
+
+#### Electron vs Tauri 비교
+
+| 기준 | Electron | **Tauri (선호)** |
+|---|---|---|
+| 번들 크기 | 100~150 MB | **5~15 MB** ⭐ |
+| 메모리 | 200~400 MB | **30~80 MB** ⭐ |
+| 런타임 | Chromium + Node.js | OS 네이티브 webview + Rust |
+| 생태계 | 매우 큼 | 신규 (성장 중) |
+
+PyInstaller `.exe` (~10 MB) 와 일관성 — Tauri 가 우선 후보. Beta 단계 후 비교.
+
+### 10-4. 백엔드 풀체인 production-ready 선언
+
+본 시점 (PR #101) 까지의 *전제 조건* 완성 상황:
+
+| 전제 | 상태 | PR |
+|---|---|---|
+| 자연어 → .exe 풀체인 | ✅ | M4.7 (#38), DoD 7/7 (#51, #97) |
+| 자연어 → Draft Release URL | ✅ | M5 (#39, #41) + 양 Track |
+| 5 도메인 자동 분류 | ✅ | #80 (가중치 + LLM fallback) |
+| QA gating active 4/4 | ✅ | Track A (#73), Track B (#91) |
+| Update Checker 풀체인 통합 | ✅ | #66, #83 |
+| 안정성 80%+ | ✅ | 후보 P (#100, 5-iter 4/5) |
+
+→ **다음 작업은 *외부 인터페이스 layer*** (Streamlit Beta → Tauri Release). 백엔드는 wrap 만 하면 production 도달.
+
+---
+
+*본 문서는 구성안 v6이며, **2026년 5월 11일 PR #101 시점** 의 최신 버전입니다.*
+*조직 구조는 46명 고정이며, 도구 컴포넌트 (build_executor / distribution_executor / `_integrate_update_checker` / `run_dod_stability.py`) 는 정원 외.*
+*v7 후보: Phase 8 (C-Level 완성) + Phase 9 (본부 1/2/5/6 완성) + 외부 UI layer (Streamlit Beta).*

@@ -1,9 +1,9 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-11 (PR #78~#97 머지 + **후보 N (PR #99) 60%** → **후보 O (PR #100) directive 12 차 재사용 + 1-iter 검증 PASS** ⭐)
-> **현재 브랜치**: `feat/candidate-o-stub-getattr-pr100` (PR #99 위에 stack)
-> **테스트**: pytest **727 passed** (572 → +155, 회귀 0, 31.90s)
-> **머지된 PR**: 75 → **97** (5/8~5/11 세션 합산 +22: #78~#97)
+> **마지막 업데이트**: 2026-05-11 (PR #98~#101 — 후보 N/O/P/Q empirical 사이클, directive *13 차* 재사용 + 최종 배포 비전 Electron/Tauri 확정)
+> **현재 브랜치**: `feat/candidate-q-exception-directive-pr101` (PR #99 → PR #100 → PR #101 stack)
+> **테스트**: pytest **750 passed** (727 → +23 in PR #100/#101, 회귀 0)
+> **머지된 PR**: 97 → **101** (5/11 세션 추가 +4: #98 마무리 / #99 후보 N / #100 후보 O / #101 후보 Q)
 > **실 LLM E2E 검증**: **8 회 누적** — filename → import → code_qa → active 4/4 → publish → infinite-short → dep env → **DoD 7/7 ALL PASSED**
 > **active QA gating (Track A)**: 0/4 → 2/4 → 1/4 회귀 → 2/4 → **4/4 (`--force-cli` CLI)** ⭐⭐⭐
 > **Track B 방어선 2**: ✅ **PR #78 적용 + 5 도메인 sample 5/5 PASS 검증** ⭐⭐⭐
@@ -26,11 +26,15 @@
 >    - **Track A + Track B 양 Track 모두 DoD 7/7 ALL PASSED — Nexus Alpha v4 비전 완전 입증** ⭐⭐⭐
 > **후보 N (DoD 안정성 5-iter, PR #99)**: **3/5 = 60% PASS** ⚠️ — ITER 2/5 동일 root cause (`expect` ImportError) = N-failure rule trigger. 보고서: [progress/track_b_dod_stability_5iter.md](./progress/track_b_dod_stability_5iter.md)
 > **후보 O (stub `__getattr__` fallback, PR #100)**: ✅ **directive 강화 + 1-iter 검증 PASS** — `expect` 심볼 명시 + `_UNIVERSAL_NOOP` fallback 두 layer. 방어선 패턴 **12 차** 재사용.
-> **후보 P (PR #100 적용 full 5-iter)**: ✅ **4/5 PASS (80%, +20%p vs PR #99 60%)** ⭐ — `expect` ImportError 0회 재발 (deterministic 차단 확인). ITER 3 fail 은 *새 fail mode* — Pytest Author 가 `urlparse(None)` 이 raise 한다 잘못 가정 (`pytest.raises` DID NOT RAISE). attempt 1 + 2 동일 → 단일 iter 내 N-failure. 보고서: [progress/track_b_pr100_5iter_verify.md](./progress/track_b_pr100_5iter_verify.md) ⭐
-> **다음 1순위 후보**: 후보 Q (PR #101 — 잘못된 예외 가정 차단 directive) / Post-processing fallback / DevOps 별도 분기
+> **후보 P (PR #100 적용 full 5-iter)**: ✅ **4/5 PASS (80%, +20%p vs PR #99 60%)** ⭐ — `expect` ImportError 0회 재발 (deterministic 차단 확인). ITER 3 fail = 새 fail mode (`urlparse(None)` 잘못된 예외 가정). 보고서: [progress/track_b_pr100_5iter_verify.md](./progress/track_b_pr100_5iter_verify.md)
+> **후보 Q (PR #101 — 예외 단정 보수적 규칙)**: ✅ **directive *13 차* 재사용 + code_qa-level fail 직접 차단 검증** — 1-iter 에서 code_qa PASS (6 tests, `urlparse(None)` 류 fail 0회 재발). functional/robustness 의 orthogonal LLM variance 는 별도 후속 (PR #102 후보). 보고서: [progress/track_b_pr101_exception_directive.md](./progress/track_b_pr101_exception_directive.md) ⭐
+> **다음 1순위 후보**: 후보 R (PR #101 적용 full 5-iter sweep) / 후보 S (Post-processing 결정형 fallback) / 후보 T (Sticky artifact_category) / Electron/Tauri Alpha 시작
+> **최종 배포 비전 (확정 5/11)**: install.ps1 (Alpha) → Streamlit (Beta) → **Electron 또는 Tauri (Release)** — 데스크탑 + 웹 동시 지원 (Discord 방식). 자연어 입력 → .exe + 다운로드 URL 풀체인 그대로 wrap. 상세: [context/next_session_context.md](./context/next_session_context.md) §10 신규 섹션.
 > **최신 세션 로그**: [progress/session_log_20260507.md](./progress/session_log_20260507.md) (오늘 — PR #68 Phase 6 Track B 5명 추가) ⭐
 > **이전 세션 로그**: [progress/session_log_20260506.md](./progress/session_log_20260506.md) (5/6 — PR #63~#67 + 10·11차 E2E + Update Checker 실 통합)
-> **최신 조직도 v7**: [architecture/Nexus_Alpha_조직도_v7.md](./architecture/Nexus_Alpha_조직도_v7.md)
+> **최신 조직도 v9 (5/11)**: [architecture/Nexus_Alpha_조직도_v9.md](./architecture/Nexus_Alpha_조직도_v9.md) ⭐ (PR #97~#101 + 최종 배포 비전 반영)
+> **이전 조직도 v8 (5/7)**: [architecture/Nexus_Alpha_조직도_v8.md](./architecture/Nexus_Alpha_조직도_v8.md)
+> **최신 구성안 v6 (5/11 갱신)**: [architecture/Nexus_Alpha_구성안_v6.md](./architecture/Nexus_Alpha_구성안_v6.md)
 > **최신 통합 설계**: [architecture/nexus_alpha_v6_built.md](./architecture/nexus_alpha_v6_built.md)
 > **10차 E2E 11차 보고서 (PR #66 Update Checker 실 통합 검증)**: [progress/e2e_10th_verification_post_pr66.md](./progress/e2e_10th_verification_post_pr66.md) ⭐⭐⭐
 > **10차 E2E 10차 보고서 (PR #64 완전 회복)**: [progress/e2e_10th_verification_post_pr64.md](./progress/e2e_10th_verification_post_pr64.md)

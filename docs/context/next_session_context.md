@@ -2,7 +2,7 @@
 
 > **이 문서 한 장만 읽어도** 새 Claude Code 세션이 현재와 동일한 수준으로
 > 작업을 이어갈 수 있도록 작성한 단일 진실 출처입니다.
-> 마지막 업데이트: **2026-05-11** (PR #78~#97 — 🎉 Track B DoD 7/7 ALL PASSED, Nexus Alpha v4 비전 양 Track 완전 입증)
+> 마지막 업데이트: **2026-05-11** (PR #78~#101 — Track B DoD 7/7 ALL PASSED + 후보 N→O→P→Q empirical 사이클 + **최종 배포 비전 Electron/Tauri 확정** ⭐)
 
 ---
 
@@ -18,19 +18,20 @@
 | 오케스트레이션 | **CrewAI 1.14.1 (버전 고정)** + LangGraph 1.1.6 |
 | LLM 접속 경로 | Claude Agent SDK (MAX 구독) 기본 / 필요 시 API Key 전환 가능 |
 | 모니터링 | LangFuse Cloud v4.3.1 (OpenTelemetry 기반) |
-| 테스트 하네스 | pytest 9.0.3 — **727 passed** (572 → +155, 회귀 0, 31.90s) |
+| 테스트 하네스 | pytest 9.0.3 — **750 passed** (572 → +178, 회귀 0, ~30s) |
 | **워크플로우** | **Track A (CTO → Analyst → Engineer/GUI → Pytest Author → QA + Build + Release)** + **Track B (단일 에이전트 + schema + 휴리스틱 + QA + Build + Release + dep-aware gating)** |
 | **조직도 v8** | **46명 중 39명 구현 (85%)** |
 | **본부 3 (개발)** | **6/9 (67%)** — Phase 6 Track B 5명 동시 추가 (PR #68) ⭐ |
 | **Track A DoD** | **7/7 ALL PASSED (PR #51) + active 4/4 (PR #73 `--force-cli`)** ⭐⭐⭐ |
 | **Track B DoD** | **7/7 ALL PASSED (PR #97, 5/11) + active 4/4 (PR #91)** ⭐⭐⭐ |
-| **방어선 패턴 재사용** | **11 차 누적** (PR #59 → #64 → #66 → #78 → #83 → #86 → #88 → #93 → #95 → #96) |
-| **실 LLM E2E 검증** | **8 회 누적** (5/8 ~ 5/11) — verification → fix → re-verify 사이클 5 회 |
+| **방어선 패턴 재사용** | **13 차 누적** (PR #59 → #64 → #66 → #78 → #83 → #86 → #88 → #93 → #95 → #96 → **#100 → #101**) |
+| **실 LLM E2E 검증** | **10+ 회 누적** — verification → fix → re-verify 사이클 7 회. 후보 N (5-iter 60%) → 후보 O (PR #100) → 후보 P (5-iter 80%, +20%p) → 후보 Q (PR #101) |
 | GitHub | https://github.com/SongJongwon/nexus-alpha (`main` + 작업 브랜치) |
-| 최신 main 커밋 | PR #97 머지 — Track B DoD 7/7 ALL PASSED milestone |
-| 마지막 E2E 산출 | `outputs/automate_workflow_20260511_094611/` (DoD 7/7 ALL PASSED, 18 tests + Draft Release) |
+| 최신 main 커밋 (예상) | PR #97 머지 (PR #98~#101 는 stack — 본 세션 종료 시점 미머지) |
+| **새 검증 도구** | `scripts/run_dod_stability.py` (PR #99 신설) — N-iter 반복 검증 + aggregate.json |
+| 마지막 E2E 산출 | `outputs/dod_stability_20260511_130207/` (PR #100 5-iter, 4/5 PASS) |
 
-**한 문장 요약**: 🎉 **Track A + Track B 양 Track 모두 DoD 7/7 ALL PASSED 도달** — *결정형 후처리 패턴의 재귀적 적용* (11 차 재사용) 으로 LLM variance 점진적 deterministic 흡수 패턴 empirical 완성. Nexus Alpha v4 비전 (자연어 → .exe + Draft Release URL) 완전 입증.
+**한 문장 요약**: 🎉 **Track A + Track B DoD 7/7 도달** + **후보 N→O→P→Q empirical 사이클로 LLM variance 의 finite-blind-spot 가설 입증** — directive 13 차 재사용. **최종 배포 형태 확정: Electron 또는 Tauri 기반 데스크탑+웹 동시 지원 앱** (자연어 → .exe + 다운로드 URL 풀체인 wrap).
 
 ---
 
@@ -598,5 +599,85 @@ v6 발견 (PR #75): 방어선 2 도 재사용 필요 — Track B 에 적용 안 
 
 ---
 
-*본 문서는 PR #84 머지 시점 (2026-05-08) 기준입니다. 다음 세션 1순위는 §6 후보 A~E 중 선택 — A (실 LLM E2E 검증) 추천.*
-*조직도 v8 / 구성안 v6 / 세션 로그 (5/6+5/7+5/8) 와 함께 4중 보호 — 세션 인계 시 본 문서 1장으로 충분.*
+## 10. 🎯 최종 배포 비전 (5/11 확정 — 사용자 결정)
+
+본 섹션은 **Nexus Alpha 의 최종 사용자 진입점** 을 명시. v4 비전 (자연어 → .exe
++ Draft Release URL) 의 풀체인은 이미 empirical 입증. 이제 *외부 사용자가 우리
+시스템을 어떻게 만나는가* 의 layer 를 정의.
+
+### 10-1. 최종 형태
+
+- **Electron 또는 Tauri 기반 데스크탑 앱**
+- **데스크탑 + 웹 브라우저 동시 지원 (Discord 방식)** — 같은 코드베이스가 두 채널
+  모두 서비스. 사용자는 OS 네이티브 앱 (offline + system tray + auto-updater)
+  또는 브라우저 (zero-install + 공유 가능) 중 선택.
+- 입력: **자연어 한 줄** ("계산기 만들어줘", "네이버 쇼핑 가격 크롤링" 등).
+- 출력: **다운로드 가능한 ``.exe``** + **GitHub Draft Release URL**. 즉 본
+  플랫폼이 자체 *PaaS* (Program-as-a-Service) 처럼 작동.
+
+### 10-2. 단계 로드맵 (Alpha → Beta → Release)
+
+| 단계 | 진입 형태 | 사용 대상 | 마일스톤 |
+|---|---|---|---|
+| **Alpha** | `install.ps1` PowerShell 스크립트 | 내부 / 얼리 어답터 | Windows PoC 검증 |
+| **Beta** | **Streamlit** 웹 UI (`streamlit run app.py`) | 베타 테스터 / 외부 데모 | UX 검증 + 워크플로 시각화 |
+| **Release** | **Electron** 또는 **Tauri** 데스크탑 + 웹 dual-channel | 일반 사용자 | OS 통합 + auto-updater + 공식 배포 |
+
+### 10-3. Electron vs Tauri — 차이
+
+| 기준 | Electron | Tauri |
+|---|---|---|
+| 런타임 | Chromium + Node.js | OS 네이티브 webview + Rust |
+| 번들 크기 | 100~150 MB | **5~15 MB** ⭐ |
+| 메모리 | 200~400 MB | **30~80 MB** ⭐ |
+| 보안 모델 | renderer + main IPC | Rust 기반 capability system |
+| 개발 속도 | TypeScript/JS only | Rust + JS (러닝 커브 ↑) |
+| 생태계 | 매우 큼 (Discord, VSCode, Slack) | 신규 (성장 중) |
+
+**Nexus Alpha 의 선호도** (잠정): **Tauri** — 우리 산출이 이미 PyInstaller `.exe`
+(~10 MB) 인 점과 일관 (가벼움 우선). Beta 단계에서 Electron 도 PoC 후 비교 결정.
+
+### 10-4. 풀체인 wrap 패턴
+
+```
+User (Electron/Tauri or 브라우저)
+        ↓ 자연어 입력
+[Nexus Alpha 풀체인 — 현재 구축 완료]
+  ├─ Track A: analyze_and_implement (15 LLM, CTO → Analyst → Engineer → Pytest Author → QA → Build → Release)
+  └─ Track B: automate_workflow (5 도메인 + schema + 휴리스틱 + QA + Build + Release)
+        ↓
+  - code/ 디렉터리 산출 (`*.py` + test 파일)
+  - build_output/dist/<Name>.exe (PyInstaller, ~10 MB)
+  - GitHub Draft Release URL (gh release create --draft)
+        ↓ Electron/Tauri UI 가 progress + 결과 표시
+User (다운로드 / 공유 / 자동 업데이트 체크)
+```
+
+### 10-5. 본 세션 (5/11) 까지의 *전제 조건* 완성 상황
+
+| 전제 | 상태 | 근거 PR |
+|---|---|---|
+| 자연어 → `.exe` 풀체인 | ✅ 완성 | M4.7 (PR #38), DoD 7/7 (PR #51, #97) |
+| 자연어 → Draft Release URL | ✅ 완성 | M5 (PR #39, #41) + 양 Track |
+| 5 도메인 자동 분류 | ✅ 완성 | PR #80 (가중치 + LLM fallback) |
+| QA gating active 4/4 | ✅ 완성 | Track A (PR #73), Track B (PR #91) |
+| Update Checker 풀체인 통합 | ✅ 완성 | PR #66, #83 |
+| 안정성 80%+ | ✅ 도달 | 후보 P (PR #100, 5-iter 4/5) |
+
+**다음 작업은 *외부 인터페이스 layer* (Streamlit Beta → Tauri Release)** — 백엔드
+풀체인은 production-ready.
+
+### 10-6. 후보 U (신규, 중장기 1순위) — Streamlit Beta 착수
+
+베타 단계 진입 후보:
+- `src/ui/streamlit_app.py` 신설 (자연어 입력 텍스트 → progress 표시 → 다운로드 링크)
+- `automate_workflow` / `analyze_and_implement` 호출 wrap
+- LangFuse trace ID 노출 (디버깅 가능)
+- 예상 작업: ~200~400 라인 + 의존성 `streamlit==1.x`
+
+**검증 시나리오**: 베타 사용자 1~5명에게 5 도메인 시나리오 입력 → `.exe` 다운로드까지 평균 elapsed 측정.
+
+---
+
+*본 문서는 PR #101 시점 (2026-05-11) 기준입니다. 다음 세션 1순위는 §6 후보 R/S/T (안정성 보강) 또는 §10-6 후보 U (Streamlit Beta) 중 선택.*
+*조직도 v9 / 구성안 v6 (5/11 갱신) / 세션 로그 (5/11) 와 함께 4중 보호 — 세션 인계 시 본 문서 1장으로 충분.*

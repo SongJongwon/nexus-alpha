@@ -33,6 +33,7 @@ from src.workflows.automate_workflow import (
     _extract_imported_symbols_from_track_b_code_block,
     _extract_imports_from_track_b_code_block,
     _inject_track_b_entry_filename_directive,
+    _inject_track_b_exception_assertion_directive,
     _inject_track_b_import_directive,
     _inject_track_b_stub_getattr_directive,
     run_automate_workflow,
@@ -520,6 +521,10 @@ def test_qa_loop_actually_injects_import_directive_into_pytest_task(
     assert "PR #100" in pytest_desc
     assert "__getattr__" in pytest_desc
     assert "_UNIVERSAL_NOOP" in pytest_desc
+    # PR #101 directive — test_error_* 예외 단정 보수적 규칙
+    assert "PR #101" in pytest_desc
+    assert "DID NOT RAISE" in pytest_desc
+    assert "urlparse(None)" in pytest_desc
 
 
 # ---------------------------------------------------------------------------
@@ -727,3 +732,76 @@ def test_extract_symbols_pr99_iter2_real_payload() -> None:
     assert "expect" in symbols["playwright.async_api"]
     assert "async_playwright" in symbols["playwright.async_api"]
     assert "TimeoutError" in symbols["playwright.async_api"]
+
+
+# ---------------------------------------------------------------------------
+# PR #101 — _inject_track_b_exception_assertion_directive (후보 Q)
+# ---------------------------------------------------------------------------
+
+
+def test_inject_exception_directive_appends_pr101_marker() -> None:
+    """directive 추가 시 ``PR #101`` 마커가 본문에 포함되어야 한다."""
+    result = _inject_track_b_exception_assertion_directive("BASE\n")
+    assert result.startswith("BASE\n")
+    assert "PR #101" in result
+
+
+def test_inject_exception_directive_includes_urlparse_none_regression() -> None:
+    """PR #100 ITER 3 회귀 사례 (``urlparse(None)``) 가 directive 본문에 명시."""
+    result = _inject_track_b_exception_assertion_directive("BASE\n")
+    assert "urlparse(None)" in result
+    assert "DID NOT RAISE" in result
+
+
+def test_inject_exception_directive_lists_no_raise_stdlib_examples() -> None:
+    """raise 안 하는 stdlib 함수 예시들이 directive 에 enumerate 되어야 한다."""
+    result = _inject_track_b_exception_assertion_directive("BASE\n")
+    assert "dict.get(missing_key)" in result
+    assert "urlparse(None)" in result
+    assert "list.__contains__" in result
+
+
+def test_inject_exception_directive_lists_validated_raise_examples() -> None:
+    """raise 하는 검증된 stdlib 예시들이 directive 에 enumerate 되어야 한다."""
+    result = _inject_track_b_exception_assertion_directive("BASE\n")
+    assert "int('abc')" in result
+    assert "int(None)" in result
+    assert "max([])" in result
+
+
+def test_inject_exception_directive_includes_conservative_pattern() -> None:
+    """결과+예외 둘 다 허용하는 보수적 패턴 예제가 포함되어야 한다."""
+    result = _inject_track_b_exception_assertion_directive("BASE\n")
+    assert "try:" in result
+    assert "except (TypeError, ValueError, AttributeError):" in result
+    assert "test_error_invalid_input_handles_gracefully" in result
+
+
+def test_inject_exception_directive_is_idempotent_pure() -> None:
+    """같은 입력 → 같은 출력 (deterministic, 부수효과 없음)."""
+    r1 = _inject_track_b_exception_assertion_directive("BASE\n")
+    r2 = _inject_track_b_exception_assertion_directive("BASE\n")
+    assert r1 == r2
+
+
+def test_inject_exception_directive_preserves_prefix() -> None:
+    """입력 description 의 prefix 가 변경 없이 유지되어야 한다."""
+    original = "기존 description 본문\nLine2\n"
+    result = _inject_track_b_exception_assertion_directive(original)
+    assert result.startswith(original)
+
+
+def test_inject_exception_directive_python_3_13_urlparse_assertion() -> None:
+    """회귀 차단 — Python 3.13 의 ``urlparse(None)`` 동작이 directive 와 일치.
+
+    본 테스트가 깨지면 Python 동작이 바뀌었거나 directive 가 잘못된 fact 를
+    명시한다는 의미. PR #101 directive 의 *empirical 기반* 보장.
+    """
+    from urllib.parse import urlparse
+    result = urlparse(None)
+    # ParseResultBytes (bytes 모드, 빈 결과)
+    assert result.scheme in (b"", "")
+    assert result.netloc in (b"", "")
+    assert result.path in (b"", "")
+    # 예외 미발생 (directive 가 명시하는 fact)
+    # → pytest.raises 단정 금지 대상
