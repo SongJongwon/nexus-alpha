@@ -123,6 +123,85 @@ python 이 PATH 에 없습니다.
 }
 
 # ─── 2. 저장소 clone / update ───────────────────────────────────────────────
+function Invoke-CleanClone {
+    & git clone --branch $BRANCH "https://github.com/$REPO.git" $INSTALL_DIR 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "git clone 실패 (https://github.com/$REPO.git)" }
+    Write-Ok "clone 완료"
+}
+
+function Update-ExistingRepo {
+    # 반환: $true (정상 업데이트) / $false (실패 — caller 가 Reset-InstallDirAndClone 호출)
+    Push-Location $INSTALL_DIR
+    try {
+        & git fetch origin $BRANCH 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 'git fetch 실패 — fresh clone 으로 전환'
+            return $false
+        }
+        $localBranch = (& git branch --show-current).Trim()
+        if ($localBranch -ne $BRANCH) {
+            & git checkout $BRANCH 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn2 "git checkout $BRANCH 실패 — fresh clone 으로 전환"
+                return $false
+            }
+        }
+        & git pull --ff-only origin $BRANCH 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 'git pull --ff-only 실패 (로컬 divergence / 강제 푸시 / 미커밋 변경 가능) — fresh clone 으로 전환'
+            return $false
+        }
+        Write-Ok "git pull 완료"
+        return $true
+    } finally {
+        Pop-Location
+    }
+}
+
+function Reset-InstallDirAndClone {
+    # PR #106 — git pull 실패 시 기존 폴더 backup 후 fresh clone.
+    # .env 는 보존 (사용자 시크릿 손실 방지).
+    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $brokenLeaf  = "$(Split-Path $INSTALL_DIR -Leaf).broken.$timestamp"
+    $brokenPath  = Join-Path (Split-Path $INSTALL_DIR -Parent) $brokenLeaf
+    $envBackup   = Join-Path ([System.IO.Path]::GetTempPath()) "nexus-alpha-env.$timestamp"
+
+    # .env 백업 (있는 경우만)
+    $envFile = Join-Path $INSTALL_DIR '.env'
+    $envBackedUp = $false
+    if (Test-Path $envFile) {
+        try {
+            Copy-Item -Path $envFile -Destination $envBackup -ErrorAction Stop
+            $envBackedUp = $true
+            Write-Ok ".env 백업: $envBackup"
+        } catch {
+            Write-Warn2 ".env 백업 실패: $($_.Exception.Message) (계속 진행 — 수동 복구 필요할 수 있음)"
+        }
+    }
+
+    # 기존 폴더 → .broken.{timestamp} 로 이름 변경 (즉시 삭제 X — 안전망)
+    try {
+        Rename-Item -Path $INSTALL_DIR -NewName $brokenLeaf -ErrorAction Stop
+        Write-Ok "기존 폴더 보관: $brokenPath (수동 확인 후 삭제 가능)"
+    } catch {
+        $errMsg = $_.Exception.Message
+        Fail "기존 폴더 rename 실패 (파일 잠금 가능): $errMsg | 수동 조치: Python/VSCode/터미널 세션 종료 후 재시도, 또는 Remove-Item -Recurse -Force $INSTALL_DIR"
+    }
+
+    # fresh clone
+    Invoke-CleanClone
+
+    # .env 복원
+    if ($envBackedUp) {
+        try {
+            Copy-Item -Path $envBackup -Destination $envFile -ErrorAction Stop
+            Write-Ok ".env 복원 완료 (백업본 보존: $envBackup)"
+        } catch {
+            Write-Warn2 ".env 복원 실패: $($_.Exception.Message) — 수동 복구 필요"
+        }
+    }
+}
+
 function Get-Repo {
     Write-Step "Step 2/6 — 저장소 준비 ($REPO)"
 
@@ -132,30 +211,19 @@ function Get-Repo {
     }
 
     if (Test-Path (Join-Path $INSTALL_DIR '.git')) {
-        Write-Ok "기존 저장소 발견 — 업데이트 (git pull)"
-        Push-Location $INSTALL_DIR
-        try {
-            & git fetch origin $BRANCH 2>&1 | Out-Null
-            $localBranch = (& git branch --show-current).Trim()
-            if ($localBranch -eq $BRANCH) {
-                & git pull --ff-only origin $BRANCH 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warn2 'git pull --ff-only 실패 — 로컬 변경사항 있을 수 있습니다. 수동 확인 권장.'
-                }
-            } else {
-                Write-Warn2 "현재 브랜치($localBranch) ≠ 대상($BRANCH) — 자동 checkout 생략. 수동: git checkout $BRANCH"
-            }
-        } finally {
-            Pop-Location
+        Write-Ok "기존 저장소 발견 — 업데이트 시도 (git pull)"
+        $updated = Update-ExistingRepo
+        if (-not $updated) {
+            # PR #106 — pull 실패 시 backup + fresh clone (사용자 .env 보존)
+            Reset-InstallDirAndClone
         }
-    } else {
-        if (Test-Path $INSTALL_DIR) {
-            Fail "$INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다. 다른 경로 또는 \$env:NEXUS_ALPHA_DIR 사용."
-        }
-        & git clone --branch $BRANCH "https://github.com/$REPO.git" $INSTALL_DIR 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Fail "git clone 실패 (https://github.com/$REPO.git)" }
-        Write-Ok "clone 완료"
+        return
     }
+
+    if (Test-Path $INSTALL_DIR) {
+        Fail "$INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다. 다른 경로 또는 \$env:NEXUS_ALPHA_DIR 사용."
+    }
+    Invoke-CleanClone
 }
 
 # ─── 3. 가상환경 + 의존성 ──────────────────────────────────────────────────
