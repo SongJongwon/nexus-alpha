@@ -428,3 +428,75 @@ def test_install_ps1_auto_py313_fallback_for_python_314_plus() -> None:
     assert "& python -m venv" not in body_no_comments, (
         "Install-Venv 안에 hardcoded '& python -m venv' 잔존 — PR #114 fallback 변수 미적용"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #115 — scripts/run.py 의 _prompt_track / _prompt_build (Build 입력 혼동 회피)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_track_uses_numeric_choices(run_mod) -> None:
+    """_prompt_track 이 'a'/'b' 대신 '1'/'2' 사용 (PR #115).
+
+    배경: 사용자가 'b' 누르면 Track B 로 바뀌어서 Build 옵션과 혼동.
+    PR #115: 숫자 1/2 로만 선택, 'a'/'b' 입력은 default 로 fallback.
+    """
+    # '1' → A
+    monkey_in = _MockInput(["1"])
+    assert run_mod._prompt_track("B", input_fn=monkey_in) == "A"
+    # '2' → B
+    assert run_mod._prompt_track("A", input_fn=_MockInput(["2"])) == "B"
+    # 빈 입력 → default
+    assert run_mod._prompt_track("A", input_fn=_MockInput([""])) == "A"
+    assert run_mod._prompt_track("B", input_fn=_MockInput([""])) == "B"
+    # 'a'/'b' 는 default 로 fallback (Build 혼동 회피)
+    assert run_mod._prompt_track("A", input_fn=_MockInput(["b"])) == "A"
+    assert run_mod._prompt_track("B", input_fn=_MockInput(["a"])) == "B"
+
+
+def test_prompt_build_function_exists(run_mod) -> None:
+    """_prompt_build 함수가 신규 정의되어 있어야 한다 (PR #115)."""
+    assert callable(getattr(run_mod, "_prompt_build", None)), (
+        "_prompt_build 함수 누락 — PR #115 분리 prompt 미구현"
+    )
+
+
+def test_prompt_build_yes_returns_true(run_mod) -> None:
+    """y / yes → True, 그 외 → False (default off, 명시적 opt-in)."""
+    assert run_mod._prompt_build(input_fn=_MockInput(["y"])) is True
+    assert run_mod._prompt_build(input_fn=_MockInput(["Y"])) is True
+    assert run_mod._prompt_build(input_fn=_MockInput(["yes"])) is True
+    # 빈 입력 / N / 잘못된 입력 → False
+    assert run_mod._prompt_build(input_fn=_MockInput([""])) is False
+    assert run_mod._prompt_build(input_fn=_MockInput(["n"])) is False
+    assert run_mod._prompt_build(input_fn=_MockInput(["x"])) is False
+
+
+def test_run_py_source_has_prompt_build_function() -> None:
+    """``scripts/run.py`` 소스에 ``_prompt_build`` 정의 + ``main()`` 에서 호출."""
+    text = RUN_PY_PATH.read_text(encoding="utf-8")
+    assert "def _prompt_build" in text, "_prompt_build 함수 정의 누락"
+    assert "_prompt_build(" in text.replace("def _prompt_build(", ""), (
+        "_prompt_build 호출 누락 — main() 통합 미완료"
+    )
+    # 기존 ``a / b`` UI 텍스트가 사라졌어야 함 (PR #115 혼동 회피)
+    assert "[Enter=수락 / a / b]" not in text, (
+        "기존 'a / b' prompt 잔존 — PR #115 Track 선택 UI 변경 미완료"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helper — input mock for prompt 함수 테스트
+# ---------------------------------------------------------------------------
+
+
+class _MockInput:
+    """``input()`` 호출 mock — list 순차 pop, 빈 list 시 EOFError."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+
+    def __call__(self, prompt=""):
+        if not self._responses:
+            raise EOFError("MockInput exhausted")
+        return self._responses.pop(0)
