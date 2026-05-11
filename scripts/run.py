@@ -237,15 +237,47 @@ def _prompt_request() -> str:
     return request
 
 
-def _prompt_track(default_track: str) -> str:
+def _prompt_track(default_track: str, input_fn=input) -> str:
+    """Track 선택 prompt — PR #115: 'b' 키 충돌 회피 (Build 옵션과 혼동 가능).
+
+    숫자 1/2 로 선택 — 'a'/'b' 입력은 default 로 fallback.
+
+    Args:
+        default_track: 자동 감지된 Track ('A' or 'B').
+        input_fn: ``input()`` 주입 (테스트용, 기본 builtins.input).
+    """
     print(f"  자동 감지 Track: **{default_track}**")
+    print("    1) Track A — Calculator-style GUI/CLI 앱")
+    print("    2) Track B — 5 도메인 자동화 (스크래핑/RPA/API/파싱/DevOps)")
     try:
-        choice = input(f"  사용? [Enter=수락 / a / b]: ").strip().lower()
+        choice = input_fn(f"  선택 [Enter={default_track} / 1 / 2]: ").strip()
     except (EOFError, KeyboardInterrupt):
         return default_track
-    if choice in ("a", "b"):
-        return choice.upper()
+    if choice == "1":
+        return "A"
+    if choice == "2":
+        return "B"
     return default_track
+
+
+def _prompt_build(input_fn=input) -> bool:
+    """Build 옵션 인터랙티브 prompt — PR #115 신설.
+
+    Track 결정 후 별도 단계로 호출. ``--build`` 플래그 미지정 + 인터랙티브 모드일 때만.
+    PyInstaller .exe 빌드는 +30~60초 추가 시간이 들어 사용자 명시적 확인 필요.
+
+    Args:
+        input_fn: ``input()`` 주입 (테스트용, 기본 builtins.input).
+    """
+    print()
+    print("  Build (.exe 생성)?")
+    print("    y) PyInstaller 로 .exe 빌드 (+30~60초, 산출물에 .exe 포함)")
+    print("    N) 코드 + 사양만 산출 (.exe 없음, 빠름)")
+    try:
+        choice = input_fn("  빌드 [y/N, Enter=N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return choice in ("y", "yes")
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +351,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.track = detected
         else:
             args.track = _prompt_track(detected)
+
+    # 2.5. Build 결정 (PR #115) — --build 미지정 + 인터랙티브 모드일 때 별도 prompt.
+    # Track 선택 ('a'/'b' 키) 와 Build 옵션 ('b') 입력 혼동 방지.
+    if not args.build and not args.non_interactive:
+        args.build = _prompt_build()
 
     # 3. release 검증
     if args.release:
