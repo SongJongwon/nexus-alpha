@@ -48,12 +48,59 @@ def test_install_ps1_exists_at_repo_root() -> None:
     """install.ps1 이 프로젝트 루트에 존재해야 한다 (irm 한 줄 설치 지원)."""
     assert INSTALL_PS1_PATH.exists(), "install.ps1 missing at repo root"
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    # 필수 키워드: irm 패턴 + 5단계 step
+    # 필수 키워드: irm 패턴 + step
     assert "Requires -Version 5.1" in text
     assert "NEXUS_ALPHA_DIR" in text  # 사용자 정의 설치 경로
     assert "git clone" in text or "git pull" in text
     assert "venv" in text
     assert "scripts\\run.py" in text or "scripts/run.py" in text
+
+
+def test_env_example_exists_at_repo_root() -> None:
+    """.env.example template 이 프로젝트 루트에 존재해야 한다 (PR #104)."""
+    env_example = PROJECT_ROOT / ".env.example"
+    assert env_example.exists(), ".env.example missing at repo root"
+    text = env_example.read_text(encoding="utf-8")
+    # 필수 환경변수 키 (값은 placeholder 만 — leak 차단)
+    assert "LLM_PROVIDER=" in text
+    assert "LANGFUSE_PUBLIC_KEY=" in text
+    assert "LANGFUSE_SECRET_KEY=" in text
+    assert "LANGFUSE_HOST=" in text
+    # placeholder 패턴 (실 키 아님)
+    assert "<your-public-key>" in text or "your-public-key" in text
+    assert "pk-lf-" in text  # public key prefix 안내
+    # 실 키 fragment 없음 (PR #103 leak 회귀 차단)
+    assert "09fedad5" not in text, "actual LangFuse key leaked into .env.example"
+
+
+def test_install_ps1_has_env_initialization_step() -> None:
+    """install.ps1 이 .env.example → .env 자동 복사 로직을 포함 (PR #104)."""
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    assert "Initialize-EnvFile" in text, "Initialize-EnvFile function missing"
+    assert ".env.example" in text
+    assert "Copy-Item" in text
+    # step 6/6 — PR #104 에서 5 → 6 으로 증가
+    assert "Step 6/6" in text
+
+
+def test_env_example_no_secret_values_committed() -> None:
+    """``.env.example`` 에 sk-ant- / sk-lf- / pk-lf- 실 값이 없어야 한다.
+
+    PR #103 의 leak 회귀 차단 — public 저장소에 실 secret 절대 금지.
+    placeholder (``<your-...>`` 또는 16진 미만) 만 허용.
+    """
+    env_example = PROJECT_ROOT / ".env.example"
+    text = env_example.read_text(encoding="utf-8")
+    import re
+    # sk-ant- 뒤 영숫자 30자 이상 = 실 Anthropic 키 패턴
+    real_anthropic = re.search(r"sk-ant-[a-zA-Z0-9_-]{30,}", text)
+    assert real_anthropic is None, f"Real ANTHROPIC key in .env.example: {real_anthropic}"
+    # sk-lf- 뒤 16진 30자 이상 = 실 LangFuse secret
+    real_langfuse_sk = re.search(r"sk-lf-[a-f0-9-]{30,}", text)
+    assert real_langfuse_sk is None, f"Real LangFuse secret in .env.example: {real_langfuse_sk}"
+    # pk-lf- 뒤 16진 30자 이상 = 실 LangFuse public (PR #103 leak 회귀)
+    real_langfuse_pk = re.search(r"pk-lf-[a-f0-9-]{30,}", text)
+    assert real_langfuse_pk is None, f"Real LangFuse public in .env.example: {real_langfuse_pk}"
 
 
 def test_run_py_exists_at_scripts() -> None:

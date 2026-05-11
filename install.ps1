@@ -72,7 +72,7 @@ function Fail {
 
 # ─── 1. 사전 검사 ───────────────────────────────────────────────────────────
 function Test-Prereqs {
-    Write-Step 'Step 1/5 — 사전 요구사항 확인'
+    Write-Step 'Step 1/6 — 사전 요구사항 확인'
 
     # git
     $git = Get-Command git -ErrorAction SilentlyContinue
@@ -116,7 +116,7 @@ python 이 PATH 에 없습니다.
 
 # ─── 2. 저장소 clone / update ───────────────────────────────────────────────
 function Get-Repo {
-    Write-Step "Step 2/5 — 저장소 준비 ($REPO)"
+    Write-Step "Step 2/6 — 저장소 준비 ($REPO)"
 
     $parent = Split-Path $INSTALL_DIR -Parent
     if (-not (Test-Path $parent)) {
@@ -152,7 +152,7 @@ function Get-Repo {
 
 # ─── 3. 가상환경 + 의존성 ──────────────────────────────────────────────────
 function Install-Venv {
-    Write-Step 'Step 3/5 — 가상환경 + 의존성 설치'
+    Write-Step 'Step 3/6 — 가상환경 + 의존성 설치'
 
     $venvDir = Join-Path $INSTALL_DIR '.venv'
     $venvPython = Join-Path $venvDir 'Scripts\python.exe'
@@ -181,13 +181,36 @@ function Install-Venv {
     Write-Ok '의존성 설치 완료 (requirements.txt)'
 }
 
-# ─── 4. smoke test ─────────────────────────────────────────────────────────
-function Test-Install {
-    if ($env:NEXUS_ALPHA_SKIP_SMOKE -eq '1') {
-        Write-Step 'Step 4/5 — smoke test (skip, NEXUS_ALPHA_SKIP_SMOKE=1)'
+# ─── 4. .env 초기화 (PR #104 — .env.example 자동 복사) ─────────────────────
+function Initialize-EnvFile {
+    Write-Step 'Step 4/6 — .env 초기화'
+
+    $envFile     = Join-Path $INSTALL_DIR '.env'
+    $envExample  = Join-Path $INSTALL_DIR '.env.example'
+
+    if (Test-Path $envFile) {
+        Write-Ok '.env 이미 존재 — 변경 안 함 (사용자 값 보존)'
         return
     }
-    Write-Step 'Step 4/5 — smoke test (import 검증)'
+    if (-not (Test-Path $envExample)) {
+        Write-Warn2 '.env.example 미존재 — .env 초기화 skip (저장소 무결성 확인 필요)'
+        return
+    }
+    Copy-Item -Path $envExample -Destination $envFile -ErrorAction Stop
+    Write-Ok ".env 생성 (.env.example 복사) — 키 값 채워 넣어 사용"
+    Write-Warn2 '편집 필요:'
+    Write-Host ('    ' + $envFile) -ForegroundColor DarkGray
+    Write-Warn2 'LangFuse 사용 시 LANGFUSE_PUBLIC_KEY/SECRET_KEY 필수 (선택)'
+    Write-Warn2 'API Key 모드 사용 시 ANTHROPIC_API_KEY 필수 (LLM_PROVIDER=api_key)'
+}
+
+# ─── 5. smoke test ─────────────────────────────────────────────────────────
+function Test-Install {
+    if ($env:NEXUS_ALPHA_SKIP_SMOKE -eq '1') {
+        Write-Step 'Step 5/6 — smoke test (skip, NEXUS_ALPHA_SKIP_SMOKE=1)'
+        return
+    }
+    Write-Step 'Step 5/6 — smoke test (import 검증)'
 
     $venvPython = Join-Path $INSTALL_DIR '.venv\Scripts\python.exe'
     Push-Location $INSTALL_DIR
@@ -213,7 +236,7 @@ print("OK")
 
 # ─── 5. 다음 단계 안내 ─────────────────────────────────────────────────────
 function Show-NextSteps {
-    Write-Step 'Step 5/5 — 설치 완료'
+    Write-Step 'Step 6/6 — 설치 완료'
     Write-Host ''
     Write-Host '🎉 Nexus Alpha 가 준비됐습니다.' -ForegroundColor Green
     Write-Host ''
@@ -241,6 +264,7 @@ try {
     Test-Prereqs
     Get-Repo
     Install-Venv
+    Initialize-EnvFile
     Test-Install
     Show-NextSteps
 } catch {
