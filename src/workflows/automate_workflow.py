@@ -37,7 +37,9 @@ Nexus Alpha 자동화 워크플로우 (Phase 6 Track B 통합 — 옵션 6.B / P
 
 from __future__ import annotations
 
+import ast
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -1226,6 +1228,69 @@ def _format_track_b_executor_result_md(result: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# PR #133 — Track B 도 entry .py 의 import 자동 스캔 → pip install (B안 Track B 적용)
+# ---------------------------------------------------------------------------
+# 배경:
+#   Track B 는 5단 LLM 사양 사슬을 생략하므로 dependency_report 가 없음. 그러나
+#   같은 결함이 존재: entry .py 가 ``import requests`` / ``import openpyxl`` 등
+#   third-party 패키지를 import 하면, 그 패키지가 .venv 에 없으면 PyInstaller 가
+#   못 찾고 빈 껍데기 .exe 생성 → 런타임 ModuleNotFoundError.
+# 처방:
+#   entry .py 의 import 문을 AST 로 정적 스캔 → top-level 패키지명 추출 → stdlib
+#   제외 → ``pip install``. 이후 ``execute_pyinstaller`` 호출.
+
+
+def _scan_imports_from_py(entry_path: Path) -> list[str]:
+    """Entry .py 의 top-level import 문 정적 스캔 → 외부 패키지명 추출.
+
+    AST walk 로 ``import X``, ``from X import Y`` 의 X 를 모두 수집 후 top-level
+    (점 앞부분) 만 남김. stdlib 모듈은 제외 (``sys.stdlib_module_names`` 기준).
+
+    Args:
+        entry_path: 스캔할 .py 파일 경로.
+
+    Returns:
+        외부 패키지명 목록 (dedupe + stdlib 제외). pip install 인자로 직접 사용 가능.
+    """
+    if not entry_path.exists():
+        return []
+    try:
+        tree = ast.parse(entry_path.read_text(encoding='utf-8', errors='replace'))
+    except (SyntaxError, ValueError):
+        return []
+
+    pkgs: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                pkgs.append(alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            # relative import (from . import X) 는 module=None — 무시
+            if node.level and node.level > 0:
+                continue
+            if node.module:
+                pkgs.append(node.module.split('.')[0])
+
+    # stdlib 제외 (Python 3.10+)
+    stdlib = set(getattr(sys, 'stdlib_module_names', ()))
+    # PR #133 — Track B 결과물에 자주 등장하지만 venv 에 이미 있는 패키지 / build 도구는 제외
+    BLOCKLIST = {
+        'pyinstaller', 'pip', 'setuptools', 'wheel',
+        'pytest', 'pytest_cov', 'pytest_mock',
+    }
+    third_party = [
+        p for p in pkgs
+        if p
+        and p not in stdlib
+        and p.lower() not in BLOCKLIST
+        and not p.startswith('_')  # __future__ 등
+    ]
+
+    # dedupe (preserve order)
+    return list(dict.fromkeys(third_party))
+
+
 def _run_track_b_build(
     domain: AutomationDomain,
     saved_dir: Path,
@@ -1233,10 +1298,14 @@ def _run_track_b_build(
     *,
     timeout_sec: int = 300,
 ) -> Any:
-    """Track B 산출 .py 를 PyInstaller 로 빌드 (PR #82).
+    """Track B 산출 .py 를 PyInstaller 로 빌드 (PR #82, PR #133 deps 자동 설치 추가).
 
     Track A 의 5단 LLM 사양 사슬 (run_build_workflow) 은 생략 — Track B 는
     *단일 .py CLI 스크립트* 가정 → 직접 ``execute_pyinstaller()`` 호출이 충분.
+
+    PR #133 — entry .py 의 import 문 AST 스캔 → 외부 패키지 자동 ``pip install``
+    → PyInstaller 호출. dependency_report 가 없는 Track B 환경에서도 자연어 →
+    동작하는 .exe 풀체인 보장.
 
     Args:
         domain: 결정된 도메인 (DEVOPS 제외 — 호출자가 미리 차단).
@@ -1249,10 +1318,17 @@ def _run_track_b_build(
         entry 미탐지 시 None.
     """
     from src.agents.build_release.build_executor import execute_pyinstaller
+    from src.workflows.build_workflow import _install_dependencies_for_build
 
     entry_path = _resolve_track_b_entry_path(domain, saved_code_files)
     if entry_path is None:
         return None
+
+    # PR #133 — entry .py 의 외부 import 정적 스캔 → 자동 pip install
+    deps = _scan_imports_from_py(entry_path)
+    if deps:
+        # graceful — pip install 실패해도 PyInstaller 호출 계속
+        _install_dependencies_for_build(deps)
 
     # Track B 4 python 도메인 모두 CLI 스크립트 — windowed=False
     app_name = entry_path.stem.title() or "App"

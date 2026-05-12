@@ -1380,81 +1380,106 @@ def test_install_ps1_install_venv_has_eap_isolation() -> None:
     )
 
 
-def test_install_ps1_invoke_virtualenv_helper_has_eap_isolation() -> None:
-    """Invoke-VirtualenvVenvCreation helper 도 EAP 격리 (PR #132 defense-in-depth).
+# ---------------------------------------------------------------------------
+# PR #133 — embeddable Python 경로 제거 + full Python 강제 (tkinter 보장)
+# ---------------------------------------------------------------------------
 
-    Install-Venv 외부에서 helper 가 호출되거나 미래의 caller 가 EAP=Stop 유지
-    하더라도 native command 가 NativeCommandError 회피하도록 자체 격리.
+
+def test_install_ps1_invoke_virtualenv_helper_removed() -> None:
+    """PR #133 — ``Invoke-VirtualenvVenvCreation`` 함수 *완전 제거*.
+
+    배경 (사용자 라이브 검증, 2026-05-12):
+        PR #129~#132 의 embeddable Python fallback 은 venv 생성까지는 통과시켰으나
+        embeddable distribution 은 *tkinter (Tcl/Tk GUI 백엔드) 미포함* — GUI .exe
+        풀체인 실패 (``ModuleNotFoundError: No module named 'tkinter'``).
+
+    PR #133 처방:
+        embeddable Python 경로 전면 제거 → 풀 Python 만 사용 → ``virtualenv`` 패키지
+        fallback 도 불필요 → ``Invoke-VirtualenvVenvCreation`` helper 삭제.
+
+    회귀 차단: helper 가 다시 추가되면 embeddable 분기가 재도입될 가능성 시그널.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 함수 정의 자체가 없어야 함
+    assert "function Invoke-VirtualenvVenvCreation" not in text, (
+        "PR #133: Invoke-VirtualenvVenvCreation 함수가 잔존 — 삭제 필요"
+    )
+
+
+def test_install_ps1_invoke_virtualenv_helper_not_called() -> None:
+    """PR #133 — Install-Venv 본문에서 ``Invoke-VirtualenvVenvCreation`` 호출 없음.
+
+    helper 가 함수 정의로는 없어도 호출 코드만 남아있으면 syntax error.
+    Install-Venv 의 분기가 모두 풀 Python 표준 ``-m venv`` 경로로 단순화됐는지 검증.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 주석에는 PR 이력으로 언급 가능 — 코드 라인에서만 검사
+    code_lines = [
+        line for line in text.splitlines()
+        if "Invoke-VirtualenvVenvCreation" in line
+        and not line.strip().startswith("#")
+    ]
+    assert not code_lines, (
+        f"PR #133: Invoke-VirtualenvVenvCreation 호출 코드 잔존 ({len(code_lines)} 줄): "
+        f"{code_lines[:3]}"
+    )
+
+
+def test_install_ps1_no_python_venv_embeddable_flag() -> None:
+    """PR #133 — ``$script:PYTHON_VENV_EMBEDDABLE`` flag 코드 완전 제거.
+
+    embeddable 분기 자체가 없으므로 flag 도 불필요. 주석/이력에만 언급 가능.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    code_lines = [
+        line for line in text.splitlines()
+        if "PYTHON_VENV_EMBEDDABLE" in line
+        and not line.strip().startswith("#")
+    ]
+    assert not code_lines, (
+        f"PR #133: PYTHON_VENV_EMBEDDABLE 사용 코드 잔존 ({len(code_lines)} 줄): "
+        f"{code_lines[:3]}"
+    )
+
+
+def test_install_ps1_install_venv_no_module_venv_explicit_fail() -> None:
+    """PR #133 — Install-Venv 의 ``No module named venv`` 분기는 자동 복구 X, 명시적 Fail.
+
+    PR #131 의 auto-recovery (virtualenv 자동 전환) 제거. embeddable Python 감지 시
+    사용자에게 명확한 메시지 + python.org installer URL 안내 후 Fail.
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
     import re as _re
     func_match = _re.search(
-        r"function Invoke-VirtualenvVenvCreation\s*\{(.*?)\n\}\n", text, _re.DOTALL
+        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
     )
-    assert func_match is not None, "Invoke-VirtualenvVenvCreation 본문 추출 실패"
+    assert func_match is not None
     body = func_match.group(1)
-    assert "$savedEAPHelper" in body or "savedEAPHelper" in body, (
-        "helper 의 EAP 저장 변수 누락"
+    # "No module named venv" 패턴 매칭 분기는 여전히 존재 (감지 + Fail 안내)
+    assert "No module named venv" in body, (
+        "Install-Venv 에 'No module named venv' 감지 분기 누락 — embeddable 식별 불가"
     )
-    assert "$ErrorActionPreference = 'Continue'" in body, (
-        "helper 본문에 EAP='Continue' 격리 누락"
-    )
-    assert "finally" in body, "helper 에 finally 블록 누락"
-    restore = _re.search(
-        r"finally\s*\{[^}]*\$ErrorActionPreference\s*=\s*\$savedEAPHelper",
+    # 단, 자동 복구가 아니라 Fail (사용자에게 명확한 메시지)
+    no_venv_block = _re.search(
+        r"No module named venv[^}]*?(?=\}|elseif|else)",
         body, _re.DOTALL
     )
-    assert restore is not None, (
-        "helper finally 의 EAP 복원 (=$savedEAPHelper) 누락"
+    assert no_venv_block is not None
+    block_text = no_venv_block.group(0)
+    assert "Fail" in block_text, (
+        "'No module named venv' 분기에서 Fail 호출 누락 — auto-recovery 가 잔존?"
+    )
+    # python.org installer URL 안내 (사용자에게 actionable guidance)
+    assert "python.org/downloads" in body, (
+        "python.org installer URL 안내 누락 — 사용자가 다음 단계 파악 불가"
     )
 
 
-# ---------------------------------------------------------------------------
-# PR #131 — Install-Venv 의 "No module named venv" 자동 감지 + virtualenv 전환
-# ---------------------------------------------------------------------------
+def test_install_ps1_install_venv_verifies_tkinter() -> None:
+    """PR #133 — Install-Venv 가 venv 생성 후 tkinter import 검증.
 
-
-def test_install_ps1_has_invoke_virtualenv_venv_helper() -> None:
-    """install.ps1 이 ``Invoke-VirtualenvVenvCreation`` helper 정의 (PR #131).
-
-    배경 (사용자 보고):
-        Step 1/6 통과 (``py -3.13 검출: Python 3.13.7``) + Step 2/6 통과 후
-        Step 3/6 에서 ``C:\\Users\\work\\nexus-alpha\\python313\\python.exe:
-        No module named venv`` 으로 실패.
-
-        ``py -3.13`` 이 *이전 PR #129 설치의 embeddable Python* 경로로 resolve.
-        embeddable 은 venv 모듈 미포함 (라이브 검증). ``$script:PYTHON_VENV_EMBEDDABLE``
-        flag 는 *그 세션 한정* 이라 새 ``irm | iex`` 실행 시 초기화 → Test-Prereqs 가
-        ``py -3.13`` 검출 통과 후 EMBEDDABLE flag 못 받음 → Install-Venv 가 표준
-        ``-m venv`` 사용 → 실패.
-
-    PR #131 처방:
-        ``Invoke-VirtualenvVenvCreation`` helper 신설 — pip / virtualenv 미설치
-        시 자동 부트스트랩 + 설치 후 ``-m virtualenv .venv`` 실행. detection path
-        와 무관하게 venv 모듈 없는 모든 Python 에서 동작.
-    """
-    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    assert "function Invoke-VirtualenvVenvCreation" in text, (
-        "Invoke-VirtualenvVenvCreation helper 정의 누락"
-    )
-    # 핵심 3단계 키워드
-    assert "get-pip.py" in text, "get-pip.py 부트스트랩 단계 누락"
-    assert "pip', 'install'" in text and "'virtualenv'" in text, (
-        "pip install virtualenv 단계 누락"
-    )
-    assert "-m', 'virtualenv', '.venv'" in text or "-m virtualenv .venv" in text, (
-        "python -m virtualenv .venv 실행 단계 누락"
-    )
-    # idempotent — pip 검출, virtualenv 검출 분기
-    assert "pip', '--version'" in text, "pip 검출 (--version) 누락 — idempotent 미보장"
-    assert "virtualenv', '--version'" in text, "virtualenv 검출 (--version) 누락"
-
-
-def test_install_ps1_install_venv_detects_no_module_venv_auto_recovery() -> None:
-    """Install-Venv 가 ``No module named venv`` stderr 감지 시 자동 recovery (PR #131).
-
-    표준 ``-m venv`` 경로에서 실패 → stderr 분석 → embeddable-style Python 자동
-    감지 → ``Invoke-VirtualenvVenvCreation`` 호출. 사용자 개입 없이 복구.
+    풀 Python 인스톨러는 tkinter 표준 포함. 검증 실패 시 embeddable Python 잔재
+    의심 → 명시적 Fail.
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
     import re as _re
@@ -1463,41 +1488,13 @@ def test_install_ps1_install_venv_detects_no_module_venv_auto_recovery() -> None
     )
     assert func_match is not None
     body = func_match.group(1)
-    # stderr 파일 redirect 패턴 (NativeCommandError 회피 + 파싱)
-    assert "2>$stderrFile" in body or "stderrFile" in body, (
-        "Install-Venv 에 stderr 파일 redirect 누락 — \"No module named venv\" 검출 불가"
+    # venv 생성 후 venvPython 으로 tkinter import 검증
+    assert "import tkinter" in body, (
+        "Install-Venv 에 tkinter import 검증 누락 — embeddable Python 잔재 감지 불가"
     )
-    # "No module named venv" 매칭 분기
-    assert "No module named venv" in body, (
-        "\"No module named venv\" 패턴 매칭 누락 — 자동 recovery 분기 없음"
-    )
-    # Invoke-VirtualenvVenvCreation 호출 (auto-recovery)
-    assert "Invoke-VirtualenvVenvCreation" in body, (
-        "Install-Venv 에서 Invoke-VirtualenvVenvCreation helper 호출 누락"
-    )
-    # EMBEDDABLE flag 자동 set
-    assert "$script:PYTHON_VENV_EMBEDDABLE = $true" in body, (
-        "auto-recovery 분기에서 EMBEDDABLE flag set 누락"
-    )
-
-
-def test_install_ps1_install_venv_uses_helper_for_pre_flagged_embeddable() -> None:
-    """Install-Venv 의 사전 EMBEDDABLE flag 분기도 helper 사용 (PR #131 일관성).
-
-    Install-EmbeddablePython 경유 (EMBEDDABLE 사전 set) 와 자동 감지 (Install-Venv
-    내부) 두 경로 모두 *같은* helper 사용 — DRY + 일관 동작 보장.
-    """
-    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    import re as _re
-    func_match = _re.search(
-        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
-    )
-    assert func_match is not None
-    body = func_match.group(1)
-    # 두 경로 모두에서 helper 호출
-    assert body.count("Invoke-VirtualenvVenvCreation") >= 2, (
-        f"Invoke-VirtualenvVenvCreation 호출 횟수 부족 ({body.count('Invoke-VirtualenvVenvCreation')} 회) — "
-        "사전 EMBEDDABLE 분기 + auto-detect 분기 양쪽 (2회) 필요"
+    # venvTkResult 또는 유사 변수 (검증 결과 capture)
+    assert "venvTkResult" in body or "tkVerify" in body or "tk OK" in body, (
+        "tkinter 검증 결과 capture 패턴 누락"
     )
 
 
@@ -1593,104 +1590,53 @@ def test_install_ps1_get_repo_preserves_python313_during_recovery() -> None:
 
 
 # ---------------------------------------------------------------------------
-# PR #129 — Embeddable Python fallback (MSI phantom install — Error 0x80070643 회피)
+# PR #133 — Embeddable Python 경로 완전 제거 + Include_tcltk=1 + tkinter 검증
 # ---------------------------------------------------------------------------
 
 
-def test_install_ps1_has_embeddable_python_function() -> None:
-    """install.ps1 이 ``Install-EmbeddablePython`` 함수 정의 (PR #129).
+def test_install_ps1_embeddable_python_function_removed() -> None:
+    """PR #133 — ``Install-EmbeddablePython`` 함수 *완전 제거*.
 
-    배경 (사용자 로그 분석):
-        사용자 PC 의 MSI 상태가 phantom install — Burn bundle 의 cache (MSI 파일) 가
-        corrupt 되어 uninstall 시 ``Error 0x80070643`` (1603) 으로 실패, install 도
-        ``Modify execute: None`` 으로 silent skip. MSI 인스톨러로는 이 상태에서
-        벗어날 수 없음.
+    배경 (사용자 라이브 검증, 2026-05-12):
+        embeddable Python distribution 은 tkinter (Tcl/Tk GUI 백엔드) 미포함 — GUI
+        앱 .exe 빌드 시 런타임 ``ModuleNotFoundError: No module named 'tkinter'``.
+        PR #129 도입 시점에는 MSI 우회 안전망이었지만, tkinter 미포함 문제로 GUI
+        풀체인 자동화의 *결정적 장애물* 로 판명됨.
 
-    PR #129 처방:
-        Python 공식 *embeddable* zip 사용 — 인스톨러/MSI/registry 0. 단순 zip 압축
-        풀기만으로 Python 작동. AntiVirus / MSI 충돌 / Burn bundle 모든 회피.
+    PR #133 처방:
+        embeddable 분기 전면 제거 → 풀 Python (python.org installer) 만 사용.
+        MSI 실패 시 명시적 Fail (조용한 추락보다 명시적 실패가 사용자에게 도움).
 
-    회귀 차단 — 함수 누락 시 MSI 충돌 환경 사용자가 영원히 install 불가.
+    회귀 차단: 함수가 다시 추가되면 GUI .exe 빌드 실패 가능성 신호.
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    assert "function Install-EmbeddablePython" in text, (
-        "Install-EmbeddablePython 함수 정의 누락"
+    assert "function Install-EmbeddablePython" not in text, (
+        "PR #133: Install-EmbeddablePython 함수 잔존 — 삭제 필요"
     )
-    # embeddable zip URL pattern
-    assert "embed-amd64.zip" in text, "embed-amd64.zip URL pattern 누락"
-    assert "python.org/ftp/python" in text, "python.org 다운로드 도메인 누락"
-    # Expand-Archive 사용 (zip 압축 해제)
-    assert "Expand-Archive" in text, "Expand-Archive 누락 — zip 해제 미구현"
 
 
-def test_install_ps1_embeddable_uses_no_bom_pth() -> None:
-    """Install-EmbeddablePython 의 ``._pth`` 파일 수정이 BOM 없는 UTF-8 사용 (PR #129).
+def test_install_ps1_no_embed_zip_url() -> None:
+    """PR #133 — embeddable zip URL (``embed-amd64.zip``) 코드 참조 없음.
 
-    배경 (라이브 검증 발견):
-        PowerShell 의 ``Set-Content -Encoding UTF8`` 은 BOM (\\uFEFF) 을 추가. Python
-        embeddable 의 ``._pth`` parser 는 BOM 을 처리 못 함 → 첫 줄 ``python313.zip``
-        을 인식 못함 → 치명 오류 ``ModuleNotFoundError: No module named 'encodings'``.
-
-    PR #129 처방:
-        .NET ``[System.IO.File]::WriteAllText`` 와 ``UTF8Encoding($false)``
-        (BOM 미생성 생성자) 로 직접 작성. ``Set-Content -Encoding UTF8`` 금지.
+    URL 자체는 주석에 PR 이력으로 언급 가능. 실제 다운로드 코드는 제거.
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    import re as _re
-    func_match = _re.search(
-        r"function Install-EmbeddablePython\s*\{(.*?)\n\}\n", text, _re.DOTALL
-    )
-    assert func_match is not None
-    body = func_match.group(1)
-    # no-BOM 작성 패턴 (.NET API)
-    assert "System.IO.File" in body and "WriteAllText" in body, (
-        "._pth 파일이 .NET WriteAllText 로 작성 안 됨 — BOM 회피 미보장"
-    )
-    assert "UTF8Encoding" in body, "UTF8Encoding 명시 누락"
-    # ``false`` BOM 비활성 생성자 인자
-    assert "::new($false)" in body or "($false)" in body, (
-        "UTF8Encoding($false) 호출 누락 — BOM 비활성 보장 안 됨"
-    )
-    # 주석에 BOM 위험 경고
-    assert "BOM" in body, "BOM 위험 주석 누락 — 회귀 차단 미흡"
-
-
-def test_install_ps1_embeddable_installs_virtualenv() -> None:
-    """Install-EmbeddablePython 이 ``virtualenv`` 패키지 사전 설치 (PR #129).
-
-    배경 (라이브 검증):
-        Embeddable Python 의 ``python313.zip`` 은 ``venv`` 모듈을 *미포함*.
-        ``python -m venv`` 호출 시 ``No module named venv`` 에러.
-
-    PR #129 처방:
-        pip 부트스트랩 후 ``pip install virtualenv`` 자동 실행 — virtualenv 는 자체
-        구현으로 .venv 생성 가능. Install-Venv 가 이 virtualenv 를 사용.
-    """
-    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    import re as _re
-    func_match = _re.search(
-        r"function Install-EmbeddablePython\s*\{(.*?)\n\}\n", text, _re.DOTALL
-    )
-    assert func_match is not None
-    body = func_match.group(1)
-    # virtualenv 패키지 설치 호출
-    assert "virtualenv" in body, "virtualenv 패키지 미참조"
-    # pip install virtualenv 명령
-    assert "'install'" in body and "'virtualenv'" in body, (
-        "pip install virtualenv 인자 누락"
-    )
-    # EMBEDDABLE 플래그 설정 — Install-Venv 가 분기에 사용
-    assert "$script:PYTHON_VENV_EMBEDDABLE" in body, (
-        "PYTHON_VENV_EMBEDDABLE 플래그 누락 — Install-Venv 분기 불가"
+    code_lines = [
+        line for line in text.splitlines()
+        if "embed-amd64.zip" in line
+        and not line.strip().startswith("#")
+    ]
+    assert not code_lines, (
+        f"PR #133: embed-amd64.zip 코드 참조 잔존 ({len(code_lines)} 줄)"
     )
 
 
-def test_install_ps1_install_local_python_falls_back_to_embeddable() -> None:
-    """Install-LocalPython313 이 MSI 실패 시 Install-EmbeddablePython 호출 (PR #129).
+def test_install_ps1_install_local_python_no_embeddable_fallback() -> None:
+    """PR #133 — Install-LocalPython313 의 embeddable fallback 제거 → 명시적 Fail.
 
-    호출 시점:
-        TargetDir + LocalAppData 양쪽 모두 python.exe 미검출 시 (MSI phantom install)
-        Install-EmbeddablePython 호출 + return.
+    MSI phantom install 시 (TargetDir + LocalAppData 모두 미검출):
+        과거: Install-EmbeddablePython 호출 (조용한 추락)
+        PR #133: ``Fail`` 호출 + python.org installer URL 안내
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
     import re as _re
@@ -1699,52 +1645,92 @@ def test_install_ps1_install_local_python_falls_back_to_embeddable() -> None:
     )
     assert local_func is not None
     body = local_func.group(1)
-    assert "Install-EmbeddablePython" in body, (
-        "Install-LocalPython313 에서 Install-EmbeddablePython fallback 호출 누락"
+    # embeddable 호출 없음 (코드 라인)
+    code_lines = [
+        line for line in body.splitlines()
+        if "Install-EmbeddablePython" in line
+        and not line.strip().startswith("#")
+    ]
+    assert not code_lines, (
+        f"Install-LocalPython313 본문에 Install-EmbeddablePython 호출 잔존: {code_lines}"
     )
-    # fallback 분기가 LocalAppData 체크 *후* 에 위치
-    local_check = body.find("userDefaultExe")
-    embed_call = body.find("Install-EmbeddablePython")
-    assert 0 < local_check < embed_call, (
-        f"Install-EmbeddablePython 호출이 LocalAppData 체크보다 앞에 있음 "
-        f"(local_check={local_check}, embed_call={embed_call}) — fallback 순서 오류"
+    # 그 자리에 Fail + python.org URL 안내
+    assert "python.org/downloads" in body, (
+        "MSI phantom install 시 사용자 수동 조치 안내 (python.org URL) 누락"
     )
 
 
-def test_install_ps1_install_venv_uses_virtualenv_for_embeddable() -> None:
-    """Install-Venv 가 embeddable Python 일 때 ``python -m virtualenv`` 사용 (PR #129).
+def test_install_ps1_install_local_python_includes_tcltk() -> None:
+    """PR #133 — Install-LocalPython313 의 인스톨러 인자에 ``Include_tcltk=1`` 명시.
+
+    python.org installer 기본값이 1 이지만 belt-and-suspenders. tkinter 가 GUI .exe
+    빌드의 핵심 의존성이므로 명시적 보장.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    assert "'Include_tcltk=1'" in body or '"Include_tcltk=1"' in body, (
+        "Install-LocalPython313 의 $installArgs 에 Include_tcltk=1 누락 — "
+        "tkinter 미포함 위험"
+    )
+
+
+def test_install_ps1_install_local_python_verifies_tkinter() -> None:
+    """PR #133 — Install-LocalPython313 가 설치 후 tkinter import 검증.
+
+    Include_tcltk=1 가 실제 작동했는지 verify. 실패 시 명시적 Fail (Customize
+    installation 으로 tcl/tk 체크 안내).
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    assert "import tkinter" in body, (
+        "Install-LocalPython313 에 import tkinter 검증 누락 — "
+        "Include_tcltk=1 작동 여부 미확인"
+    )
+    assert "tk OK" in body or "tkResult" in body, (
+        "tkinter 검증 결과 capture 패턴 누락"
+    )
+
+
+def test_install_ps1_test_prereqs_checks_existing_venv_tkinter() -> None:
+    """PR #133 — Test-Prereqs 가 기존 .venv 의 tkinter 포함 여부 검증.
 
     배경:
-        Embeddable Python 은 venv 모듈 미포함 → ``python -m venv`` 실패.
-        ``python -m virtualenv`` (Install-EmbeddablePython 에서 pre-install) 로 분기.
+        PR #129~#132 로 *embeddable Python + virtualenv* 로 만들어진 .venv 가
+        사용자 PC 에 잔존 가능. 다음 install.ps1 실행 시 Test-Prereqs 의 ``.venv
+        검출 → early return`` 이 발동해 embeddable .venv 를 그대로 재사용 → tkinter
+        부재로 GUI .exe 빌드 실패 재발.
 
-    PR #129/#131 처방:
-        Install-Venv 가 ``$script:PYTHON_VENV_EMBEDDABLE`` 플래그 검사 → embeddable
-        case 면 ``Invoke-VirtualenvVenvCreation`` helper (``-m virtualenv`` 내부 호출) 사용,
-        일반 case 면 ``-m venv`` 명령 사용.
+    PR #133 처방:
+        기존 .venv 검출 시 ``import tkinter`` 검증. 실패 시 .venv + python313/
+        자동 정리 후 fresh install (풀 Python 으로 재설치).
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
     import re as _re
     func_match = _re.search(
-        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
+        r"function Test-Prereqs\s*\{(.*?)\n\}\n", text, _re.DOTALL
     )
     assert func_match is not None
     body = func_match.group(1)
-    # EMBEDDABLE 플래그 검사
-    assert "$script:PYTHON_VENV_EMBEDDABLE" in body, (
-        "Install-Venv 에서 PYTHON_VENV_EMBEDDABLE 플래그 검사 누락"
+    # 기존 .venv 검출 + tkinter import 검증
+    assert "existingVenvPython" in body, (
+        "Test-Prereqs 의 기존 .venv 검출 변수 누락"
     )
-    # PR #131 — embeddable 분기는 helper 사용 (``-m virtualenv`` 는 helper 함수 안)
-    assert "Invoke-VirtualenvVenvCreation" in body, (
-        "embeddable 분기의 helper (Invoke-VirtualenvVenvCreation) 호출 누락"
+    assert "import tkinter" in body, (
+        "Test-Prereqs 에 기존 .venv 의 tkinter 검증 누락"
     )
-    # 표준 분기의 ``-m venv``
-    assert "'-m', 'venv'" in body or "-m venv" in body, (
-        "표준 분기의 ``-m venv`` 호출 누락"
-    )
-    # helper 함수 본문에 ``-m virtualenv`` 실제 명령 존재 (전체 파일 검색)
-    assert "'-m', 'virtualenv', '.venv'" in text or "-m virtualenv .venv" in text, (
-        "helper 함수의 ``python -m virtualenv .venv`` 실 호출 누락"
+    # tkinter 부재 시 자동 정리 (Remove-Item .venv)
+    assert "Remove-Item" in body and ".venv" in body, (
+        "Test-Prereqs 의 embeddable 잔재 .venv 자동 정리 로직 누락"
     )
 
 

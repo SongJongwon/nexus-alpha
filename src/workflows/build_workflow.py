@@ -41,6 +41,9 @@ Nexus Alpha 빌드 워크플로우 (Phase 4.5 통합 — v4).
 
 from __future__ import annotations
 
+import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -303,6 +306,194 @@ def _resolve_entry_path(code_files: list[Path], entry_hint: str) -> Optional[Pat
     return code_files[0] if code_files[0].exists() else None
 
 
+# ---------------------------------------------------------------------------
+# PR #133 — Dependency Analyzer 보고서 파싱 + 빌드 직전 pip install (B안)
+# ---------------------------------------------------------------------------
+# 배경 (사용자 라이브 검증, 2026-05-12):
+#   Dependency Analyzer LLM 이 ``direct_dependencies`` / ``hidden_imports`` 를
+#   YAML 보고서로 정확히 산출하지만, 그 결과를 *markdown 파일에만 저장* 하고 빌드
+#   파이프라인은 사용하지 않음. 결과:
+#     - calculator.py 가 ``import customtkinter`` 인데 .venv 에 customtkinter 미설치
+#     - PyInstaller 가 모듈 못 찾고 warning 만 띄운 채 빈 껍데기 .exe 생성
+#     - 사용자 실행 시 ``ModuleNotFoundError: No module named 'customtkinter'``
+# 처방 (PR #133):
+#   ``execute_pyinstaller`` 호출 직전에 dependency_report 파싱 → 필요한 패키지를
+#   현재 venv 에 ``pip install`` → ``hidden_imports`` 도 함께 전달. 자연어 →
+#   .exe 풀체인 자동화의 핵심 끊어진 고리 복원.
+
+
+# Build 도구 자체 / 표준 라이브러리는 pip install 대상에서 제외 (이미 설치되어 있음).
+_BUILD_DEP_BLOCKLIST: set[str] = {
+    'pyinstaller', 'pyinstaller_hooks_contrib',
+    'pip', 'setuptools', 'wheel',
+    'pytest', 'pytest_cov', 'pytest_mock',
+    'crewai', 'langchain', 'langgraph',
+    'pydantic', 'pydantic_core',
+}
+
+
+def _parse_deps_from_report(dependency_report: str) -> tuple[list[str], list[str]]:
+    """Dependency Analyzer 산출 markdown 에서 ``direct_dependencies`` + ``hidden_imports`` 추출.
+
+    LLM 산출 형식 (``dependency_analyzer.py`` 산출 규약):
+        ```yaml
+        direct_dependencies:
+          - name: pandas
+            version: ">=2.0"
+            source: requirements.txt
+        hidden_imports:
+          - module: customtkinter.windows.widgets.theme
+            reason: ...
+            severity: must
+        ```
+
+    LLM 변동성 흡수:
+        - ```yaml``` 블록이 없으면 raw 텍스트에서 직접 추출 시도
+        - PyYAML 파싱 실패 시 regex fallback
+        - 패키지명만 반환 (version/source/reason 메타 무시)
+        - stdlib / build 도구 자체 제외
+
+    Returns:
+        (direct_deps, hidden_imports) — 둘 다 빈 리스트 가능.
+        각 항목은 pip install 인자로 직접 사용 가능한 패키지명.
+    """
+    if not dependency_report:
+        return [], []
+
+    direct_deps: list[str] = []
+    hidden_imports: list[str] = []
+
+    # ① ```yaml...``` 블록 추출 (있으면)
+    yaml_block = ''
+    m = re.search(r'```(?:yaml|yml)?\s*\n(.*?)\n```', dependency_report, re.DOTALL)
+    if m:
+        yaml_block = m.group(1)
+
+    # ② PyYAML 파싱 (선호) — graceful: 실패 시 regex 로 fallback
+    if yaml_block:
+        try:
+            import yaml as _yaml  # type: ignore
+            data = _yaml.safe_load(yaml_block) or {}
+            if isinstance(data, dict):
+                for item in (data.get('direct_dependencies') or []):
+                    if isinstance(item, dict):
+                        name = item.get('name') or item.get('module') or item.get('package')
+                        if name:
+                            direct_deps.append(str(name).strip())
+                    elif isinstance(item, str):
+                        direct_deps.append(item.strip())
+                for item in (data.get('hidden_imports') or []):
+                    if isinstance(item, dict):
+                        name = item.get('module') or item.get('name')
+                        if name:
+                            hidden_imports.append(str(name).strip())
+                    elif isinstance(item, str):
+                        hidden_imports.append(item.strip())
+        except Exception:
+            # YAML parse 실패 — regex fallback 사용 (아래)
+            direct_deps = []
+            hidden_imports = []
+
+    # ③ regex fallback — YAML 블록이 없거나 파싱 실패한 경우 본문에서 직접 추출
+    if not direct_deps and not hidden_imports:
+        for section_key, target in (
+            ('direct_dependencies', direct_deps),
+            ('hidden_imports', hidden_imports),
+        ):
+            # 섹션 헤더부터 다음 헤더 또는 ``` 까지 캡처
+            section_re = re.compile(
+                rf'(?ms)^\s*{re.escape(section_key)}\s*:\s*\n(.+?)(?=\n\s*[A-Za-z_][\w_]*\s*:\s*\n|\n\s*```|\Z)'
+            )
+            sm = section_re.search(dependency_report)
+            if not sm:
+                continue
+            body = sm.group(1)
+            for line in body.splitlines():
+                # ``- name: foo`` 또는 ``- module: foo``
+                kv = re.match(r'\s*-\s+(?:name|module|package)\s*:\s*([^\s,#]+)', line)
+                if kv:
+                    pkg = kv.group(1).strip().strip('"\'')
+                    if pkg:
+                        target.append(pkg)
+                    continue
+                # 단순 ``- foo`` (메타 없는 한 줄 형식)
+                simple = re.match(r'\s*-\s+([A-Za-z_][\w\-]*(?:\.[\w\-]+)*)\s*$', line)
+                if simple:
+                    pkg = simple.group(1).strip()
+                    if pkg:
+                        target.append(pkg)
+
+    # ④ stdlib + build 도구 자체 제외 (direct_deps 에만 적용 — hidden_imports 는 stdlib 도 OK)
+    stdlib = set(getattr(sys, 'stdlib_module_names', ()))  # Python 3.10+
+    filtered_direct: list[str] = []
+    for pkg in direct_deps:
+        # 패키지명의 top-level 만 검사 (예: customtkinter.windows.widgets.theme → customtkinter)
+        top = pkg.split('.')[0].split('[')[0].lower()
+        if not top:
+            continue
+        if top in _BUILD_DEP_BLOCKLIST:
+            continue
+        if top in {s.lower() for s in stdlib}:
+            continue
+        filtered_direct.append(pkg)
+
+    # dedupe (preserve order)
+    direct_deps = list(dict.fromkeys(filtered_direct))
+    hidden_imports = list(dict.fromkeys([h for h in hidden_imports if h]))
+
+    return direct_deps, hidden_imports
+
+
+def _install_dependencies_for_build(
+    deps: list[str],
+    timeout_sec: int = 180,
+) -> tuple[bool, str]:
+    """Build 직전에 ``pip install <deps>`` 호출 — PR #133 자연어 → .exe 자동화의 핵심 연결.
+
+    현재 실행 중인 Python (sys.executable) 의 venv 에 직접 설치 — ``execute_pyinstaller``
+    가 같은 venv 의 ``pyinstaller.exe`` 를 사용하므로 일관성 보장.
+
+    graceful failure — 실패해도 예외 propagate 안 함. caller 가 결과 로깅 후 PyInstaller
+    호출 계속 (워크플로 전체 실패 회피).
+
+    Args:
+        deps: 패키지명 목록 (``["customtkinter", "pillow"]`` 등). 빈 리스트면 즉시 success.
+        timeout_sec: subprocess 타임아웃 (기본 180s = 3분).
+
+    Returns:
+        (success, log_message). log_message 는 인간이 읽을 수 있는 한 줄 요약.
+    """
+    if not deps:
+        return True, "no deps to install"
+
+    # 현재 venv 의 pip 경로 추정 (Windows: Scripts/pip.exe, *nix: bin/pip)
+    pip_path = Path(sys.executable).parent / ("pip.exe" if sys.platform == "win32" else "pip")
+    if pip_path.exists():
+        cmd = [str(pip_path), "install", "--quiet", "--no-warn-script-location"] + deps
+    else:
+        # fallback: python -m pip (venv 의 pip stub 이 없는 경우)
+        cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--no-warn-script-location"] + deps
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return True, f"pip install OK: {', '.join(deps)}"
+        tail_err = (proc.stderr or proc.stdout or '')[-500:].strip()
+        return False, f"pip install failed (exit={proc.returncode}): {tail_err}"
+    except subprocess.TimeoutExpired:
+        return False, f"pip install timeout ({timeout_sec}s) for: {', '.join(deps)}"
+    except Exception as e:  # pragma: no cover — 방어망
+        return False, f"pip install exception: {type(e).__name__}: {e}"
+
+
 def _format_executor_result_md(result: ExecuteResult) -> str:
     """ExecuteResult → 25_executor_result.md 형식 markdown."""
     lines = ["# PyInstaller 실행 결과", "", f"**상태**: {'✅ SUCCESS' if result.success else '🔴 FAILED'}", ""]
@@ -551,6 +742,7 @@ def run_build_workflow(
                 saved.append(path)
 
         # PR #36 — PyInstaller 실제 호출 (enable_executor=True 일 때만)
+        # PR #133 — Dependency Analyzer 보고서 파싱 → pip install → hidden_imports 자동 주입
         executor_result: Optional[ExecuteResult] = None
         if enable_executor and code_files and workflow_dir is not None:
             entry_path = _resolve_entry_path(code_files, entry_hint)
@@ -559,18 +751,42 @@ def run_build_workflow(
                 windowed = "need_gui: yes" in ui_spec or "need_gui=yes" in ui_spec
                 # 앱 이름은 entry 파일명 또는 user_request 단서 → 안전한 단순 휴리스틱
                 app_name = entry_path.stem.title() or "App"
+
+                # PR #133 — 의존성 자동 설치 + hidden_imports 자동 주입
+                direct_deps, hidden_imports = _parse_deps_from_report(dependency_report)
+                pip_log = "deps=0 (no install needed)"
+                if direct_deps:
+                    pip_ok, pip_log = _install_dependencies_for_build(direct_deps)
+                    if not pip_ok:
+                        # graceful — pip install 실패해도 PyInstaller 호출 계속.
+                        # 결과 .exe 가 런타임에 ModuleNotFoundError 낼 수 있으나,
+                        # 25_executor_result.md 의 pip_log 로 추적 가능.
+                        pass
+
                 executor_result = execute_pyinstaller(
                     entry_path=entry_path,
                     output_dir=workflow_dir / "build_output",
                     app_name=app_name,
                     windowed=windowed,
                     onefile=True,
+                    hidden_imports=hidden_imports if hidden_imports else None,
                     timeout_sec=executor_timeout_sec,
                 )
                 # 25_executor_result.md 저장 — 사용자 가시 산출물
                 executor_md = workflow_dir / "25_executor_result.md"
+                executor_md_body = _format_executor_result_md(executor_result)
+                # PR #133 — 의존성 자동 설치 결과를 산출물 상단에 prepend
+                pr133_header = (
+                    "## PR #133 — 의존성 자동 설치 결과\n\n"
+                    f"- direct_dependencies: {len(direct_deps)}개 "
+                    f"({', '.join(direct_deps) if direct_deps else '없음'})\n"
+                    f"- hidden_imports: {len(hidden_imports)}개 "
+                    f"({', '.join(hidden_imports) if hidden_imports else '없음'})\n"
+                    f"- pip install: {pip_log}\n\n"
+                    "---\n\n"
+                )
                 executor_md.write_text(
-                    _format_executor_result_md(executor_result),
+                    pr133_header + executor_md_body,
                     encoding="utf-8",
                 )
                 saved.append(executor_md)
