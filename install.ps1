@@ -62,6 +62,35 @@ function Write-Warn2 {
     Write-Host "  ! $Message" -ForegroundColor DarkYellow
 }
 
+# ─── PR #125 — Native command 안전 호출 helper ─────────────────────────────
+# 배경: ``& nativecmd 2>&1 | Out-String`` 패턴은 ``$ErrorActionPreference = 'Stop'``
+# 하에서 NativeCommandError 트리거 — stderr 한 줄이라도 있으면 스크립트 abort.
+# 해결: stderr 를 *file-handle level* 에서 discard (``2>$null``) — PowerShell pipeline
+# 거치지 않으므로 NativeCommandError 미발생. exit code 는 별도 ``$LASTEXITCODE`` 로 확인.
+function Invoke-NativeSafely {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$Executable,
+        [string[]]$Arguments = @()
+    )
+    # stderr 를 discard 하여 NativeCommandError 회피.
+    # stdout 은 string 으로 capture. exit code 는 caller 가 $LASTEXITCODE 로 확인.
+    $stdout = ''
+    $exit = -1
+    try {
+        $stdout = & $Executable @Arguments 2>$null | Out-String
+        $exit = $LASTEXITCODE
+    } catch {
+        $stdout = ''
+        $exit = -1
+    }
+    [pscustomobject]@{
+        StdOut    = if ($stdout) { $stdout.Trim() } else { '' }
+        ExitCode  = $exit
+        Succeeded = ($exit -eq 0)
+    }
+}
+
 function Fail {
     param([string]$Message)
     Write-Host ''
@@ -108,14 +137,14 @@ function Install-Python313ViaWinget {
     Write-Ok 'winget Python 3.13 설치 완료 (--scope user)'
 
     # py launcher 검출
-    $launcherVer = $null
+    # PR #125 — Invoke-NativeSafely 로 NativeCommandError 회피
+    $launcherVer = ''
     $launcherExitCode = -1
     $hasLauncher = $null -ne (Get-Command py -ErrorAction SilentlyContinue)
     if ($hasLauncher) {
-        try {
-            $launcherVer = (& py -3.13 --version 2>&1 | Out-String).Trim()
-            $launcherExitCode = $LASTEXITCODE
-        } catch { $launcherVer = $null }
+        $r = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '--version')
+        $launcherVer = $r.StdOut
+        $launcherExitCode = $r.ExitCode
     }
     if (-not $hasLauncher -or $launcherExitCode -ne 0 -or $launcherVer -notmatch 'Python\s+3\.13') {
         Write-Warn2 'winget 설치 후 py launcher 미가용 → 로컬 격리 설치로 전환'
@@ -147,10 +176,9 @@ function Install-LocalPython313 {
 
     Write-Warn2 "Python $pyVer 로컬 격리 설치 시도 — 시스템/사용자 Python 영향 0 (대상 폴더: $pyDir)"
 
-    # 기존 로컬 설치 재사용 (idempotent)
+    # 기존 로컬 설치 재사용 (idempotent) — PR #125 NativeCommandError 회피
     if (Test-Path $pyExe) {
-        $existingVer = $null
-        try { $existingVer = (& $pyExe --version 2>&1 | Out-String).Trim() } catch { }
+        $existingVer = (Invoke-NativeSafely -Executable $pyExe -Arguments @('--version')).StdOut
         if ($existingVer -match 'Python\s+3\.13') {
             Write-Ok "기존 로컬 Python 검출: $existingVer ($pyExe) — 재사용"
             $script:PYTHON_VENV_EXE  = $pyExe
@@ -247,8 +275,8 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).
     if (-not (Test-Path $pyExe)) {
         Fail "Python 설치 후 $pyExe 미생성 — 인스톨러 동작 이상"
     }
-    $installedVer = $null
-    try { $installedVer = (& $pyExe --version 2>&1 | Out-String).Trim() } catch { }
+    # PR #125 — Invoke-NativeSafely 로 NativeCommandError 회피
+    $installedVer = (Invoke-NativeSafely -Executable $pyExe -Arguments @('--version')).StdOut
     if (-not $installedVer -or $installedVer -notmatch 'Python\s+3\.13') {
         Fail "로컬 Python 설치는 했으나 버전 확인 실패: '$installedVer'"
     }
@@ -355,21 +383,42 @@ git 이 PATH 에 없습니다.
                 Write-Ok "python: $pyVersion (3.13 권장, 현재 버전도 호환)"
             }
         } elseif ($major -gt 3 -or ($major -eq 3 -and $minor -ge 14)) {
-            # PR #114 — 3.14+ 자동 fallback: ``py -3.13`` launcher 시도
+            # PR #114 / #125 — 3.14+ fallback chain:
+            #   ① ``py -3.13 --version`` 시도 (이미 3.13 설치되어 있으면 happy path)
+            #   ② 실패 시 ``py install 3.13`` (py launcher 3.11+ 의 자동 설치) — happy path 2
+            #   ③ 그래도 실패 시 ``Install-LocalPython313`` (최후의 안전망)
+            # 모든 native call 은 ``Invoke-NativeSafely`` 로 NativeCommandError 회피.
             Write-Warn2 "시스템 python: $pyVersion (CrewAI 1.14.x 미지원). ``py -3.13`` launcher 시도..."
             $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
-            $launcherVer = $null
+            $pyOk = $false
             if ($pyLauncher) {
-                $launcherVer = (& py -3.13 --version 2>&1 | Out-String).Trim()
+                $r1 = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '--version')
+                if ($r1.Succeeded -and $r1.StdOut -match 'Python\s+3\.13') {
+                    $pyOk = $true
+                    Write-Ok "py -3.13 fallback: $($r1.StdOut) (venv 생성에 사용)"
+                } else {
+                    # Happy path 2 — py launcher 신기능 (3.11+) ``py install 3.13``.
+                    # 사용자 보고 메시지 ('No runtime installed that matches 3.13.
+                    # Try running "py install 3.13"') 의 안내를 *프로그래밍 적으로 실행*.
+                    Write-Warn2 "py -3.13 미설치 — ``py install 3.13`` 자동 시도 (py launcher 신기능)..."
+                    $r2 = Invoke-NativeSafely -Executable 'py' -Arguments @('install', '3.13')
+                    if ($r2.Succeeded) {
+                        $r3 = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '--version')
+                        if ($r3.Succeeded -and $r3.StdOut -match 'Python\s+3\.13') {
+                            $pyOk = $true
+                            Write-Ok "``py install 3.13`` 성공: $($r3.StdOut) (venv 생성에 사용)"
+                        }
+                    } else {
+                        Write-Warn2 "``py install 3.13`` 미가용 (py launcher <3.11 또는 네트워크 차단)"
+                    }
+                }
             }
-            if ($pyLauncher -and $LASTEXITCODE -eq 0 -and $launcherVer -match 'Python\s+3\.13') {
-                # py launcher 의 3.13 사용 가능 → venv 생성에 사용
+            if ($pyOk) {
                 $script:PYTHON_VENV_EXE  = 'py'
                 $script:PYTHON_VENV_ARGS = @('-3.13')
-                Write-Ok "py -3.13 fallback: $launcherVer (venv 생성에 사용)"
             } else {
-                # PR #123 — 기존 Python 있음 (호환 안 됨) → 로컬 격리 설치 (시스템 미터치)
-                Write-Warn2 'py -3.13 launcher 가용 불가 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
+                # PR #123 — 최후의 안전망: 로컬 격리 설치 (시스템 미터치)
+                Write-Warn2 'py launcher 경로 모두 실패 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
                 Install-LocalPython313
             }
         } else {
