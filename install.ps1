@@ -318,7 +318,29 @@ git 이 PATH 에 없습니다.
         }
         return
     }
-    $pyVersion = (& python --version 2>&1).ToString().Trim()
+    # PR #124 — python --version 실행 실패 / Microsoft Store stub alias 검출 강화.
+    # Windows 10+ 는 ``python`` PATH stub 으로 Microsoft Store 페이지를 열 수 있음 →
+    # ``python --version`` 호출 시 stderr 만 출력 / 빈 출력 / "Reparse" 메시지.
+    # 이전 (PR #110~#123) 은 정규식 매치 실패 시 단순 Warn → 설치 함수 미호출 →
+    # Step 2/6 부터 venv 생성 fail.
+    $pyVersionOutput = & python --version 2>&1
+    $pyVersionExit = $LASTEXITCODE
+    $pyVersion = if ($null -ne $pyVersionOutput) { ($pyVersionOutput | Out-String).Trim() } else { '' }
+    $isStoreStub = ($pyVersion -match 'Microsoft Store|Reparse|App Installer') -or `
+                   ($pyVersionExit -ne 0) -or `
+                   ([string]::IsNullOrWhiteSpace($pyVersion))
+    if ($isStoreStub) {
+        Write-Warn2 "python 실행 비정상 (exit=$pyVersionExit, output='$pyVersion') — Microsoft Store stub 추정. 로컬 격리 설치로 진행."
+        Install-LocalPython313
+        # gh CLI 만 마저 검증 후 return (Step 1/6 완료)
+        $gh = Get-Command gh -ErrorAction SilentlyContinue
+        if ($gh) { Write-Ok "gh CLI: $((gh --version | Select-Object -First 1))" }
+        else {
+            Write-Warn2 'gh CLI 미설치 — Draft Release 발행 단계는 skip 됩니다.'
+            Write-Warn2 '  설치: winget install --id GitHub.cli -e  (선택)'
+        }
+        return
+    }
     # PR #110 — CrewAI 1.14.1 의 Python 지원 범위는 ``>=3.10,<3.14``.
     # 3.14+ 에서 의존성 (chromadb / instructor / pydantic-core) 빌드 실패 (사용자 보고).
     # PR #114 — 3.14+ 시 즉시 Fail 대신 ``py -3.13`` launcher 자동 fallback 시도.
@@ -356,7 +378,10 @@ git 이 PATH 에 없습니다.
             Install-LocalPython313
         }
     } else {
-        Write-Warn2 "Python 버전 파싱 실패 ($pyVersion) — 계속 진행하지만 의존성 호환 미보장."
+        # PR #124 — 정규식 매치 실패 = python 명령은 있지만 표준 출력 형식 아님.
+        # 비정상 상태로 간주 → 로컬 격리 설치 (시스템 미터치).
+        Write-Warn2 "Python 버전 파싱 실패 ($pyVersion) — 로컬 격리 설치로 진행 (시스템 미터치)"
+        Install-LocalPython313
     }
 
     # gh CLI (선택 — Draft Release 발행용)

@@ -550,11 +550,13 @@ def test_install_ps1_local_python_install_for_wrong_version() -> None:
 
 
 def test_install_ps1_test_prereqs_routes_correctly() -> None:
-    """Test-Prereqs 가 시나리오별 정확한 설치 함수 호출 (PR #123).
+    """Test-Prereqs 가 시나리오별 정확한 설치 함수 호출 (PR #123 + PR #124).
 
-    - python 미설치 → Install-Python313ViaWinget (시스템 안전)
-    - 3.14+ + py -3.13 실패 → Install-LocalPython313 (시스템 미터치)
-    - <3.10 → Install-LocalPython313 (시스템 미터치)
+    - python 미설치 → Install-Python313ViaWinget
+    - 3.14+ + py -3.13 실패 → Install-LocalPython313
+    - <3.10 → Install-LocalPython313
+    - **(PR #124) MS Store stub / python --version 실패 → Install-LocalPython313**
+    - **(PR #124) 정규식 매치 실패 (비표준 출력) → Install-LocalPython313**
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
     import re as _re
@@ -562,17 +564,57 @@ def test_install_ps1_test_prereqs_routes_correctly() -> None:
     prereqs = _re.search(r"function Test-Prereqs\s*\{(.*?)\n\}\n", text, _re.DOTALL)
     assert prereqs is not None, "Test-Prereqs 본문 추출 실패"
     body = prereqs.group(1)
-    # python 미설치 분기 → winget
-    # 3.14+ / <3.10 분기 → LocalPython313 (2회 호출)
+    # PR #123 (3.14+/<3.10) + PR #124 (Store stub + 매치 실패) = 최소 4 호출
     local_calls = body.count("Install-LocalPython313")
-    assert local_calls >= 2, (
+    assert local_calls >= 4, (
         f"Install-LocalPython313 호출 횟수 부족 ({local_calls} 회) — "
-        "3.14+ fallback 실패 + <3.10 두 시나리오 모두 호출 필요"
+        "PR #123 2 시나리오 + PR #124 2 시나리오 (Store stub / 매치 실패) 모두 호출 필요"
     )
     winget_calls = body.count("Install-Python313ViaWinget")
     assert winget_calls >= 1, (
         f"Install-Python313ViaWinget 호출 누락 ({winget_calls} 회) — "
         "python 미설치 시나리오에서 winget 호출 필요"
+    )
+
+
+def test_install_ps1_detects_microsoft_store_python_stub() -> None:
+    """Test-Prereqs 가 Microsoft Store Python stub alias 검출 (PR #124).
+
+    배경 (사용자 보고):
+        Windows 10+ 의 ``python`` PATH stub 은 ``ms-windows-store://`` 페이지 열기 →
+        ``python --version`` 호출 시 빈 출력 / "Microsoft Store" 메시지 / "Reparse" 등.
+        이전 (PR #110~#123) 은 정규식 매치 실패 시 단순 ``Write-Warn2`` → 설치 함수
+        미호출 → Step 2/6 부터 venv 생성 실패. 사용자 화면에서 "매치 안 됨" 만 보임.
+
+    PR #124 처방:
+        ``python --version`` 출력에 ``Microsoft Store`` / ``Reparse`` / ``App Installer``
+        키워드 검출 OR ``$LASTEXITCODE`` 비-0 OR 빈 출력 → Store stub 으로 간주 →
+        ``Install-LocalPython313`` 호출 (로컬 격리 설치).
+
+    회귀 차단 — 본 테스트가 깨지면 Store stub 환경 사용자가 "Step 1/6 매치 안 됨"
+    으로 막힘.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # Store stub 검출 키워드 (검출 분기 식별자)
+    assert "Microsoft Store" in text or "Reparse" in text, (
+        "Microsoft Store stub 검출 키워드 누락"
+    )
+    # $LASTEXITCODE 검사 — python --version 자체 실행 실패 케이스
+    assert "$pyVersionExit" in text or "LASTEXITCODE" in text, (
+        "python --version 실행 실패 검사 누락"
+    )
+    # IsNullOrWhiteSpace 또는 동등 빈 출력 검사
+    assert "IsNullOrWhiteSpace" in text or "isStoreStub" in text, (
+        "빈 출력 검사 누락 — Store stub 의 빈 stdout 시나리오 미커버"
+    )
+    # 검출 시 Install-LocalPython313 호출
+    import re as _re
+    store_detect = _re.search(
+        r"isStoreStub.*?Install-LocalPython313", text, _re.DOTALL
+    )
+    assert store_detect is not None, (
+        "Store stub 검출 후 Install-LocalPython313 호출 누락 — "
+        "사용자가 'Step 1/6 매치 안 됨' 으로 막힘"
     )
 
 
