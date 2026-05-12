@@ -846,8 +846,16 @@ git 이 PATH 에 없습니다.
             if ($pyLauncher) {
                 $r1 = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '--version')
                 if ($r1.Succeeded -and $r1.StdOut -match 'Python\s+3\.13') {
-                    $pyOk = $true
-                    Write-Ok "py -3.13 검출: $($r1.StdOut) (venv 생성에 사용)"
+                    # PR #133 fixup #5 — py -3.13 의 tkinter 검증 (embeddable 잔재 회피).
+                    # 배경: 이전 fixup #1~#3 era 의 embeddable python 이 py launcher 에 등록된 채로
+                    # 남아있는 경우, py -3.13 가 그걸 가리키면 venv 생성은 되지만 tkinter 없음.
+                    $tkCheck = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '-c', 'import tkinter')
+                    if ($tkCheck.Succeeded) {
+                        $pyOk = $true
+                        Write-Ok "py -3.13 검출: $($r1.StdOut) (tkinter OK)"
+                    } else {
+                        Write-Warn2 "py -3.13 검출 ($($r1.StdOut)) — tkinter 미포함 (embeddable 잔재 추정), 풀 Python 로컬 설치 진행"
+                    }
                 }
             }
             if ($pyOk) {
@@ -855,15 +863,24 @@ git 이 PATH 에 없습니다.
                 $script:PYTHON_VENV_ARGS = @('-3.13')
             } else {
                 # PR #128 — registry 기반 기존 Python 3.13 검출 (py launcher 가 못 찾는 경우 대응)
+                # PR #133 fixup #5 — registry Python 도 tkinter 검증
                 $regHit = Get-ExistingPython313
+                $regOk = $false
                 if ($regHit.Found) {
-                    Write-Ok "Python 3.13 registry 검출: $($regHit.Path) (venv 생성에 사용)"
-                    $script:PYTHON_VENV_EXE  = $regHit.Path
-                    $script:PYTHON_VENV_ARGS = @()
-                } else {
+                    $regTk = Invoke-NativeSafely -Executable $regHit.Path -Arguments @('-c', 'import tkinter')
+                    if ($regTk.Succeeded) {
+                        $regOk = $true
+                        Write-Ok "Python 3.13 registry 검출: $($regHit.Path) (tkinter OK)"
+                        $script:PYTHON_VENV_EXE  = $regHit.Path
+                        $script:PYTHON_VENV_ARGS = @()
+                    } else {
+                        Write-Warn2 "registry Python ($($regHit.Path)) tkinter 미포함 (embeddable 추정) — 풀 Python 로컬 설치 진행"
+                    }
+                }
+                if (-not $regOk) {
                     # 최후의 안전망: 로컬 격리 설치 (시스템 미터치, deterministic)
-                    # Install-LocalPython313 가 내부에서 orphan registry 도 정리.
-                    Write-Warn2 'py -3.13 / registry 모두 미가용 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
+                    # Install-LocalPython313 가 내부에서 orphan registry 도 정리 + tkinter 검증.
+                    Write-Warn2 'tkinter 보장된 Python 3.13 미가용 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
                     Install-LocalPython313
                 }
             }
@@ -1044,16 +1061,28 @@ $INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다.
         $tempBackup = Join-Path $env:TEMP "nexus-alpha-recovery-$timestamp"
         New-Item -ItemType Directory -Path $tempBackup -Force | Out-Null
 
-        # python313/ 백업 (있으면)
+        # python313/ 백업 — PR #133 fixup #5: embeddable Python 잔재 검출 후 *삭제*
+        # (백업 X). embeddable 은 tkinter 미포함 → 재사용 시 venv 가 tkinter 없는 상태
+        # 로 생성됨. 풀 Python 으로 재설치 강제.
         $pythonDir = Join-Path $INSTALL_DIR 'python313'
         $pythonBackedUp = $false
         if (Test-Path $pythonDir) {
-            try {
-                Move-Item -Path $pythonDir -Destination (Join-Path $tempBackup 'python313') -ErrorAction Stop
-                $pythonBackedUp = $true
-                Write-Ok "python313/ 임시 백업 → $tempBackup\python313 (로컬 격리 Python 보존)"
-            } catch {
-                Write-Warn2 "python313/ 백업 실패 ($($_.Exception.Message)) — fresh install 진행"
+            $pyExeCheck = Join-Path $pythonDir 'python.exe'
+            $isFullPython = $false
+            if (Test-Path $pyExeCheck) {
+                $tkProbe = Invoke-NativeSafely -Executable $pyExeCheck -Arguments @('-c', 'import tkinter')
+                $isFullPython = $tkProbe.Succeeded
+            }
+            if ($isFullPython) {
+                try {
+                    Move-Item -Path $pythonDir -Destination (Join-Path $tempBackup 'python313') -ErrorAction Stop
+                    $pythonBackedUp = $true
+                    Write-Ok "python313/ 임시 백업 → $tempBackup\python313 (풀 Python — tkinter OK, 재사용)"
+                } catch {
+                    Write-Warn2 "python313/ 백업 실패 ($($_.Exception.Message)) — fresh install 진행"
+                }
+            } else {
+                Write-Warn2 "기존 python313/ 가 embeddable (tkinter 미포함) — 백업 X, 폐기 후 풀 Python 재설치"
             }
         }
         # .env 백업 (있으면)
