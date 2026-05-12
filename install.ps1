@@ -469,14 +469,15 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         'CompileAll=0'
     )
 
+    # PR #133 — installer .exe 는 retry 가능성 때문에 *함수 끝* 에서만 삭제.
+    # 과거: finally { Remove-Item $installerPath } 이 1차 install 직후 인스톨러를
+    # 삭제 → orphan cleanup 후 retry 시 "지정된 파일을 찾을 수 없습니다" 예외 발생.
     try {
         $proc = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
         $exitCode = $proc.ExitCode
     } catch {
         Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
         Fail "Python 인스톨러 실행 예외: $($_.Exception.Message)"
-    } finally {
-        Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
     }
 
     if ($exitCode -ne 0) {
@@ -511,6 +512,20 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
             # PR #133 — MSI phantom install 발견 → orphan 수동 강제 정리 후 재시도 (1회).
             Write-Warn2 'MSI install 후 python.exe 미생성 — orphan 잔재 의심, 수동 강제 정리 + 재시도 1회'
             $extraCleaned = Remove-OrphanPython313Artifacts
+
+            # 안전망 (PR #133): installer 파일이 어떤 이유로든 사라졌으면 재다운로드.
+            if (-not (Test-Path $installerPath)) {
+                Write-Warn2 'installer 파일 부재 (TEMP 정리됨) — 재다운로드'
+                try {
+                    $oldProg = $ProgressPreference
+                    $ProgressPreference = 'SilentlyContinue'
+                    Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+                    $ProgressPreference = $oldProg
+                } catch {
+                    Fail "재시도용 Python 인스톨러 다운로드 실패: $($_.Exception.Message)"
+                }
+            }
+
             Write-Warn2 "Python $pyVer MSI 재설치 중 (cleanup 후, ~30초)..."
             $retryLog = Join-Path $env:TEMP "nexus-alpha-python-install-$pyVer-retry.log"
             # $installArgs 중 /log 만 새 경로로 교체. 나머지 인자는 동일.
@@ -591,6 +606,9 @@ GUI 앱 [.exe] 빌드에는 풀 Python 인스톨러 필수.
     Write-Ok "Python 로컬 설치 완료: $installedVer ($pyExe)"
     Write-Ok 'tkinter 검증 통과 (GUI 백엔드 작동)'
     Write-Ok '시스템 Python / PATH / registry / py launcher 모두 미변경 (격리 보장)'
+
+    # PR #133 — 성공 시 installer .exe 정리 (TEMP 청소). Fail 시는 OS 가 자동 cleanup.
+    Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
 
     # Install-Venv 가 *로컬 Python* 으로 venv 생성하도록 설정
     $script:PYTHON_VENV_EXE  = $pyExe
