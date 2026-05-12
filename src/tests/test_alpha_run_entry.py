@@ -1335,6 +1335,156 @@ def test_install_ps1_captures_installer_log() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PR #129 — Embeddable Python fallback (MSI phantom install — Error 0x80070643 회피)
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_has_embeddable_python_function() -> None:
+    """install.ps1 이 ``Install-EmbeddablePython`` 함수 정의 (PR #129).
+
+    배경 (사용자 로그 분석):
+        사용자 PC 의 MSI 상태가 phantom install — Burn bundle 의 cache (MSI 파일) 가
+        corrupt 되어 uninstall 시 ``Error 0x80070643`` (1603) 으로 실패, install 도
+        ``Modify execute: None`` 으로 silent skip. MSI 인스톨러로는 이 상태에서
+        벗어날 수 없음.
+
+    PR #129 처방:
+        Python 공식 *embeddable* zip 사용 — 인스톨러/MSI/registry 0. 단순 zip 압축
+        풀기만으로 Python 작동. AntiVirus / MSI 충돌 / Burn bundle 모든 회피.
+
+    회귀 차단 — 함수 누락 시 MSI 충돌 환경 사용자가 영원히 install 불가.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    assert "function Install-EmbeddablePython" in text, (
+        "Install-EmbeddablePython 함수 정의 누락"
+    )
+    # embeddable zip URL pattern
+    assert "embed-amd64.zip" in text, "embed-amd64.zip URL pattern 누락"
+    assert "python.org/ftp/python" in text, "python.org 다운로드 도메인 누락"
+    # Expand-Archive 사용 (zip 압축 해제)
+    assert "Expand-Archive" in text, "Expand-Archive 누락 — zip 해제 미구현"
+
+
+def test_install_ps1_embeddable_uses_no_bom_pth() -> None:
+    """Install-EmbeddablePython 의 ``._pth`` 파일 수정이 BOM 없는 UTF-8 사용 (PR #129).
+
+    배경 (라이브 검증 발견):
+        PowerShell 의 ``Set-Content -Encoding UTF8`` 은 BOM (\\uFEFF) 을 추가. Python
+        embeddable 의 ``._pth`` parser 는 BOM 을 처리 못 함 → 첫 줄 ``python313.zip``
+        을 인식 못함 → 치명 오류 ``ModuleNotFoundError: No module named 'encodings'``.
+
+    PR #129 처방:
+        .NET ``[System.IO.File]::WriteAllText`` 와 ``UTF8Encoding($false)``
+        (BOM 미생성 생성자) 로 직접 작성. ``Set-Content -Encoding UTF8`` 금지.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Install-EmbeddablePython\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # no-BOM 작성 패턴 (.NET API)
+    assert "System.IO.File" in body and "WriteAllText" in body, (
+        "._pth 파일이 .NET WriteAllText 로 작성 안 됨 — BOM 회피 미보장"
+    )
+    assert "UTF8Encoding" in body, "UTF8Encoding 명시 누락"
+    # ``false`` BOM 비활성 생성자 인자
+    assert "::new($false)" in body or "($false)" in body, (
+        "UTF8Encoding($false) 호출 누락 — BOM 비활성 보장 안 됨"
+    )
+    # 주석에 BOM 위험 경고
+    assert "BOM" in body, "BOM 위험 주석 누락 — 회귀 차단 미흡"
+
+
+def test_install_ps1_embeddable_installs_virtualenv() -> None:
+    """Install-EmbeddablePython 이 ``virtualenv`` 패키지 사전 설치 (PR #129).
+
+    배경 (라이브 검증):
+        Embeddable Python 의 ``python313.zip`` 은 ``venv`` 모듈을 *미포함*.
+        ``python -m venv`` 호출 시 ``No module named venv`` 에러.
+
+    PR #129 처방:
+        pip 부트스트랩 후 ``pip install virtualenv`` 자동 실행 — virtualenv 는 자체
+        구현으로 .venv 생성 가능. Install-Venv 가 이 virtualenv 를 사용.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Install-EmbeddablePython\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # virtualenv 패키지 설치 호출
+    assert "virtualenv" in body, "virtualenv 패키지 미참조"
+    # pip install virtualenv 명령
+    assert "'install'" in body and "'virtualenv'" in body, (
+        "pip install virtualenv 인자 누락"
+    )
+    # EMBEDDABLE 플래그 설정 — Install-Venv 가 분기에 사용
+    assert "$script:PYTHON_VENV_EMBEDDABLE" in body, (
+        "PYTHON_VENV_EMBEDDABLE 플래그 누락 — Install-Venv 분기 불가"
+    )
+
+
+def test_install_ps1_install_local_python_falls_back_to_embeddable() -> None:
+    """Install-LocalPython313 이 MSI 실패 시 Install-EmbeddablePython 호출 (PR #129).
+
+    호출 시점:
+        TargetDir + LocalAppData 양쪽 모두 python.exe 미검출 시 (MSI phantom install)
+        Install-EmbeddablePython 호출 + return.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    assert "Install-EmbeddablePython" in body, (
+        "Install-LocalPython313 에서 Install-EmbeddablePython fallback 호출 누락"
+    )
+    # fallback 분기가 LocalAppData 체크 *후* 에 위치
+    local_check = body.find("userDefaultExe")
+    embed_call = body.find("Install-EmbeddablePython")
+    assert 0 < local_check < embed_call, (
+        f"Install-EmbeddablePython 호출이 LocalAppData 체크보다 앞에 있음 "
+        f"(local_check={local_check}, embed_call={embed_call}) — fallback 순서 오류"
+    )
+
+
+def test_install_ps1_install_venv_uses_virtualenv_for_embeddable() -> None:
+    """Install-Venv 가 embeddable Python 일 때 ``python -m virtualenv`` 사용 (PR #129).
+
+    배경:
+        Embeddable Python 은 venv 모듈 미포함 → ``python -m venv`` 실패.
+        ``python -m virtualenv`` (Install-EmbeddablePython 에서 pre-install) 로 분기.
+
+    PR #129 처방:
+        Install-Venv 가 ``$script:PYTHON_VENV_EMBEDDABLE`` 플래그 검사 → embeddable
+        case 면 ``-m virtualenv`` 명령, 일반 case 면 ``-m venv`` 명령 사용.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # EMBEDDABLE 플래그 검사
+    assert "$script:PYTHON_VENV_EMBEDDABLE" in body, (
+        "Install-Venv 에서 PYTHON_VENV_EMBEDDABLE 플래그 검사 누락"
+    )
+    # virtualenv 명령 + venv 명령 *둘 다* 존재 (분기)
+    assert "'-m', 'virtualenv'" in body or "-m virtualenv" in body, (
+        "embeddable 분기의 ``-m virtualenv`` 호출 누락"
+    )
+    assert "'-m', 'venv'" in body or "-m venv" in body, (
+        "표준 분기의 ``-m venv`` 호출 누락"
+    )
+
+
+# ---------------------------------------------------------------------------
 # PR #128 — Orphan MSI registry detection + uninstall (Burn bundle Modify=None fix)
 # ---------------------------------------------------------------------------
 
