@@ -1334,6 +1334,139 @@ def test_install_ps1_captures_installer_log() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# PR #128 — Orphan MSI registry detection + uninstall (Burn bundle Modify=None fix)
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_has_get_existing_python313_helper() -> None:
+    """install.ps1 이 registry 기반 Python 3.13 검출 helper 정의 (PR #128).
+
+    배경 (사용자 PC 인스톨러 로그 분석):
+        Python 공식 인스톨러 (Burn bundle) 가 ``Modify`` action + ``execute: None``
+        으로 silent 종료 (exit=0) 하지만 실제 파일 미생성. 원인: 이전 시도에서
+        부분 설치된 MSI registry 가 남아 있어 인스톨러가 "이미 설치됨" 으로 판단.
+
+    PR #128 처방:
+        ``Get-ExistingPython313`` helper 가 registry (HKCU/HKLM/Wow6432Node) 를
+        검사 → ``Found / Path / Orphan / RegistryKey`` 객체 반환:
+          - Found=True : 실 파일 존재 → 재사용
+          - Orphan=True: registry 만 존재 (파일 없음) → install 전 uninstall 필요
+
+    회귀 차단 — helper 누락 시 silent fail 회피 로직 미작동.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    assert "function Get-ExistingPython313" in text, (
+        "Get-ExistingPython313 helper 정의 누락"
+    )
+    # 핵심 registry key 3종 (HKCU + HKLM + Wow6432Node) 모두 검사
+    assert "HKCU:\\Software\\Python\\PythonCore\\3.13\\InstallPath" in text, (
+        "HKCU registry key 검사 누락"
+    )
+    assert "HKLM:\\Software\\Python\\PythonCore\\3.13\\InstallPath" in text, (
+        "HKLM registry key 검사 누락"
+    )
+    assert "Wow6432Node" in text, (
+        "32-bit Python on 64-bit OS (Wow6432Node) registry 검사 누락"
+    )
+    # 반환 객체 필드
+    assert "Found=" in text, "Get-ExistingPython313 결과 객체 Found 필드 누락"
+    assert "Orphan=" in text, "Get-ExistingPython313 결과 객체 Orphan 필드 누락"
+
+
+def test_install_ps1_reuses_existing_python_via_registry() -> None:
+    """Install-LocalPython313 이 registry 검출 시 fresh install 스킵 + 재사용 (PR #128).
+
+    회귀 차단: 사용자가 이미 Python 3.13 을 설치한 상태에서 install.ps1 재실행 시
+    불필요한 인스톨러 호출 회피 + (특히) 인스톨러 silent fail 위험 회피.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    # registry helper 호출
+    assert "Get-ExistingPython313" in body, (
+        "Install-LocalPython313 에서 Get-ExistingPython313 호출 누락 — fresh install 스킵 로직 미연결"
+    )
+    # Found=True 분기 — 재사용 후 return
+    found_branch = _re.search(
+        r"if\s*\(\s*\$reg\.Found\s*\)\s*\{(.*?)return", body, _re.DOTALL
+    )
+    assert found_branch is not None, (
+        "Get-ExistingPython313 Found=True 시 즉시 return 분기 누락"
+    )
+    found_body = found_branch.group(1)
+    assert "$script:PYTHON_VENV_EXE" in found_body, (
+        "Found=True 분기에서 $script:PYTHON_VENV_EXE 설정 누락"
+    )
+
+
+def test_install_ps1_uninstalls_orphan_msi_before_install() -> None:
+    """Install-LocalPython313 이 orphan MSI 잔존 시 uninstall 후 fresh install (PR #128).
+
+    핵심: Python BURN bundle 이 "Already installed" 으로 판단하면 install 을 ``Modify``
+    action 으로 변환 → ``execute: None`` 으로 실제 설치 안 함 → exit=0 silent fail.
+    uninstall 로 MSI 잔존 정리 후 install 호출 → fresh install 강제.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    # orphan registry 감지 변수
+    assert "$orphanedRegistry" in body or "orphanedRegistry" in body, (
+        "orphanedRegistry 플래그 누락"
+    )
+    # /uninstall 인자 사용
+    assert "'/uninstall'" in body or '"/uninstall"' in body, (
+        "/uninstall 인자 누락 — orphan MSI 정리 미시도"
+    )
+    # uninstall 이 install 보다 앞에 위치
+    uninstall_pos = body.find("'/uninstall'")
+    install_pos = body.find('$installArgs = @(')
+    assert 0 < uninstall_pos < install_pos, (
+        f"/uninstall 이 install 보다 앞에 있어야 함 "
+        f"(uninstall={uninstall_pos}, install={install_pos})"
+    )
+
+
+def test_install_ps1_test_prereqs_registry_fallback_for_python_314_plus() -> None:
+    """Test-Prereqs 의 3.14+ 분기가 py -3.13 실패 시 registry 도 시도 (PR #128).
+
+    배경:
+        사용자 PC: 시스템 python 3.14.2 + py launcher 없음 → ``py -3.13`` 검출 실패
+        + Install-LocalPython313 에서도 orphan registry 로 silent fail.
+
+    PR #128 추가 안전망:
+        ``py -3.13`` 실패 시 ``Install-LocalPython313`` 호출 전에 registry 검사 →
+        이미 설치된 Python 3.13 발견 시 즉시 재사용. 인스톨러 silent fail 사이클 회피.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    prereqs = _re.search(
+        r"function Test-Prereqs\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert prereqs is not None
+    body = prereqs.group(1)
+    # 3.14+ 분기 추출 (minor -ge 14)
+    branch_match = _re.search(
+        r"elseif\s*\(.*?minor\s+-ge\s+14.*?\)\s*\{(.*?)\n\s{8}\}",
+        body, _re.DOTALL
+    )
+    assert branch_match is not None
+    branch_body = branch_match.group(1)
+    # Get-ExistingPython313 호출이 분기 안에 존재
+    assert "Get-ExistingPython313" in branch_body, (
+        "3.14+ 분기에 Get-ExistingPython313 fallback 호출 누락 — "
+        "py -3.13 실패 시 registry 검사 시도 안 됨"
+    )
+
+
 def test_install_ps1_checks_fallback_python_location() -> None:
     """Install-LocalPython313 이 TargetDir 미생성 시 기본 user 위치도 검사 (PR #128).
 
