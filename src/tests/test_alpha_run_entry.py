@@ -491,6 +491,84 @@ def test_install_ps1_auto_winget_python_install() -> None:
     assert "'-3.13'" in install_body, "py -3.13 launcher 인자 미설정"
 
 
+def test_install_ps1_winget_uses_scope_user() -> None:
+    """install.ps1 의 winget 명령이 ``--scope user`` 사용 — 관리자 권한 불필요 (PR #120).
+
+    배경:
+        PR #117 의 ``winget install`' 명령에 ``--scope`` 미지정 시 winget 의 기본값은
+        패키지 manifest 의 scope 를 따름 — Python 3.13 의 경우 machine scope 가 기본 →
+        UAC 권한 prompt 또는 비-admin 사용자 fail 위험.
+
+    PR #120 처방:
+        ``--scope user`` 명시 → ``%LOCALAPPDATA%\\Programs\\Python\\Python313\\`` 에
+        per-user 설치 (관리자 권한 불필요, 기존 buang Python 버전 절대 미영향).
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # --scope user 플래그 명시
+    assert "--scope user" in text, (
+        "winget --scope user 플래그 누락 — PR #120 의 관리자 권한 불필요 요구 미반영"
+    )
+    # winget 명령 자체에 --scope user 포함 (다른 곳에 떠도는 키워드 아니라)
+    import re as _re
+    winget_cmd = _re.search(
+        r"winget install --id Python\.Python\.3\.13[^\n]*", text
+    )
+    assert winget_cmd is not None, "winget install 명령 자체 추출 실패"
+    assert "--scope user" in winget_cmd.group(0), (
+        "winget install 명령 자체에 --scope user 누락 — 다른 곳에만 떠 있을 가능성"
+    )
+
+
+def test_install_ps1_fail_prevents_window_close() -> None:
+    """Fail 함수가 PowerShell 창 자동 닫힘 방지 (PR #120).
+
+    배경:
+        ``irm | iex`` 시나리오에서 ``Fail`` 의 ``exit 1`` 은 PowerShell 창을 즉시
+        닫음 → 사용자가 에러 메시지를 못 읽음.
+
+    PR #120 처방:
+        ``Fail`` 이 ``exit`` 전에 ``Read-Host`` (또는 ``ReadKey``) 로 사용자 입력
+        대기 — 창을 열린 상태로 유지. CI 환경 (``NEXUS_ALPHA_NO_PAUSE=1``) 에선
+        즉시 종료 (CI 차단 회피).
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # Fail 함수 본문 추출
+    import re as _re
+    fail_match = _re.search(r"function Fail\s*\{(.*?)\n\}\n", text, _re.DOTALL)
+    assert fail_match is not None, "Fail 함수 본문 추출 실패"
+    fail_body = fail_match.group(1)
+    # ReadKey 또는 Read-Host 로 입력 대기
+    assert "ReadKey" in fail_body or "Read-Host" in fail_body, (
+        "Fail 함수에 입력 대기 (ReadKey/Read-Host) 누락 — 창 자동 닫힘 위험"
+    )
+    # CI 환경 회피 — NEXUS_ALPHA_NO_PAUSE 환경 변수
+    assert "NEXUS_ALPHA_NO_PAUSE" in fail_body, (
+        "CI 비인터랙티브 회피 (NEXUS_ALPHA_NO_PAUSE) 누락 — CI 무한 대기 위험"
+    )
+
+
+def test_install_ps1_winget_install_uses_try_catch() -> None:
+    """Install-Python313ViaWinget 의 winget 호출이 try/catch 로 감싸짐 (PR #120).
+
+    PowerShell 자체 예외 (network / authn / permission) 발생 시도 graceful 에러
+    메시지 + Fail (pause) — 창이 즉시 닫히지 않도록 보장.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    install_func = _re.search(
+        r"function Install-Python313ViaWinget\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert install_func is not None, "Install-Python313ViaWinget 함수 추출 실패"
+    body = install_func.group(1)
+    # try/catch + 상세 안내 메시지
+    assert "try {" in body or "try{" in body, "winget 호출에 try 블록 누락"
+    assert "} catch {" in body or "}catch{" in body, "winget 호출에 catch 블록 누락"
+    # 수동 설치 fallback URL — 사용자 안내
+    assert "python.org/downloads/release/python-3137" in body, (
+        "수동 설치 fallback URL 누락 — 사용자가 자동 설치 실패 시 막힘"
+    )
+
+
 # ---------------------------------------------------------------------------
 # PR #115 — scripts/run.py 의 _prompt_track / _prompt_build (Build 입력 혼동 회피)
 # ---------------------------------------------------------------------------
