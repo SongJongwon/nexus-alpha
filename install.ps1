@@ -109,6 +109,48 @@ function Fail {
     exit 1
 }
 
+# ─── PR #128 — registry 기반 기존 Python 3.13 검출 (orphan MSI 식별) ─────
+# 배경 (사용자 PC 인스톨러 로그 분석):
+#   Python 공식 인스톨러 (Burn bundle) 가 ``Modify`` action + ``execute: None`` 으로
+#   silent 종료 (exit=0) 하지만 실제 파일 미생성. 원인: 이전 시도에서 부분 설치된
+#   MSI registry 가 남아 있어 인스톨러가 "이미 설치됨" 으로 판단.
+# 본 helper:
+#   - HKCU / HKLM 의 ``Software\Python\PythonCore\3.13\InstallPath`` 검사
+#   - 검출 + python.exe 존재 → 경로 반환 (정상 재사용 시나리오)
+#   - 검출 + python.exe 미존재 → orphan 신호 ($null + 별도 변수로 caller 에 전달)
+# 반환: pscustomobject (Found=bool, Path=string, Orphan=bool)
+function Get-ExistingPython313 {
+    $regKeys = @(
+        'HKCU:\Software\Python\PythonCore\3.13\InstallPath'
+        'HKLM:\Software\Python\PythonCore\3.13\InstallPath'
+        'HKLM:\SOFTWARE\Wow6432Node\Python\PythonCore\3.13\InstallPath'
+    )
+    foreach ($k in $regKeys) {
+        if (-not (Test-Path $k)) { continue }
+        $prop = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+        if (-not $prop) { continue }
+        # 우선순위: ExecutablePath > (default) + 'python.exe'
+        $candidates = @()
+        if ($prop.ExecutablePath) { $candidates += $prop.ExecutablePath }
+        $defaultDir = $prop.'(default)'
+        if ($defaultDir) { $candidates += (Join-Path $defaultDir 'python.exe') }
+        foreach ($c in $candidates) {
+            if (-not $c) { continue }
+            if (Test-Path $c) {
+                # 정상 검출 — 버전 확인
+                $verResult = Invoke-NativeSafely -Executable $c -Arguments @('--version')
+                if ($verResult.Succeeded -and $verResult.StdOut -match 'Python\s+3\.13') {
+                    return [pscustomobject]@{ Found=$true; Path=$c; Orphan=$false; RegistryKey=$k }
+                }
+            }
+        }
+        # registry 존재하나 candidate 중 어느 것도 실 파일 없음 → orphan
+        return [pscustomobject]@{ Found=$false; Path=''; Orphan=$true; RegistryKey=$k }
+    }
+    # 모든 registry key 없음
+    return [pscustomobject]@{ Found=$false; Path=''; Orphan=$false; RegistryKey='' }
+}
+
 # ─── PR #117/#120 — Python 3.13 자동 설치 via winget (시스템 미설치 시) ──
 # 사용 시점 (PR #123 갱신): *Python 이 시스템에 전혀 없을 때만*. 기존 Python
 # 버전이 있는 경우는 ``Install-LocalPython313`` (로컬 격리) 사용 — 사용자의
@@ -208,6 +250,24 @@ function Install-LocalPython313 {
         }
     }
 
+    # PR #128 — registry 기반 기존 Python 3.13 검출
+    #   사용자 보고: PR #127 의 인스톨러가 ``Modify`` action + ``execute: None`` 으로
+    #   silent 종료 (exit=0) → 파일 미생성. 원인: 이전 시도의 MSI 잔존 registry.
+    # 처방:
+    #   ① registry 검출 + python.exe 존재 → 그 경로 재사용 (install 스킵)
+    #   ② registry 존재하나 python.exe 미존재 → orphan 으로 식별, install 전 uninstall
+    $reg = Get-ExistingPython313
+    if ($reg.Found) {
+        Write-Ok "기존 Python 3.13 registry 검출: $($reg.Path) — 재사용 (install 스킵)"
+        $script:PYTHON_VENV_EXE  = $reg.Path
+        $script:PYTHON_VENV_ARGS = @()
+        return
+    }
+    $orphanedRegistry = $reg.Orphan
+    if ($orphanedRegistry) {
+        Write-Warn2 "Python 3.13 MSI registry 잔존 ($($reg.RegistryKey)) — 파일 없음 → orphan 정리 필요"
+    }
+
     # 다운로드
     $installerUrl  = "https://www.python.org/ftp/python/$pyVer/python-$pyVer-amd64.exe"
     $installerPath = Join-Path $env:TEMP "nexus-alpha-python-$pyVer-amd64.exe"
@@ -238,6 +298,28 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         Fail "Python 인스톨러 다운로드 후 파일 미존재: $installerPath"
     }
     Write-Ok "Python $pyVer 인스톨러 다운로드 완료"
+
+    # PR #128 — orphan MSI registry 정리: 다운로드한 인스톨러로 /uninstall /quiet 호출.
+    # Burn bundle 이 "이미 설치됨" 으로 잘못 판단해 install 을 ``Modify execute: None``
+    # 으로 변환하는 문제 해결. uninstall 은 실제 파일이 없어도 안전 (실패해도 무시).
+    if ($orphanedRegistry) {
+        Write-Warn2 "Orphan MSI registry uninstall 중 (~10초) — Burn bundle 잘못된 'Modify' 회피"
+        $uninstallLog = Join-Path $env:TEMP "nexus-alpha-python-uninstall-$pyVer.log"
+        $uninstallExit = -1
+        try {
+            $procUn = Start-Process -FilePath $installerPath `
+                -ArgumentList @('/uninstall', '/quiet', '/log', $uninstallLog) `
+                -Wait -PassThru -NoNewWindow
+            $uninstallExit = $procUn.ExitCode
+        } catch {
+            Write-Warn2 "Uninstall 시도 예외 ($($_.Exception.Message)) — 계속 진행"
+        }
+        if ($uninstallExit -eq 0) {
+            Write-Ok 'Orphan MSI registry 정리 완료'
+        } else {
+            Write-Warn2 "Uninstall exit=$uninstallExit (로그: $uninstallLog) — 계속 진행 (install 이 정리할 수도 있음)"
+        }
+    }
 
     # 로컬 격리 설치 (~30 sec)
     Write-Warn2 "Python $pyVer 로컬 설치 중 (~30초, 시스템 영향 없음) ..."
@@ -455,9 +537,18 @@ git 이 PATH 에 없습니다.
                 $script:PYTHON_VENV_EXE  = 'py'
                 $script:PYTHON_VENV_ARGS = @('-3.13')
             } else {
-                # 최후의 안전망: 로컬 격리 설치 (시스템 미터치, deterministic)
-                Write-Warn2 'py -3.13 미가용 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
-                Install-LocalPython313
+                # PR #128 — registry 기반 기존 Python 3.13 검출 (py launcher 가 못 찾는 경우 대응)
+                $regHit = Get-ExistingPython313
+                if ($regHit.Found) {
+                    Write-Ok "Python 3.13 registry 검출: $($regHit.Path) (venv 생성에 사용)"
+                    $script:PYTHON_VENV_EXE  = $regHit.Path
+                    $script:PYTHON_VENV_ARGS = @()
+                } else {
+                    # 최후의 안전망: 로컬 격리 설치 (시스템 미터치, deterministic)
+                    # Install-LocalPython313 가 내부에서 orphan registry 도 정리.
+                    Write-Warn2 'py -3.13 / registry 모두 미가용 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
+                    Install-LocalPython313
+                }
             }
         } else {
             # 3.10 미만 (3.9, 3.8 등 EOL) — PR #123 로컬 격리 (기존 Python 미터치)
