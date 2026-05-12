@@ -513,17 +513,26 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
             Write-Warn2 'MSI install 후 python.exe 미생성 — orphan 잔재 의심, 수동 강제 정리 + 재시도 1회'
             $extraCleaned = Remove-OrphanPython313Artifacts
 
-            # 안전망 (PR #133): installer 파일이 어떤 이유로든 사라졌으면 재다운로드.
+            # PR #133 fixup #3 — retry 직전 *항상* 재다운로드 (방어 최대화).
+            # 배경 (사용자 라이브 검증, 2026-05-12):
+            #   "재설치 예외: 지정된 파일을 찾을 수 없습니다" 가 fixup #2 후에도 발생.
+            #   원인 추정: AntiVirus quarantine, NTFS reparse point, 파일 잠금 등 다양.
+            #   Test-Path 가 true 여도 Start-Process 가 실패하는 edge case 존재.
+            # 처방: 조건 없이 기존 installer 삭제 + 재다운로드 → 매번 fresh 보장.
+            if (Test-Path $installerPath) {
+                Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
+            }
+            Write-Warn2 'retry 직전 installer 재다운로드 (fresh copy 보장, ~25 MB)...'
+            try {
+                $oldProg = $ProgressPreference
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+                $ProgressPreference = $oldProg
+            } catch {
+                Fail "재시도용 Python 인스톨러 다운로드 실패: $($_.Exception.Message)"
+            }
             if (-not (Test-Path $installerPath)) {
-                Write-Warn2 'installer 파일 부재 (TEMP 정리됨) — 재다운로드'
-                try {
-                    $oldProg = $ProgressPreference
-                    $ProgressPreference = 'SilentlyContinue'
-                    Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-                    $ProgressPreference = $oldProg
-                } catch {
-                    Fail "재시도용 Python 인스톨러 다운로드 실패: $($_.Exception.Message)"
-                }
+                Fail "재다운로드 후에도 installer 파일 부재: $installerPath (디스크 공간 / 권한 확인)"
             }
 
             Write-Warn2 "Python $pyVer MSI 재설치 중 (cleanup 후, ~30초)..."
