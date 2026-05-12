@@ -819,3 +819,89 @@ def test_install_ps1_starts_with_powershell_comment_block() -> None:
         f"install.ps1 본문이 '<#' 으로 시작 안 함 (실제: {bytes_data[:2].hex()}). "
         "comment-based help 미인식 → parse 에러 위험."
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #125 — Invoke-NativeSafely + py install 3.13 happy path (Native ErrCmd fix)
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_has_invoke_native_safely_helper() -> None:
+    """install.ps1 이 ``Invoke-NativeSafely`` helper 정의 (PR #125).
+
+    배경 (사용자 보고):
+        ``& py -3.13 --version 2>&1 | Out-String`` 패턴이 ``$ErrorActionPreference = 'Stop'``
+        하에서 py launcher 의 stderr 에러 메시지 ("No runtime installed that matches 3.13.
+        Try running 'py install 3.13'.") 를 NativeCommandError 로 wrap → script abort →
+        ``Install-LocalPython313`` fallback 미호출 → 사용자 화면에 "X 설치 실패: [ERROR]
+        No runtime installed..." 만 보임.
+
+    PR #125 처방:
+        ``Invoke-NativeSafely`` 신설 — ``2>$null`` 로 stderr 를 *file handle level* 에서
+        discard → PowerShell pipeline 미경유 → NativeCommandError 미발생. 모든 native
+        query (``--version``) 가 본 helper 사용.
+
+    회귀 차단 — 본 테스트가 깨지면 py launcher 의 stderr 가 다시 script 를 abort.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # helper 함수 정의
+    assert "function Invoke-NativeSafely" in text, "Invoke-NativeSafely helper 정의 누락"
+    # stderr discard (2>$null) — NativeCommandError 회피 핵심
+    assert "2>$null" in text, "stderr discard (2>\\$null) 패턴 누락"
+    # 결과 객체 형식 (StdOut / ExitCode / Succeeded)
+    assert "Succeeded" in text and "ExitCode" in text, (
+        "Invoke-NativeSafely 결과 객체 (Succeeded / ExitCode) 누락"
+    )
+
+
+def test_install_ps1_uses_py_install_happy_path() -> None:
+    """install.ps1 이 py launcher 의 ``py install 3.13`` 신기능 활용 (PR #125 happy path).
+
+    배경:
+        py launcher 3.11+ 는 ``py install <version>`` 명령으로 Python 자동 설치 지원.
+        py launcher 의 안내 메시지 ("Try running 'py install 3.13'.") 를 *프로그래밍 적으로*
+        실행 — happy path 2.
+
+    PR #125 fallback chain:
+        ① ``py -3.13 --version`` 시도 (3.13 이미 설치 시 즉시 성공)
+        ② 실패 시 ``py install 3.13`` 자동 시도 (py launcher 3.11+ 신기능)
+        ③ 그래도 실패 시 ``Install-LocalPython313`` (최후 안전망)
+
+    회귀 차단 — py install 시도 단계 누락 시 사용자가 직접 ``py install 3.13`` 입력
+    강요됨 (UX 저하).
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # py install 3.13 자동 시도 (happy path 2)
+    assert "'install', '3.13'" in text or "install 3.13" in text, (
+        "py install 3.13 자동 시도 명령 누락 — happy path 2 미구현"
+    )
+    # 3-단 fallback 정상 chain 검증
+    import re as _re
+    py_branch_match = _re.search(
+        r"py -3.13.* launcher 시도.*?Install-LocalPython313",
+        text, _re.DOTALL
+    )
+    assert py_branch_match is not None, (
+        "py launcher fallback chain 3-단 (py -3.13 → py install → LocalPython313) 미연결"
+    )
+
+
+def test_install_ps1_no_native_2andredirect_outstring_pattern() -> None:
+    """install.ps1 이 ``2>&1 | Out-String`` 패턴 사용 안 함 (PR #125 회귀 차단).
+
+    배경:
+        해당 패턴은 NativeCommandError 트리거의 직접 원인 — Helper 사용으로 대체됨.
+        주석 (``# 배경: ...``) 에서 패턴 설명은 OK — 실 호출 안 함.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    # 주석 줄 제거 후 실 코드만 검사
+    lines = text.splitlines()
+    code_lines = [
+        l for l in lines
+        if not _re.match(r"^\s*#", l)  # # 로 시작하는 주석 줄 제외
+    ]
+    code_text = "\n".join(code_lines)
+    assert "2>&1 | Out-String" not in code_text, (
+        "실 코드에 '2>&1 | Out-String' 잔존 — Invoke-NativeSafely 로 교체 필요"
+    )
