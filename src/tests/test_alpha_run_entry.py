@@ -646,49 +646,48 @@ class _MockInput:
 # ---------------------------------------------------------------------------
 
 
-def test_install_ps1_has_utf8_bom() -> None:
-    """install.ps1 이 UTF-8 BOM 으로 시작해야 한다 (PR #121).
+def test_install_ps1_has_no_utf8_bom() -> None:
+    """install.ps1 이 UTF-8 BOM 으로 시작하면 *안 된다* (PR #122 — PR #121 revert).
 
-    배경 (사용자 보고 + diagnose):
-        Windows PowerShell 5.1 의 기본 .ps1 인코딩은 *ANSI/OEM 코드페이지* —
-        한국 Windows 의 경우 CP949. UTF-8 BOM 이 없는 ``.ps1`` 파일을 한글
-        Windows 가 ANSI 로 해석 시 mojibake 발생:
-            "irm 한 줄 설치"  →  "irm ??以??ㅼ튂"
+    배경 (PR #121 실패):
+        PR #121 가 BOM 을 추가해 한국 Windows ANSI mojibake 를 차단하려 했으나,
+        ``irm | iex`` 시나리오에서 새 결함 발생:
 
-        mojibake 된 텍스트는 PowerShell parser 에 syntax error 로 보임 →
-        스크립트 시작 전 abort → ``irm | iex`` 시나리오에서 *창이 즉시 닫힘*.
+        1. ``irm`` 가 GitHub raw 응답을 UTF-8 으로 decode 시 BOM 글자 (``\\uFEFF``)
+           를 string 첫 글자로 *보존*
+        2. ``iex`` 가 ``"\\uFEFF<# ..."`` 를 parse 시 ``\\uFEFF<#`` 를 하나의 cmdlet
+           이름으로 인식 → ``"The term '\\uFEFF<#' is not recognized"`` 에러
+        3. 사용자 PowerShell 창에 parse 에러 줄줄 → 실패
 
-    PR #121 처방:
-        파일 첫 3 bytes 에 UTF-8 BOM (``EF BB BF``) 추가. 모든 PowerShell 버전이
-        이를 인식 → 무조건 UTF-8 로 해석 → 한글 mojibake 0건.
+        라이브 검증 (PR #121 머지 후 사용자 보고):
+            irm ... | iex
+            iex : 위치 줄:10 문자:22
+            +    (Electron/Tauri) 는 후속 단계.    ← comment block 내부가 code 로 파싱됨
 
-    부수 효과:
-        ``[System.Management.Automation.Language.Parser]::ParseFile`` 의 encoding
-        자동 detect false positive 결함도 해결 (PR #100 era 의 ParseInput UTF8 우회
-        workaround 더 이상 필요 없음).
+    PR #122 처방:
+        BOM 제거 (PR #121 revert) — ``irm | iex`` 정상 작동 복원.
 
-    회귀 차단 — 본 테스트가 깨지면 한글 Windows 사용자가 ``irm | iex`` 시 다시
-    창 즉시 닫힘 증상 재발.
+        한국 Windows ANSI mojibake 위험은 *별도 경로* (README 의 file-based
+        install 안내 또는 향후 PR) 에서 해결.
+
+    회귀 차단 — 본 테스트가 깨지면 ``irm | iex`` 가 다시 실패.
     """
     bytes_data = INSTALL_PS1_PATH.read_bytes()
-    assert len(bytes_data) >= 3, "install.ps1 크기가 BOM 보다 작음"
+    assert len(bytes_data) >= 3, "install.ps1 크기가 충분하지 않음"
     bom_marker = bytes_data[:3]
-    assert bom_marker == b"\xef\xbb\xbf", (
-        f"install.ps1 첫 3 bytes 가 UTF-8 BOM 이 아님 (실제: {bom_marker.hex()}). "
-        "한글 Windows 환경에서 mojibake → 창 즉시 닫힘 위험."
+    assert bom_marker != b"\xef\xbb\xbf", (
+        f"install.ps1 첫 3 bytes 가 UTF-8 BOM ({bom_marker.hex()}) — "
+        "irm | iex 시나리오에서 'unrecognized cmdlet' 에러 유발. BOM 제거 필요."
     )
 
 
-def test_install_ps1_parses_via_default_powershell_encoding() -> None:
-    """install.ps1 본문이 UTF-8 BOM 포함 후 default ParseFile 로 정상 파싱 (PR #121 검증 강화).
+def test_install_ps1_starts_with_powershell_comment_block() -> None:
+    """install.ps1 이 PowerShell comment block (``<#``) 으로 시작해야 한다 (PR #122).
 
-    BOM 이 있으면 PowerShell 의 어떤 reader 도 UTF-8 로 인식 → mojibake 0건.
-    본 테스트는 BOM 효과의 *간접 검증* — 파일 본문 첫 줄이 mojibake 없이
-    PowerShell comment block (``<#``) 으로 시작하는지 확인.
+    BOM 없이 첫 2 bytes 가 ``<#`` 이어야 parser 가 comment-based help 로 인식.
     """
     bytes_data = INSTALL_PS1_PATH.read_bytes()
-    # BOM 다음 첫 글자는 PowerShell comment block 시작 '<' 이어야 함
-    assert bytes_data[3:5] == b"<#", (
-        "BOM 다음 본문이 '<#' (PowerShell comment block) 으로 시작 안 함 — "
-        "BOM 또는 본문 손상"
+    assert bytes_data[:2] == b"<#", (
+        f"install.ps1 본문이 '<#' 으로 시작 안 함 (실제: {bytes_data[:2].hex()}). "
+        "comment-based help 미인식 → parse 에러 위험."
     )
