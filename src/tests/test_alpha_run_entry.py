@@ -1211,3 +1211,160 @@ def test_install_ps1_powershell_parses_cleanly() -> None:
     assert token_count >= 1000, (
         f"PowerShell 토큰 수 비정상 ({token_count}) — 파일 손상 / 비정상 단축 가능"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #128 — Install-LocalPython313 인스톨러 실패 fix
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_installs_python_creates_parent_dir() -> None:
+    """Install-LocalPython313 이 인스톨러 호출 전에 $INSTALL_DIR 사전 생성 (PR #128).
+
+    사용자 보고 (PR #126 머지 후):
+        flow 가 ``Install-LocalPython313`` 까지 정상 도달했지만 인스톨러 종료 후
+        ``python.exe 미생성 — 인스톨러 동작 이상`` 으로 실패. 원인 추정:
+        Install-LocalPython313 은 Step 1/6 (Get-Repo 이전) 에서 호출 → $INSTALL_DIR
+        가 아직 미존재. Python 공식 인스톨러는 TargetDir 의 *부모 폴더 자동 생성*
+        을 보장하지 않음 → silent fail.
+
+    PR #128 처방:
+        ``Test-Path $INSTALL_DIR`` 확인 후 미존재 시 ``New-Item -ItemType Directory``
+        로 사전 생성. 부모 폴더 보장 후 인스톨러 호출.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None, "Install-LocalPython313 함수 추출 실패"
+    body = local_func.group(1)
+    # 부모 폴더 사전 생성 패턴 검출
+    parent_create = _re.search(
+        r"if\s*\(\s*-not\s*\(\s*Test-Path\s+\$INSTALL_DIR\s*\)\s*\)\s*\{[^}]*New-Item\s+-ItemType\s+Directory",
+        body, _re.DOTALL
+    )
+    assert parent_create is not None, (
+        "Install-LocalPython313 에 $INSTALL_DIR 사전 생성 로직 누락 — "
+        "PR #128: Python 인스톨러 silent fail 회피 미적용"
+    )
+    # New-Item 위치가 인스톨러 실행 (Start-Process) 보다 앞에 있어야 함
+    create_pos = body.find("New-Item -ItemType Directory")
+    start_proc_pos = body.find("Start-Process -FilePath")
+    assert 0 < create_pos < start_proc_pos, (
+        f"New-Item 이 Start-Process 보다 앞에 위치해야 함 "
+        f"(create={create_pos}, start_proc={start_proc_pos})"
+    )
+
+
+def test_install_ps1_removes_simple_install_flag() -> None:
+    """Install-LocalPython313 의 ``SimpleInstall=1`` 인자 제거 (PR #128).
+
+    배경:
+        Python 공식 인스톨러 옵션 ``SimpleInstall=1`` 은 ``/quiet`` 와 *중복* +
+        일부 환경에서 사용자 정의 옵션 (TargetDir, InstallAllUsers 등) 을 무시
+        하고 기본 위치로 설치하는 보고 존재.
+
+    PR #128 처방:
+        ``SimpleInstall=1`` 인자 제거. ``/quiet`` 로 UI 비표시는 충분.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None, "Install-LocalPython313 함수 추출 실패"
+    body = local_func.group(1)
+    # 주석 제외한 실 코드만 검사
+    body_lines = body.splitlines()
+    code_lines = [l for l in body_lines if not _re.match(r"^\s*#", l)]
+    code_body = "\n".join(code_lines)
+    # SimpleInstall=1 인자 부재 (string literal)
+    assert "'SimpleInstall=1'" not in code_body, (
+        "Install-LocalPython313 의 $installArgs 에 'SimpleInstall=1' 잔존 — "
+        "PR #128: TargetDir 무시 보고로 제거 필요"
+    )
+    assert '"SimpleInstall=1"' not in code_body, (
+        "Install-LocalPython313 의 $installArgs 에 \"SimpleInstall=1\" 잔존"
+    )
+
+
+def test_install_ps1_uses_default_just_for_me_target_dir() -> None:
+    """Install-LocalPython313 이 ``DefaultJustForMeTargetDir`` 도 설정 (PR #128).
+
+    배경:
+        Python 인스톨러는 ``InstallAllUsers=0`` 시 ``TargetDir`` 대신
+        ``DefaultJustForMeTargetDir`` 를 우선 사용하는 환경 존재. 두 옵션 모두
+        지정해 어느 쪽이 사용돼도 동일 경로 보장.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None, "Install-LocalPython313 함수 추출 실패"
+    body = local_func.group(1)
+    assert "DefaultJustForMeTargetDir=" in body, (
+        "Install-LocalPython313 의 $installArgs 에 'DefaultJustForMeTargetDir=' 누락 — "
+        "PR #128: TargetDir 무시 환경 대응 미적용"
+    )
+    # TargetDir 도 여전히 존재 (제거되지 않음)
+    assert "TargetDir=" in body, "TargetDir 옵션 누락"
+
+
+def test_install_ps1_captures_installer_log() -> None:
+    """Install-LocalPython313 이 Python 인스톨러 로그를 capture (PR #128).
+
+    인스톨러 silent fail 진단을 위해 ``/log <file>`` 인자 추가 — 사용자가 실패
+    재현 시 로그 파일로 root cause 식별 가능.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    # /log 인자 + 로그 파일 변수
+    assert "'/log'" in body or '"/log"' in body, (
+        "/log 인자 누락 — Python 인스톨러 진단 로그 미캡처"
+    )
+    assert "$installLog" in body, (
+        "$installLog 변수 누락 — 로그 경로 미설정"
+    )
+
+
+def test_install_ps1_checks_fallback_python_location() -> None:
+    """Install-LocalPython313 이 TargetDir 미생성 시 기본 user 위치도 검사 (PR #128).
+
+    배경:
+        일부 환경에서 Python 인스톨러가 TargetDir 를 무시하고 기본 user 위치
+        (``%LocalAppData%\\Programs\\Python\\Python313\\``) 에 설치하는 경우 발견.
+        ``Test-Path $pyExe`` 만 검사하면 false negative.
+
+    PR #128 처방:
+        TargetDir 위치 미존재 시 ``$env:LocalAppData\\Programs\\Python\\Python313\\python.exe``
+        도 검사 → 발견 시 $pyExe / $pyDir 를 해당 경로로 갱신 후 진행.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    # LocalAppData 기본 위치 검사 키워드
+    assert "$env:LocalAppData" in body or "LocalAppData" in body, (
+        "Install-LocalPython313 에 기본 user 위치 ($env:LocalAppData) fallback 검사 누락"
+    )
+    assert "Programs\\Python\\Python313" in body or "Programs/Python/Python313" in body, (
+        "기본 user Python 경로 (Programs\\Python\\Python313) 미참조 — PR #128 fallback 미적용"
+    )
+    # python.exe 미발견 시 변수 갱신 + 진행
+    fallback_branch = _re.search(
+        r"if\s*\(\s*-not\s*\(\s*Test-Path\s+\$pyExe\s*\)\s*\).*?LocalAppData",
+        body, _re.DOTALL
+    )
+    assert fallback_branch is not None, (
+        "TargetDir 미생성 → LocalAppData fallback 분기 누락"
+    )
