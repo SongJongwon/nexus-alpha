@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Nexus Alpha Alpha installer — irm 한 줄 설치 (Windows PowerShell 5.1+).
 

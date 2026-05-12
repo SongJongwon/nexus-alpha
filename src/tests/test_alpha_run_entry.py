@@ -639,3 +639,56 @@ class _MockInput:
         if not self._responses:
             raise EOFError("MockInput exhausted")
         return self._responses.pop(0)
+
+
+# ---------------------------------------------------------------------------
+# PR #121 — UTF-8 BOM 회귀 차단 (한국어 Windows 에서 즉시 닫힘 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_has_utf8_bom() -> None:
+    """install.ps1 이 UTF-8 BOM 으로 시작해야 한다 (PR #121).
+
+    배경 (사용자 보고 + diagnose):
+        Windows PowerShell 5.1 의 기본 .ps1 인코딩은 *ANSI/OEM 코드페이지* —
+        한국 Windows 의 경우 CP949. UTF-8 BOM 이 없는 ``.ps1`` 파일을 한글
+        Windows 가 ANSI 로 해석 시 mojibake 발생:
+            "irm 한 줄 설치"  →  "irm ??以??ㅼ튂"
+
+        mojibake 된 텍스트는 PowerShell parser 에 syntax error 로 보임 →
+        스크립트 시작 전 abort → ``irm | iex`` 시나리오에서 *창이 즉시 닫힘*.
+
+    PR #121 처방:
+        파일 첫 3 bytes 에 UTF-8 BOM (``EF BB BF``) 추가. 모든 PowerShell 버전이
+        이를 인식 → 무조건 UTF-8 로 해석 → 한글 mojibake 0건.
+
+    부수 효과:
+        ``[System.Management.Automation.Language.Parser]::ParseFile`` 의 encoding
+        자동 detect false positive 결함도 해결 (PR #100 era 의 ParseInput UTF8 우회
+        workaround 더 이상 필요 없음).
+
+    회귀 차단 — 본 테스트가 깨지면 한글 Windows 사용자가 ``irm | iex`` 시 다시
+    창 즉시 닫힘 증상 재발.
+    """
+    bytes_data = INSTALL_PS1_PATH.read_bytes()
+    assert len(bytes_data) >= 3, "install.ps1 크기가 BOM 보다 작음"
+    bom_marker = bytes_data[:3]
+    assert bom_marker == b"\xef\xbb\xbf", (
+        f"install.ps1 첫 3 bytes 가 UTF-8 BOM 이 아님 (실제: {bom_marker.hex()}). "
+        "한글 Windows 환경에서 mojibake → 창 즉시 닫힘 위험."
+    )
+
+
+def test_install_ps1_parses_via_default_powershell_encoding() -> None:
+    """install.ps1 본문이 UTF-8 BOM 포함 후 default ParseFile 로 정상 파싱 (PR #121 검증 강화).
+
+    BOM 이 있으면 PowerShell 의 어떤 reader 도 UTF-8 로 인식 → mojibake 0건.
+    본 테스트는 BOM 효과의 *간접 검증* — 파일 본문 첫 줄이 mojibake 없이
+    PowerShell comment block (``<#``) 으로 시작하는지 확인.
+    """
+    bytes_data = INSTALL_PS1_PATH.read_bytes()
+    # BOM 다음 첫 글자는 PowerShell comment block 시작 '<' 이어야 함
+    assert bytes_data[3:5] == b"<#", (
+        "BOM 다음 본문이 '<#' (PowerShell comment block) 으로 시작 안 함 — "
+        "BOM 또는 본문 손상"
+    )
