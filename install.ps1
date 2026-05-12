@@ -915,6 +915,60 @@ $INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다.
 }
 
 # ─── 3. 가상환경 + 의존성 ──────────────────────────────────────────────────
+# PR #131 — embeddable Python 자동 우회 helper: pip 부트스트랩 → virtualenv 설치 →
+# ``python -m virtualenv .venv`` 실행. 호출 시점:
+#   ① Install-EmbeddablePython 경유 (EMBEDDABLE flag 사전 set)
+#   ② Install-Venv 의 ``-m venv`` 가 ``No module named venv`` 으로 실패 시 자동 감지
+# 각 단계 idempotent — 이미 설치된 경우 skip.
+function Invoke-VirtualenvVenvCreation {
+    Write-Warn2 'virtualenv 으로 .venv 생성 중 (embeddable Python 우회 경로) ...'
+
+    # ① pip 검출 + 부트스트랩 (필요 시)
+    $pipCheck = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE `
+        -Arguments ($script:PYTHON_VENV_ARGS + @('-m', 'pip', '--version'))
+    if (-not $pipCheck.Succeeded) {
+        Write-Warn2 'pip 미설치 — get-pip.py 부트스트랩 중 (~2 MB) ...'
+        $getPipPath = Join-Path $env:TEMP 'nexus-alpha-venv-get-pip.py'
+        try {
+            $oldProg = $ProgressPreference
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile $getPipPath -UseBasicParsing
+            $ProgressPreference = $oldProg
+        } catch {
+            Fail "get-pip.py 다운로드 실패: $($_.Exception.Message)"
+        }
+        $bootArgs = $script:PYTHON_VENV_ARGS + @($getPipPath, '--no-warn-script-location', '--quiet')
+        $bootResult = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE -Arguments $bootArgs
+        Remove-Item -Path $getPipPath -ErrorAction SilentlyContinue
+        if (-not $bootResult.Succeeded) {
+            Fail "pip 부트스트랩 실패 (exit=$($bootResult.ExitCode))"
+        }
+        Write-Ok 'pip 부트스트랩 완료'
+    }
+
+    # ② virtualenv 패키지 검출 + 설치 (필요 시)
+    $venvPkgCheck = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE `
+        -Arguments ($script:PYTHON_VENV_ARGS + @('-m', 'virtualenv', '--version'))
+    if (-not $venvPkgCheck.Succeeded) {
+        Write-Warn2 'virtualenv 패키지 설치 (1회) ...'
+        $installArgs = $script:PYTHON_VENV_ARGS + @('-m', 'pip', 'install', '--quiet', '--no-warn-script-location', 'virtualenv')
+        $installResult = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE -Arguments $installArgs
+        if (-not $installResult.Succeeded) {
+            Fail "virtualenv 패키지 설치 실패 (exit=$($installResult.ExitCode), output: $($installResult.StdOut))"
+        }
+        Write-Ok 'virtualenv 패키지 설치 완료'
+    }
+
+    # ③ virtualenv 으로 .venv 생성
+    $venvArgs = $script:PYTHON_VENV_ARGS + @('-m', 'virtualenv', '.venv')
+    & $script:PYTHON_VENV_EXE $venvArgs | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        $cmdStr = ("$($script:PYTHON_VENV_EXE) " + ($venvArgs -join ' ')).Trim()
+        Fail "가상환경 생성 실패 ($cmdStr)"
+    }
+    Write-Ok '가상환경 생성: .venv (via virtualenv, embeddable Python 우회)'
+}
+
 function Install-Venv {
     Write-Step 'Step 3/6 — 가상환경 + 의존성 설치'
 
@@ -937,26 +991,41 @@ function Install-Venv {
         Push-Location $INSTALL_DIR
         try {
             if ($script:PYTHON_VENV_EMBEDDABLE) {
-                # PR #129 — embeddable Python: venv 모듈 미포함 (라이브 검증). virtualenv
-                # 패키지 (Install-EmbeddablePython 에서 pre-install 완료) 가 자체 구현으로
-                # full .venv 생성 (pip 포함).
-                Write-Warn2 'Embeddable Python — virtualenv 으로 .venv 생성 중 ...'
-                $venvCmdArgs = @('-m', 'virtualenv', '.venv')
-                & $script:PYTHON_VENV_EXE $venvCmdArgs | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Fail "가상환경 생성 실패 (embeddable: $($script:PYTHON_VENV_EXE) -m virtualenv .venv)"
-                }
-                Write-Ok '가상환경 생성: .venv (via virtualenv, embeddable Python)'
+                # PR #129 — embeddable Python (Install-EmbeddablePython 경유) 은 virtualenv 가
+                # pre-install 됐으므로 바로 사용 가능.
+                Invoke-VirtualenvVenvCreation
             } else {
-                # 표준 경로: ``python -m venv .venv`` 또는 ``py -3.13 -m venv .venv``
+                # 표준 경로 시도: ``python -m venv .venv`` 또는 ``py -3.13 -m venv .venv``
+                # PR #131 — 실패 시 stderr 분석 → ``No module named venv`` 시 자동 복구.
+                # 배경 (사용자 보고): 이전 PR #129 의 embeddable Python (``$INSTALL_DIR\python313\``)
+                #   이 py launcher 로 resolve 되어 ``py -3.13`` 검출 통과했으나 venv 모듈 미포함.
+                #   ``$script:PYTHON_VENV_EMBEDDABLE`` flag 는 *그 세션* 한정 (irm|iex 새 실행 시 초기화).
+                $stderrFile = Join-Path $env:TEMP "nexus-alpha-venv-create-$([System.Guid]::NewGuid().ToString('N')).log"
                 $venvCmdArgs = $script:PYTHON_VENV_ARGS + @('-m', 'venv', '.venv')
-                & $script:PYTHON_VENV_EXE $venvCmdArgs | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    $cmdStr = ("$($script:PYTHON_VENV_EXE) " + ($venvCmdArgs -join ' ')).Trim()
-                    Fail "가상환경 생성 실패 ($cmdStr)"
+                & $script:PYTHON_VENV_EXE $venvCmdArgs 2>$stderrFile | Out-Null
+                $venvExit = $LASTEXITCODE
+                $venvErr = ''
+                if (Test-Path $stderrFile) {
+                    $venvErr = Get-Content -Path $stderrFile -Raw -ErrorAction SilentlyContinue
+                    if (-not $venvErr) { $venvErr = '' }
                 }
-                $cmdSummary = ("$($script:PYTHON_VENV_EXE) " + (($script:PYTHON_VENV_ARGS + @('-m','venv')) -join ' ')).Trim()
-                Write-Ok "가상환경 생성: .venv (via $cmdSummary)"
+                Remove-Item -Path $stderrFile -ErrorAction SilentlyContinue
+
+                if ($venvExit -eq 0) {
+                    $cmdSummary = ("$($script:PYTHON_VENV_EXE) " + (($script:PYTHON_VENV_ARGS + @('-m','venv')) -join ' ')).Trim()
+                    Write-Ok "가상환경 생성: .venv (via $cmdSummary)"
+                } elseif ($venvErr -match 'No module named venv') {
+                    # PR #131 — embeddable-style Python 자동 감지: venv 모듈 부재.
+                    # ``py -3.13`` 등이 embeddable Python 으로 resolve 된 경우 cover.
+                    Write-Warn2 "검출된 Python 에 venv 모듈 미포함 (embeddable 추정 — $($script:PYTHON_VENV_EXE) $($script:PYTHON_VENV_ARGS -join ' '))"
+                    Write-Warn2 'virtualenv 패키지로 자동 전환 (pip / virtualenv 미설치 시 자동 설치)'
+                    $script:PYTHON_VENV_EMBEDDABLE = $true
+                    Invoke-VirtualenvVenvCreation
+                } else {
+                    $cmdStr = ("$($script:PYTHON_VENV_EXE) " + ($venvCmdArgs -join ' ')).Trim()
+                    $errHint = if ($venvErr) { "`nstderr: $($venvErr.TrimEnd())" } else { '' }
+                    Fail "가상환경 생성 실패 ($cmdStr)$errHint"
+                }
             }
         } finally {
             Pop-Location

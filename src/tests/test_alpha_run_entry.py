@@ -1335,6 +1335,98 @@ def test_install_ps1_captures_installer_log() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PR #131 — Install-Venv 의 "No module named venv" 자동 감지 + virtualenv 전환
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_has_invoke_virtualenv_venv_helper() -> None:
+    """install.ps1 이 ``Invoke-VirtualenvVenvCreation`` helper 정의 (PR #131).
+
+    배경 (사용자 보고):
+        Step 1/6 통과 (``py -3.13 검출: Python 3.13.7``) + Step 2/6 통과 후
+        Step 3/6 에서 ``C:\\Users\\work\\nexus-alpha\\python313\\python.exe:
+        No module named venv`` 으로 실패.
+
+        ``py -3.13`` 이 *이전 PR #129 설치의 embeddable Python* 경로로 resolve.
+        embeddable 은 venv 모듈 미포함 (라이브 검증). ``$script:PYTHON_VENV_EMBEDDABLE``
+        flag 는 *그 세션 한정* 이라 새 ``irm | iex`` 실행 시 초기화 → Test-Prereqs 가
+        ``py -3.13`` 검출 통과 후 EMBEDDABLE flag 못 받음 → Install-Venv 가 표준
+        ``-m venv`` 사용 → 실패.
+
+    PR #131 처방:
+        ``Invoke-VirtualenvVenvCreation`` helper 신설 — pip / virtualenv 미설치
+        시 자동 부트스트랩 + 설치 후 ``-m virtualenv .venv`` 실행. detection path
+        와 무관하게 venv 모듈 없는 모든 Python 에서 동작.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    assert "function Invoke-VirtualenvVenvCreation" in text, (
+        "Invoke-VirtualenvVenvCreation helper 정의 누락"
+    )
+    # 핵심 3단계 키워드
+    assert "get-pip.py" in text, "get-pip.py 부트스트랩 단계 누락"
+    assert "pip', 'install'" in text and "'virtualenv'" in text, (
+        "pip install virtualenv 단계 누락"
+    )
+    assert "-m', 'virtualenv', '.venv'" in text or "-m virtualenv .venv" in text, (
+        "python -m virtualenv .venv 실행 단계 누락"
+    )
+    # idempotent — pip 검출, virtualenv 검출 분기
+    assert "pip', '--version'" in text, "pip 검출 (--version) 누락 — idempotent 미보장"
+    assert "virtualenv', '--version'" in text, "virtualenv 검출 (--version) 누락"
+
+
+def test_install_ps1_install_venv_detects_no_module_venv_auto_recovery() -> None:
+    """Install-Venv 가 ``No module named venv`` stderr 감지 시 자동 recovery (PR #131).
+
+    표준 ``-m venv`` 경로에서 실패 → stderr 분석 → embeddable-style Python 자동
+    감지 → ``Invoke-VirtualenvVenvCreation`` 호출. 사용자 개입 없이 복구.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # stderr 파일 redirect 패턴 (NativeCommandError 회피 + 파싱)
+    assert "2>$stderrFile" in body or "stderrFile" in body, (
+        "Install-Venv 에 stderr 파일 redirect 누락 — \"No module named venv\" 검출 불가"
+    )
+    # "No module named venv" 매칭 분기
+    assert "No module named venv" in body, (
+        "\"No module named venv\" 패턴 매칭 누락 — 자동 recovery 분기 없음"
+    )
+    # Invoke-VirtualenvVenvCreation 호출 (auto-recovery)
+    assert "Invoke-VirtualenvVenvCreation" in body, (
+        "Install-Venv 에서 Invoke-VirtualenvVenvCreation helper 호출 누락"
+    )
+    # EMBEDDABLE flag 자동 set
+    assert "$script:PYTHON_VENV_EMBEDDABLE = $true" in body, (
+        "auto-recovery 분기에서 EMBEDDABLE flag set 누락"
+    )
+
+
+def test_install_ps1_install_venv_uses_helper_for_pre_flagged_embeddable() -> None:
+    """Install-Venv 의 사전 EMBEDDABLE flag 분기도 helper 사용 (PR #131 일관성).
+
+    Install-EmbeddablePython 경유 (EMBEDDABLE 사전 set) 와 자동 감지 (Install-Venv
+    내부) 두 경로 모두 *같은* helper 사용 — DRY + 일관 동작 보장.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # 두 경로 모두에서 helper 호출
+    assert body.count("Invoke-VirtualenvVenvCreation") >= 2, (
+        f"Invoke-VirtualenvVenvCreation 호출 횟수 부족 ({body.count('Invoke-VirtualenvVenvCreation')} 회) — "
+        "사전 EMBEDDABLE 분기 + auto-detect 분기 양쪽 (2회) 필요"
+    )
+
+
+# ---------------------------------------------------------------------------
 # PR #130 — Get-Repo 비-git 디렉토리 자동 recovery
 # ---------------------------------------------------------------------------
 
@@ -1551,9 +1643,10 @@ def test_install_ps1_install_venv_uses_virtualenv_for_embeddable() -> None:
         Embeddable Python 은 venv 모듈 미포함 → ``python -m venv`` 실패.
         ``python -m virtualenv`` (Install-EmbeddablePython 에서 pre-install) 로 분기.
 
-    PR #129 처방:
+    PR #129/#131 처방:
         Install-Venv 가 ``$script:PYTHON_VENV_EMBEDDABLE`` 플래그 검사 → embeddable
-        case 면 ``-m virtualenv`` 명령, 일반 case 면 ``-m venv`` 명령 사용.
+        case 면 ``Invoke-VirtualenvVenvCreation`` helper (``-m virtualenv`` 내부 호출) 사용,
+        일반 case 면 ``-m venv`` 명령 사용.
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
     import re as _re
@@ -1566,12 +1659,17 @@ def test_install_ps1_install_venv_uses_virtualenv_for_embeddable() -> None:
     assert "$script:PYTHON_VENV_EMBEDDABLE" in body, (
         "Install-Venv 에서 PYTHON_VENV_EMBEDDABLE 플래그 검사 누락"
     )
-    # virtualenv 명령 + venv 명령 *둘 다* 존재 (분기)
-    assert "'-m', 'virtualenv'" in body or "-m virtualenv" in body, (
-        "embeddable 분기의 ``-m virtualenv`` 호출 누락"
+    # PR #131 — embeddable 분기는 helper 사용 (``-m virtualenv`` 는 helper 함수 안)
+    assert "Invoke-VirtualenvVenvCreation" in body, (
+        "embeddable 분기의 helper (Invoke-VirtualenvVenvCreation) 호출 누락"
     )
+    # 표준 분기의 ``-m venv``
     assert "'-m', 'venv'" in body or "-m venv" in body, (
         "표준 분기의 ``-m venv`` 호출 누락"
+    )
+    # helper 함수 본문에 ``-m virtualenv`` 실제 명령 존재 (전체 파일 검색)
+    assert "'-m', 'virtualenv', '.venv'" in text or "-m virtualenv .venv" in text, (
+        "helper 함수의 ``python -m virtualenv .venv`` 실 호출 누락"
     )
 
 
