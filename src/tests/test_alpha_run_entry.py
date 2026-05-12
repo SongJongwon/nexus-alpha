@@ -854,44 +854,86 @@ def test_install_ps1_has_invoke_native_safely_helper() -> None:
     )
 
 
-def test_install_ps1_uses_py_install_happy_path() -> None:
-    """install.ps1 이 py launcher 의 ``py install 3.13`` 신기능 활용 (PR #125 happy path).
+def test_install_ps1_py_install_3_13_removed() -> None:
+    """install.ps1 의 py launcher 분기에서 ``py install 3.13`` 명령 제거 (PR #126).
 
-    배경:
-        py launcher 3.11+ 는 ``py install <version>`` 명령으로 Python 자동 설치 지원.
-        py launcher 의 안내 메시지 ("Try running 'py install 3.13'.") 를 *프로그래밍 적으로*
-        실행 — happy path 2.
+    배경 (PR #126 결정):
+        PR #125 가 ``py install 3.13`` 을 happy path 2 단계로 도입했으나, 라이브
+        PowerShell 시뮬레이션 중 *hang* 발생 — py launcher 가 일부 환경에서
+        Microsoft Store 인증 / Windows Hello prompt / 네트워크 throttle 등으로
+        진행 불가. ``irm | iex`` 시나리오에서 사용자 창이 멈춤 → UX 최악.
 
-    PR #125 fallback chain:
-        ① ``py -3.13 --version`` 시도 (3.13 이미 설치 시 즉시 성공)
-        ② 실패 시 ``py install 3.13`` 자동 시도 (py launcher 3.11+ 신기능)
-        ③ 그래도 실패 시 ``Install-LocalPython313`` (최후 안전망)
+    PR #126 처방:
+        ``py install 3.13`` 단계 *완전 제거* — fallback chain 단순화:
+        ① ``py -3.13 --version`` 검출 (3.13 이미 설치 시 happy path)
+        ② 실패 시 ``Install-LocalPython313`` (deterministic, 시스템 미터치)
 
-    회귀 차단 — py install 시도 단계 누락 시 사용자가 직접 ``py install 3.13`` 입력
-    강요됨 (UX 저하).
+        deterministic = 외부 변수 (py 의 store 상태, network) 의존 0. generic.
+
+    회귀 차단 — 본 테스트가 깨지면 ``py install`` 단계 부활 → hang risk 재발.
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
-    # py install 3.13 자동 시도 (happy path 2)
-    assert "'install', '3.13'" in text or "install 3.13" in text, (
-        "py install 3.13 자동 시도 명령 누락 — happy path 2 미구현"
-    )
-    # 3-단 fallback 정상 chain 검증
     import re as _re
-    py_branch_match = _re.search(
-        r"py -3.13.* launcher 시도.*?Install-LocalPython313",
+    # 주석 제외 (PR #126 의 결정 사유 설명은 주석 안에 OK)
+    lines = text.splitlines()
+    code_lines = [l for l in lines if not _re.match(r"^\s*#", l)]
+    code_text = "\n".join(code_lines)
+    # 실 명령으로 'py install 3.13' 또는 array 인자 형식이 호출되면 안 됨
+    assert "'install', '3.13'" not in code_text, (
+        "실 코드에 py install 3.13 인자 array 잔존 — PR #126 결정 (hang risk) 미반영"
+    )
+    # 또한 ``py install 3.13`` literal 도 호출 안 함
+    # (주석 안에는 OK — code_text 에서만 검사)
+    # ``& py install 3.13`` / ``py install 3.13`` 직접 호출 패턴
+    invoke_pattern = _re.search(r"(?:&\s*)?py\s+install\s+3\.13", code_text)
+    assert invoke_pattern is None, (
+        "실 코드에 ``py install 3.13`` 직접 호출 잔존 — PR #126 hang risk 결정 미반영"
+    )
+
+
+def test_install_ps1_py_branch_is_two_step_only() -> None:
+    """3.14+ 의 py launcher 분기가 2-단 (detect 또는 LocalPython313) 만 사용 (PR #126).
+
+    PR #125 의 3-단 chain (detect → py install → LocalPython313) 에서 중간 단계
+    제거 → 분기 단순화 + 외부 변수 의존 제거.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    # ``minor -ge 14`` 분기 본문 추출 — 다음 ``} else {`` 또는 ``}`` 까지
+    branch_match = _re.search(
+        r"elseif\s*\(.*?minor\s+-ge\s+14.*?\)\s*\{(.*?)\n\s{8}\}",
         text, _re.DOTALL
     )
-    assert py_branch_match is not None, (
-        "py launcher fallback chain 3-단 (py -3.13 → py install → LocalPython313) 미연결"
+    assert branch_match is not None, (
+        "3.14+ elseif 분기 본문 추출 실패 — 분기 구조 변경 가능성"
+    )
+    body = branch_match.group(1)
+    # 주석 줄 제외 (코멘트 안의 "Install-LocalPython313" 멘션은 카운트 안 함)
+    body_lines = body.splitlines()
+    code_lines = [l for l in body_lines if not _re.match(r"^\s*#", l)]
+    code_body = "\n".join(code_lines)
+    # 본문에 정확히 1 회의 ``Install-LocalPython313`` (실 호출)
+    assert code_body.count("Install-LocalPython313") == 1, (
+        f"3.14+ 분기에 Install-LocalPython313 호출 정확히 1회여야 함 "
+        f"(현재: {code_body.count('Install-LocalPython313')})"
+    )
+    # py install 3.13 패턴 부재 (코드 영역)
+    assert "'install', '3.13'" not in code_body, (
+        "3.14+ 분기에 py install 3.13 인자 array 잔존 — PR #126 미반영"
     )
 
 
 def test_install_ps1_no_native_2andredirect_outstring_pattern() -> None:
-    """install.ps1 이 ``2>&1 | Out-String`` 패턴 사용 안 함 (PR #125 회귀 차단).
+    """install.ps1 이 ``2>&1 | Out-String`` 패턴 사용 안 함 (PR #125 + #126 회귀 차단).
 
     배경:
-        해당 패턴은 NativeCommandError 트리거의 직접 원인 — Helper 사용으로 대체됨.
+        ``2>&1`` 은 ``$ErrorActionPreference = 'Stop'`` 하에서 NativeCommandError
+        트리거 — Helper / EAP 격리 / stderr file redirect 으로 대체.
         주석 (``# 배경: ...``) 에서 패턴 설명은 OK — 실 호출 안 함.
+
+    PR #126 확장:
+        ``2>&1 | Out-String`` 뿐 아니라 ``2>&1`` 단독 사용도 실 코드에서 부재해야 함.
+        대안: ``2>$null`` (discard) 또는 ``2>$tempFile`` (file redirect).
     """
     text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
     import re as _re
@@ -903,5 +945,269 @@ def test_install_ps1_no_native_2andredirect_outstring_pattern() -> None:
     ]
     code_text = "\n".join(code_lines)
     assert "2>&1 | Out-String" not in code_text, (
-        "실 코드에 '2>&1 | Out-String' 잔존 — Invoke-NativeSafely 로 교체 필요"
+        "실 코드에 '2>&1 | Out-String' 잔존 — Invoke-NativeSafely / EAP 격리 / file redirect 로 교체 필요"
+    )
+    # PR #126 — ``2>&1`` 단독 사용도 부재 (NativeCommandError 회피 100% 보장)
+    # ``2>&1`` 패턴 (앞뒤 글자 무관) 검색
+    bare_2andredirect = _re.search(r"2>&1", code_text)
+    assert bare_2andredirect is None, (
+        f"실 코드에 '2>&1' (단독) 잔존 — PR #126: NativeCommandError 100% 회피 위해 "
+        f"'2>$null' 또는 '2>$file' 사용 필요 (잔존 위치: {bare_2andredirect.group(0) if bare_2andredirect else 'unknown'})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR #126 — 종합 시나리오 검증 (모든 native command 경로 NativeCommandError 회피)
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_invoke_native_safely_has_eap_isolation() -> None:
+    """``Invoke-NativeSafely`` 함수 내부에서 EAP 격리 — 외부 ``Stop`` 영향 0 (PR #126).
+
+    배경 (사용자 다른 PC 보고):
+        ``2>$null`` + try/catch 만으로는 일부 환경에서 NativeCommandError 회피 불충분.
+        외부 ``$ErrorActionPreference = 'Stop'`` 가 *함수 내부에도 전파* — native command
+        의 stderr / non-zero exit 가 throw → catch 진입 → 결과 빈 객체 + 분기 오작동.
+
+    PR #126 처방:
+        함수 진입 시 ``$savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'``
+        + finally 에서 복원. 외부 EAP 와 *완전 분리* → native command stderr 가 100%
+        조용히 처리됨.
+
+    회귀 차단 — 본 테스트가 깨지면 다른 PC 에서 동일 NativeCommandError 재발.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Invoke-NativeSafely\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None, "Invoke-NativeSafely 함수 본문 추출 실패"
+    body = func_match.group(1)
+    # EAP 저장 + Continue 로 설정 + finally 복원 — 3 키워드 모두 필수
+    assert "$savedEAP" in body or "savedEAP" in body, (
+        "Invoke-NativeSafely 가 외부 EAP 저장 안 함 — finally 복원 불가"
+    )
+    assert "$ErrorActionPreference = 'Continue'" in body, (
+        "Invoke-NativeSafely 함수 본문에 EAP='Continue' 명시 누락 — "
+        "외부 'Stop' 영향 받아 throw 가능"
+    )
+    assert "finally" in body, (
+        "Invoke-NativeSafely 에 finally 블록 누락 — 예외 발생 시 EAP 복원 실패"
+    )
+    # EAP 복원 패턴 — finally 안에서 saved 값으로 되돌림
+    restore_pattern = _re.search(
+        r"finally\s*\{[^}]*\$ErrorActionPreference\s*=\s*\$savedEAP",
+        body, _re.DOTALL
+    )
+    assert restore_pattern is not None, (
+        "finally 블록에서 EAP 복원 (=$savedEAP) 누락 — 함수 종료 후 EAP 영구 변경 위험"
+    )
+
+
+def test_install_ps1_test_prereqs_has_eap_isolation() -> None:
+    """``Test-Prereqs`` 함수 전체에 EAP 격리 wrapper (PR #126).
+
+    배경:
+        ``Invoke-NativeSafely`` 내부 격리만으로는 *직접 호출되는* native command
+        (``& git --version``, ``gh --version`` 등) 의 NativeCommandError 회피 불가.
+        Test-Prereqs 전체를 EAP=Continue 안에서 실행 → defense-in-depth.
+
+    PR #126 처방:
+        Test-Prereqs 본문 시작에서 ``$savedEAPPrereqs = $ErrorActionPreference;
+        $ErrorActionPreference = 'Continue'`` + 함수 끝 finally 에서 복원.
+
+    회귀 차단 — Test-Prereqs 내 native command 의 stderr 가 외부 catch 진입 → Fail
+    호출 → 사용자 창 자동 닫힘 가능.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Test-Prereqs\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None, "Test-Prereqs 함수 본문 추출 실패"
+    body = func_match.group(1)
+    assert "$savedEAPPrereqs" in body or "savedEAPPrereqs" in body, (
+        "Test-Prereqs 가 외부 EAP 저장 안 함 — finally 복원 불가"
+    )
+    assert "$ErrorActionPreference = 'Continue'" in body, (
+        "Test-Prereqs 본문에 EAP='Continue' 격리 누락"
+    )
+    # finally 블록 존재 — 정상 종료 / Fail / 예외 모두 cover
+    assert "finally" in body, (
+        "Test-Prereqs 에 finally 블록 누락 — EAP 복원 실패 시 외부 영구 영향"
+    )
+    # 복원 패턴
+    restore_pattern = _re.search(
+        r"finally\s*\{[^}]*\$ErrorActionPreference\s*=\s*\$savedEAPPrereqs",
+        body, _re.DOTALL
+    )
+    assert restore_pattern is not None, (
+        "Test-Prereqs finally 블록의 EAP 복원 누락 — 함수 종료 후 외부 EAP 변경 위험"
+    )
+
+
+def test_install_ps1_smoke_test_uses_safe_pattern() -> None:
+    """smoke test 의 venv python 호출도 NativeCommandError 안전 패턴 사용 (PR #126).
+
+    배경:
+        Step 5/6 의 smoke test (``$smoke | & $venvPython - 2>&1``) 도 외부 catch
+        에서 abort 가능 — 사용자가 import 에러를 못 보고 ``Fail`` 즉시 호출됨.
+
+    PR #126 처방:
+        ① EAP 격리 (Continue) + ② stderr 를 *file* 로 redirect (``2>$stderrFile``)
+        → pipeline 미경유 → NativeCommandError 미발생. 출력 분리 capture.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Test-Install\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None, "Test-Install 함수 본문 추출 실패"
+    body = func_match.group(1)
+    # 주석 줄 제외 — 코멘트 안의 패턴 멘션은 카운트 안 함
+    body_lines = body.splitlines()
+    code_lines = [l for l in body_lines if not _re.match(r"^\s*#", l)]
+    code_body = "\n".join(code_lines)
+    # EAP 격리
+    assert "$savedEAPSmoke" in body or "savedEAPSmoke" in body, (
+        "Test-Install (smoke test) 에 EAP 격리 누락"
+    )
+    assert "$ErrorActionPreference = 'Continue'" in code_body, (
+        "Test-Install 본문에 EAP='Continue' 격리 누락"
+    )
+    # stderr file redirect 패턴
+    assert "2>$stderrFile" in code_body or "2>$stderr" in code_body, (
+        "Test-Install 에 stderr file redirect 누락 — '2>&1' 미회피"
+    )
+    # 2>&1 단독 사용 부재 (코드 영역에서)
+    assert "2>&1" not in code_body, (
+        "Test-Install 본문 코드에 '2>&1' 잔존 — PR #126 stderr file redirect 미적용"
+    )
+
+
+def test_install_ps1_all_native_calls_use_safe_helper_or_redirect() -> None:
+    """모든 native command 호출이 안전 패턴 (helper / file redirect / EAP 격리) 사용 (PR #126).
+
+    배경:
+        사용자 보고: "수정 후 다른 pc에서 실행했는데 이렇게 나온다. 이문제는 왜 해결을
+        안해주는거야? 모든 경우의 수를 생각해서 테스트 검증이필요할듯하다"
+
+    PR #126 처방 (종합 회귀 차단):
+        - ``& python --version`` / ``& py -3.13 --version`` / ``& $existingVenvPython
+          --version`` 등 모든 ``--version`` query 는 ``Invoke-NativeSafely`` 사용
+        - ``& git clone`` / ``& git fetch`` / ``& git reset`` 등은 ``| Out-Null`` 사용
+          (Out-Null 은 NativeCommandError 미트리거)
+        - ``Test-Prereqs`` 본문 전체 EAP=Continue 격리 (defense-in-depth)
+        - smoke test 는 stderr file redirect + EAP 격리
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # version query 가 직접 호출 (helper 미경유) 형태로 잔존하면 안 됨.
+    # 패턴: ``& <executable> --version`` 가 ``Invoke-NativeSafely`` 호출 직전이 아닌
+    # 또는 ``| Out-Null`` 없이 단독 사용된 경우 위험.
+    import re as _re
+    lines = text.splitlines()
+    code_lines = [l for l in lines if not _re.match(r"^\s*#", l)]
+    code_text = "\n".join(code_lines)
+    # 직접 ``& python --version`` 호출이 helper 미경유로 잔존 안 함
+    direct_python_version = _re.search(
+        r"&\s+python\s+--version", code_text
+    )
+    assert direct_python_version is None, (
+        "실 코드에 '& python --version' 직접 호출 잔존 — Invoke-NativeSafely 필요"
+    )
+    # ``& py -3.13 --version`` 직접 호출도 부재 (Invoke-NativeSafely 경유)
+    direct_py_version = _re.search(
+        r"&\s+py\s+-3\.13\s+--version", code_text
+    )
+    assert direct_py_version is None, (
+        "실 코드에 '& py -3.13 --version' 직접 호출 잔존 — Invoke-NativeSafely 필요"
+    )
+    # ``& $existingVenvPython --version`` 도 부재 (Invoke-NativeSafely 경유)
+    direct_venv_version = _re.search(
+        r"&\s+\$existingVenvPython\s+--version", code_text
+    )
+    assert direct_venv_version is None, (
+        "실 코드에 '& $existingVenvPython --version' 직접 호출 잔존 — Invoke-NativeSafely 필요"
+    )
+    # ``& $pyExe --version`` 도 부재 (Install-LocalPython313 내부도 helper 경유)
+    direct_pyexe_version = _re.search(
+        r"&\s+\$pyExe\s+--version", code_text
+    )
+    assert direct_pyexe_version is None, (
+        "실 코드에 '& $pyExe --version' 직접 호출 잔존 — Invoke-NativeSafely 필요"
+    )
+
+
+def test_install_ps1_native_safely_helper_called_multiple_times() -> None:
+    """Invoke-NativeSafely 가 모든 native query 시나리오에서 호출됨 (PR #126).
+
+    PR #126 호출 시나리오 (최소):
+        1. Test-Prereqs: git --version
+        2. Test-Prereqs: 기존 .venv python --version
+        3. Test-Prereqs: 시스템 python --version
+        4. Test-Prereqs: py -3.13 --version (3.14+ 분기)
+        5. Install-Python313ViaWinget: py -3.13 --version (winget 후 검증)
+        6. Install-LocalPython313: $pyExe --version (idempotent 재사용 확인)
+        7. Install-LocalPython313: $pyExe --version (설치 후 검증)
+
+    최소 7회 호출 (defensive coverage).
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 정의 1회 + 호출 N회 = 총 (N+1) 발생
+    occurrences = text.count("Invoke-NativeSafely")
+    assert occurrences >= 8, (
+        f"Invoke-NativeSafely 발생 횟수 부족 ({occurrences} 회) — "
+        "최소 1 정의 + 7 호출 (PR #126 종합 시나리오) 필요"
+    )
+
+
+def test_install_ps1_powershell_parses_cleanly() -> None:
+    """install.ps1 이 PowerShell parser 로 정상 토큰화 (PR #126 syntax 회귀 차단).
+
+    배경:
+        PR #121 의 BOM 추가 / 향후 인코딩 변경 등으로 token error 발생 시 ``irm | iex``
+        시나리오에서 사용자 창이 즉시 닫힘 (no actionable error).
+
+    PR #126 검증:
+        ``[System.Management.Automation.PSParser]::Tokenize`` 가 parse 에러 0 으로
+        완료. 토큰 수도 합리적 범위 (최소 1000) — 빈 파일 / 손상 파일 조기 발견.
+    """
+    import subprocess
+
+    # PowerShell parse 검증 — Windows only (CI on Windows runner)
+    if sys.platform != "win32":
+        pytest.skip("PowerShell parse 검증은 Windows 한정")
+
+    # PowerShell 5.1 의 Get-Content -Raw 는 system codepage 사용 → 한국어 Windows 에서
+    # UTF-8 파일을 CP949 로 읽으면 garbled 토큰화 됨. 명시적 UTF-8 ReadAllText 사용.
+    script = (
+        f'$ErrorActionPreference = "Stop"; '
+        f'$text = [System.IO.File]::ReadAllText("{INSTALL_PS1_PATH}", [System.Text.Encoding]::UTF8); '
+        f'$errors = $null; '
+        f'$tokens = [System.Management.Automation.PSParser]::Tokenize($text, [ref]$errors); '
+        f'if ($errors -and $errors.Count -gt 0) {{ '
+        f'  Write-Host ("PARSE_ERRORS: " + $errors.Count); '
+        f'  $errors | ForEach-Object {{ Write-Host $_.Message }}; '
+        f'  exit 1 '
+        f'}}; '
+        f'Write-Host ("TOKENS: " + $tokens.Count)'
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, (
+        f"PowerShell parse 실패 (exit={result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "TOKENS:" in result.stdout, (
+        f"PowerShell parse 결과에 TOKENS 키워드 누락: {result.stdout}"
+    )
+    # 토큰 수 합리성 (빈 파일 회귀 차단)
+    import re
+    token_match = re.search(r"TOKENS:\s*(\d+)", result.stdout)
+    assert token_match is not None, f"TOKENS 라인 파싱 실패: {result.stdout}"
+    token_count = int(token_match.group(1))
+    assert token_count >= 1000, (
+        f"PowerShell 토큰 수 비정상 ({token_count}) — 파일 손상 / 비정상 단축 가능"
     )
