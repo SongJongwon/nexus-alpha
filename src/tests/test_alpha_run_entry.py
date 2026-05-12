@@ -1335,6 +1335,97 @@ def test_install_ps1_captures_installer_log() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PR #130 — Get-Repo 비-git 디렉토리 자동 recovery
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_get_repo_recovers_from_non_git_install_dir() -> None:
+    """Get-Repo 가 ``$INSTALL_DIR`` 존재하지만 .git 없을 때 자동 recovery (PR #130).
+
+    배경 (사용자 보고):
+        Install-LocalPython313 / Install-EmbeddablePython 의 이전 시도가 실패해도
+        ``$INSTALL_DIR\\python313\\`` 폴더는 남음. 다음 실행 시 Get-Repo 의 안전
+        체크가 "비-git 폴더 + 데이터 있음" 으로 판단 → ``Fail "이미 존재하지만 git
+        저장소가 아닙니다"``. 사용자는 수동으로 폴더 정리해야 함.
+
+    PR #130 처방:
+        - 폴더 내용이 *우리 artifact* (python313/, .env, .venv, *.broken.*) 만이면
+          자동 recovery: artifact 임시 백업 → 폴더 삭제 → fresh clone → artifact 복원
+        - 알 수 없는 사용자 데이터가 있으면 기존대로 Fail (사용자 데이터 보호)
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Get-Repo\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None, "Get-Repo 함수 추출 실패"
+    body = func_match.group(1)
+    # artifact 화이트리스트 (재사용 가능 항목)
+    assert "python313" in body, "Get-Repo 의 artifact whitelist 에 python313 누락"
+    assert ".env" in body or "envFile" in body, "Get-Repo 의 artifact whitelist 에 .env 누락"
+    # 알 수 없는 children 검사 로직
+    assert "unknownChildren" in body or "ourArtifacts" in body, (
+        "Get-Repo 에 우리 artifact vs 사용자 데이터 구분 로직 누락"
+    )
+    # 백업 + 복원 패턴
+    assert "tempBackup" in body or "nexus-alpha-recovery" in body, (
+        "Get-Repo 의 recovery 임시 백업 변수 누락"
+    )
+    # python313 backup + restore 양쪽 모두
+    assert body.count("python313") >= 3, (
+        f"Get-Repo 의 python313 참조 부족 ({body.count('python313')} 회) — "
+        "backup + restore + whitelist 최소 3 회 필요"
+    )
+
+
+def test_install_ps1_get_repo_still_fails_on_unknown_user_data() -> None:
+    """Get-Repo 가 알 수 없는 사용자 데이터 있을 때 *여전히* Fail (PR #130 안전).
+
+    화이트리스트에 없는 항목이 있으면 자동 정리 안 함 — 사용자 데이터 손실 방지.
+    actionable 한 수동 조치 안내 (백업 / 다른 경로) 포함.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Get-Repo\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # Fail 호출이 unknownChildren 분기에 존재
+    assert "Fail" in body, "Get-Repo 에 Fail 호출 누락"
+    # 안내 메시지 키워드
+    assert "수동 조치" in body or "Move-Item" in body or "NEXUS_ALPHA_DIR" in body, (
+        "Get-Repo 의 Fail 메시지에 수동 복구 안내 누락"
+    )
+
+
+def test_install_ps1_get_repo_preserves_python313_during_recovery() -> None:
+    """recovery 시 python313/ 폴더 임시 백업 후 복원 (PR #130).
+
+    이전 Install-LocalPython313 시도가 만든 Python 격리 폴더를 재사용해 시간 절약.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Get-Repo\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # Move-Item 으로 임시 백업 + Move-Item 으로 복원
+    move_count = body.count("Move-Item")
+    assert move_count >= 2, (
+        f"Get-Repo 의 Move-Item 호출 부족 ({move_count} 회) — "
+        "python313 백업 + 복원 (2회) 필요"
+    )
+    # 백업 dir → install dir 복원 순서
+    backup_pos = body.find("Move-Item -Path $pythonDir")
+    restore_pos = body.find("Move-Item -Path (Join-Path $tempBackup")
+    assert 0 < backup_pos < restore_pos, (
+        f"백업이 복원보다 앞에 있어야 함 (backup={backup_pos}, restore={restore_pos})"
+    )
+
+
+# ---------------------------------------------------------------------------
 # PR #129 — Embeddable Python fallback (MSI phantom install — Error 0x80070643 회피)
 # ---------------------------------------------------------------------------
 
