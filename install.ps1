@@ -67,48 +67,113 @@ function Fail {
     Write-Host ''
     Write-Host "✗ 설치 실패: $Message" -ForegroundColor Red
     Write-Host ''
+    # PR #120 — PowerShell 창 자동 닫힘 방지 (irm | iex 시나리오).
+    # NEXUS_ALPHA_NO_PAUSE=1 (CI 등 비인터랙티브) 시 즉시 종료.
+    if (-not $env:NEXUS_ALPHA_NO_PAUSE) {
+        Write-Host '계속하려면 아무 키나 누르세요 (창이 자동 닫히는 것을 방지합니다)...' -ForegroundColor DarkGray
+        try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }
+    }
     exit 1
 }
 
-# ─── PR #117 — Python 3.13 자동 설치 (winget) ────────────────────────────
-# 기존 Python 버전 (3.10/3.11/3.12/3.14 등) 은 *영향 없음* — Python 공식
-# 인스톨러는 메이저.마이너 버전별로 별도 디렉터리에 side-by-side 설치.
+# ─── PR #117/#120 — Python 3.13 자동 설치 (winget --scope user) ──────────
+# 핵심 보장:
+#   ① 기존 Python 버전 (3.10/3.11/3.12/3.14 등) *절대* 미영향 — ``-e`` exact match
+#      + Python 공식 인스톨러는 메이저.마이너 별 별도 디렉터리 (side-by-side)
+#   ② ``--scope user`` — 관리자 권한 불필요 (per-user 설치)
+#   ③ ``py -3.13`` 으로 호출 — PATH 갱신 의존성 0 (registry 기반 py launcher 사용)
+#   ④ try/catch + 상세 에러 메시지 + Fail 의 pause (창 닫힘 방지)
 # 본 함수 종료 시 ``$script:PYTHON_VENV_EXE='py'``, ``$script:PYTHON_VENV_ARGS=@('-3.13')``
 # 설정 → Install-Venv (Step 3/6) 가 ``py -3.13 -m venv`` 사용.
 function Install-Python313ViaWinget {
-    Write-Warn2 'Python 3.13 자동 설치 시도 (winget) — 기존 Python 버전은 side-by-side 보존'
+    Write-Warn2 'Python 3.13 자동 설치 시도 (winget --scope user, 관리자 권한 불필요) — 기존 Python 버전은 side-by-side 보존'
 
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if (-not $winget) {
         Fail @"
-winget 이 PATH 에 없어 Python 3.13 자동 설치 불가 (Windows 10 1809+ / Windows 11 기본 탑재).
+winget 이 PATH 에 없습니다 (Windows 10 1809+ / Windows 11 기본 탑재).
 
-수동 설치:
-  https://www.python.org/downloads/release/python-3137/
-설치 후 install.ps1 재실행.
+가능한 원인:
+  - Windows 10 1809 미만 (winget 미지원 버전)
+  - App Installer 패키지 미설치 (Microsoft Store 에서 'App Installer' 검색)
+
+수동 설치 (winget 없이):
+  1. https://www.python.org/downloads/release/python-3137/ 다운로드
+  2. 설치 시 사용자 디렉터리 (관리자 권한 불필요) 선택
+  3. 설치 완료 후 새 PowerShell 창에서 install.ps1 재실행:
+       irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
 "@
     }
 
-    # --silent + 약관 자동 수락 — 비인터랙티브 설치
-    & winget install --id Python.Python.3.13 -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Fail "winget Python 3.13 자동 설치 실패 (exit=$LASTEXITCODE). 수동: https://www.python.org/downloads/release/python-3137/"
-    }
-    Write-Ok 'winget Python 3.13 설치 완료 (기존 Python 버전 미영향)'
-
-    # py launcher 로 새 3.13 검출 — 현재 PowerShell 세션 PATH 미갱신 가능성 대응
-    $launcherVer = $null
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        $launcherVer = (& py -3.13 --version 2>&1 | Out-String).Trim()
-    }
-    if ($LASTEXITCODE -ne 0 -or $launcherVer -notmatch 'Python\s+3\.13') {
+    # PR #120 — --scope user (관리자 권한 불필요) + 약관 자동 수락 + try/catch
+    $installExitCode = -1
+    try {
+        & winget install --id Python.Python.3.13 -e --scope user --silent `
+            --accept-source-agreements --accept-package-agreements | Out-Null
+        $installExitCode = $LASTEXITCODE
+    } catch {
         Fail @"
-winget 으로 Python 3.13 설치 후에도 ``py -3.13`` 가용 안 됨.
-PowerShell 세션 재시작 후 install.ps1 재실행 권장:
+winget 명령 실행 중 예외 발생:
+  $($_.Exception.Message)
 
-  exit  # PowerShell 종료
-  # 새 PowerShell 창 열고 다시:
-  irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
+수동 설치 (권장):
+  1. https://www.python.org/downloads/release/python-3137/ 다운로드
+  2. 설치 (사용자 디렉터리, 관리자 권한 불필요)
+  3. 새 PowerShell 창에서 install.ps1 재실행
+"@
+    }
+    if ($installExitCode -ne 0) {
+        Fail @"
+winget Python 3.13 자동 설치 실패 (exit=$installExitCode).
+
+가능한 원인:
+  - 네트워크 연결 / 프록시 문제
+  - winget 소스 동기화 필요 ('winget source update' 후 재시도)
+  - 디스크 공간 부족
+  - 인증서 만료
+
+수동 설치 (권장 — 100% 작동):
+  1. https://www.python.org/downloads/release/python-3137/ 다운로드
+  2. 설치 시 'Install for all users' 체크 *해제* (사용자 디렉터리, 관리자 권한 불필요)
+  3. 새 PowerShell 창에서 install.ps1 재실행:
+       irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
+"@
+    }
+    Write-Ok 'winget Python 3.13 설치 완료 (--scope user, 기존 Python 버전 미영향)'
+
+    # PR #120 — py launcher 로 새 3.13 검출 — 현재 PowerShell PATH 미갱신 무관
+    # (py.exe 는 registry 기반 lookup 으로 모든 Python 버전 인식)
+    $launcherVer = $null
+    $launcherExitCode = -1
+    $hasLauncher = $null -ne (Get-Command py -ErrorAction SilentlyContinue)
+    if ($hasLauncher) {
+        try {
+            $launcherVer = (& py -3.13 --version 2>&1 | Out-String).Trim()
+            $launcherExitCode = $LASTEXITCODE
+        } catch {
+            $launcherVer = $null
+        }
+    }
+    if (-not $hasLauncher -or $launcherExitCode -ne 0 -or $launcherVer -notmatch 'Python\s+3\.13') {
+        Fail @"
+winget Python 3.13 설치는 성공했으나 ``py -3.13`` launcher 호출 실패.
+
+가능한 원인:
+  - py launcher (py.exe) 미설치 — Python 인스톨러 옵션 'py launcher' 가 비활성화됐을 가능성
+  - 설치 직후 registry 동기화 지연
+
+해결책 (택일):
+  1. 새 PowerShell 창 열고 재실행 (가장 간단):
+       exit  # 현재 창 종료
+       # 새 창에서:
+       irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
+
+  2. py launcher 별도 설치:
+       winget install --id Python.Launcher -e --scope user --silent
+
+  3. 수동 venv 생성 (Python 3.13 인스톨 디렉터리 직접 사용):
+       & "${env:LOCALAPPDATA}\Programs\Python\Python313\python.exe" -m venv "${HOME}\nexus-alpha\.venv"
+       # 후 install.ps1 재실행 (.venv 검출 → 의존성만 설치)
 "@
     }
     Write-Ok "py -3.13 검출: $launcherVer (venv 생성에 사용)"
