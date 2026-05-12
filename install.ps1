@@ -921,6 +921,13 @@ $INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다.
 #   ② Install-Venv 의 ``-m venv`` 가 ``No module named venv`` 으로 실패 시 자동 감지
 # 각 단계 idempotent — 이미 설치된 경우 skip.
 function Invoke-VirtualenvVenvCreation {
+    # PR #132 — helper 도 EAP=Continue 격리 (defense-in-depth, Install-Venv 외부에서 호출
+    # 시에도 안전). Invoke-NativeSafely 는 자체 격리 있지만 ``& $pyExe $args | Out-Null``
+    # 직접 호출은 외부 EAP 영향 받음.
+    $savedEAPHelper = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+
     Write-Warn2 'virtualenv 으로 .venv 생성 중 (embeddable Python 우회 경로) ...'
 
     # ① pip 검출 + 부트스트랩 (필요 시)
@@ -967,6 +974,11 @@ function Invoke-VirtualenvVenvCreation {
         Fail "가상환경 생성 실패 ($cmdStr)"
     }
     Write-Ok '가상환경 생성: .venv (via virtualenv, embeddable Python 우회)'
+
+    } finally {
+        # PR #132 — EAP 복원
+        $ErrorActionPreference = $savedEAPHelper
+    }
 }
 
 function Install-Venv {
@@ -974,6 +986,17 @@ function Install-Venv {
 
     $venvDir = Join-Path $INSTALL_DIR '.venv'
     $venvPython = Join-Path $venvDir 'Scripts\python.exe'
+
+    # PR #132 — Install-Venv 전체에서 EAP 격리 (Test-Prereqs PR #126 패턴 그대로).
+    # 배경 (사용자 보고): PR #131 의 ``2>$stderrFile`` 리디렉션이 외부 EAP=Stop 하에서
+    #   NativeCommandError 트리거 → $LASTEXITCODE 검사 이전에 throw → ``No module named
+    #   venv`` 자동 감지 분기 못 탐. 외부 catch 가 직접 Fail 호출 → 사용자에게 raw
+    #   stderr 한 줄만 표시됨.
+    # 처방: 함수 진입 시 EAP=Continue 격리 + finally 복원. 모든 native command
+    #   (& py / & python / & venvPython) 가 NativeCommandError 회피.
+    $savedEAPVenv = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
 
     if (Test-Path $venvPython) {
         Write-Ok '.venv 이미 존재 — 의존성만 재설치'
@@ -997,9 +1020,7 @@ function Install-Venv {
             } else {
                 # 표준 경로 시도: ``python -m venv .venv`` 또는 ``py -3.13 -m venv .venv``
                 # PR #131 — 실패 시 stderr 분석 → ``No module named venv`` 시 자동 복구.
-                # 배경 (사용자 보고): 이전 PR #129 의 embeddable Python (``$INSTALL_DIR\python313\``)
-                #   이 py launcher 로 resolve 되어 ``py -3.13`` 검출 통과했으나 venv 모듈 미포함.
-                #   ``$script:PYTHON_VENV_EMBEDDABLE`` flag 는 *그 세션* 한정 (irm|iex 새 실행 시 초기화).
+                # PR #132 — 위 EAP=Continue 격리 하에서 stderr 리디렉션이 안전하게 작동.
                 $stderrFile = Join-Path $env:TEMP "nexus-alpha-venv-create-$([System.Guid]::NewGuid().ToString('N')).log"
                 $venvCmdArgs = $script:PYTHON_VENV_ARGS + @('-m', 'venv', '.venv')
                 & $script:PYTHON_VENV_EXE $venvCmdArgs 2>$stderrFile | Out-Null
@@ -1041,6 +1062,11 @@ function Install-Venv {
         Pop-Location
     }
     Write-Ok '의존성 설치 완료 (requirements.txt)'
+
+    } finally {
+        # PR #132 — EAP 복원 (정상 종료 / Fail / 예외 모두 cover)
+        $ErrorActionPreference = $savedEAPVenv
+    }
 }
 
 # ─── 4. .env 초기화 (PR #104 — .env.example 자동 복사) ─────────────────────

@@ -1335,6 +1335,81 @@ def test_install_ps1_captures_installer_log() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PR #132 — Install-Venv + Invoke-VirtualenvVenvCreation EAP 격리
+# ---------------------------------------------------------------------------
+
+
+def test_install_ps1_install_venv_has_eap_isolation() -> None:
+    """Install-Venv 함수 전체에 EAP 격리 wrapper (PR #132).
+
+    배경 (사용자 보고 — PR #131 머지 후 실패):
+        ``2>$stderrFile`` 리디렉션이 외부 ``$ErrorActionPreference = 'Stop'``
+        하에서 NativeCommandError 트리거 → ``$LASTEXITCODE`` 검사 이전에 throw →
+        ``No module named venv`` 자동 감지 분기 (PR #131) 못 탐. 외부 catch 가 raw
+        stderr 한 줄을 ``Fail`` 메시지로 직접 표시.
+
+    PR #132 처방:
+        Test-Prereqs (PR #126) 와 동일 패턴 — 함수 진입 시
+        ``$savedEAPVenv = $ErrorActionPreference; $ErrorActionPreference = 'Continue'``
+        + ``finally`` 로 복원. 모든 native command (``& py``, ``& python``,
+        ``& venvPython``) 가 NativeCommandError 회피.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Install-Venv\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    # EAP 저장 변수
+    assert "$savedEAPVenv" in body or "savedEAPVenv" in body, (
+        "Install-Venv 가 외부 EAP 저장 안 함 — finally 복원 불가"
+    )
+    # Continue 로 설정
+    assert "$ErrorActionPreference = 'Continue'" in body, (
+        "Install-Venv 본문에 EAP='Continue' 격리 누락"
+    )
+    # finally 복원
+    assert "finally" in body, "Install-Venv 에 finally 블록 누락"
+    restore = _re.search(
+        r"finally\s*\{[^}]*\$ErrorActionPreference\s*=\s*\$savedEAPVenv",
+        body, _re.DOTALL
+    )
+    assert restore is not None, (
+        "Install-Venv finally 의 EAP 복원 (=$savedEAPVenv) 누락"
+    )
+
+
+def test_install_ps1_invoke_virtualenv_helper_has_eap_isolation() -> None:
+    """Invoke-VirtualenvVenvCreation helper 도 EAP 격리 (PR #132 defense-in-depth).
+
+    Install-Venv 외부에서 helper 가 호출되거나 미래의 caller 가 EAP=Stop 유지
+    하더라도 native command 가 NativeCommandError 회피하도록 자체 격리.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    func_match = _re.search(
+        r"function Invoke-VirtualenvVenvCreation\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None, "Invoke-VirtualenvVenvCreation 본문 추출 실패"
+    body = func_match.group(1)
+    assert "$savedEAPHelper" in body or "savedEAPHelper" in body, (
+        "helper 의 EAP 저장 변수 누락"
+    )
+    assert "$ErrorActionPreference = 'Continue'" in body, (
+        "helper 본문에 EAP='Continue' 격리 누락"
+    )
+    assert "finally" in body, "helper 에 finally 블록 누락"
+    restore = _re.search(
+        r"finally\s*\{[^}]*\$ErrorActionPreference\s*=\s*\$savedEAPHelper",
+        body, _re.DOTALL
+    )
+    assert restore is not None, (
+        "helper finally 의 EAP 복원 (=$savedEAPHelper) 누락"
+    )
+
+
+# ---------------------------------------------------------------------------
 # PR #131 — Install-Venv 의 "No module named venv" 자동 감지 + virtualenv 전환
 # ---------------------------------------------------------------------------
 
