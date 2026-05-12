@@ -229,6 +229,80 @@ function Remove-OrphanPython313Artifacts {
         }
     }
 
+    # ④ Windows Installer per-user MSI 등록 정리 (PR #133 fixup #4 — *핵심*).
+    # 배경 (사용자 라이브 검증, 2026-05-12, MSI 로그 분석):
+    #   Burn bundle Detect 단계가 core_JustForMe / exe_JustForMe / dev_JustForMe /
+    #   lib_JustForMe / tcltk_JustForMe / pip_JustForMe 를 "state: Present, cached:
+    #   Complete" 로 인식 → Plan 단계에서 "execute: None" → 아무 파일도 설치 안 함.
+    #   원인: Windows Installer 의 per-user MSI 등록 (HKCU\Software\Microsoft\Installer\
+    #   Products\<obfuscated_code>) 가 이전 install 실패의 잔재로 남아있음. ③ 의
+    #   Add/Remove Programs 정리만으로는 MSI 자체 등록을 지우지 못함.
+    # 처방: Python 3.13.x 의 ProductName 매칭하는 Products / Features / Patches entry
+    #   모두 직접 삭제. 다음 install 시 MSI 가 "Absent" 로 detect → 정상 install.
+    $installerRoots = @(
+        'HKCU:\Software\Microsoft\Installer\Products',
+        'HKCU:\Software\Classes\Installer\Products'
+    )
+    foreach ($base in $installerRoots) {
+        if (-not (Test-Path $base)) { continue }
+        Get-ChildItem -Path $base -ErrorAction SilentlyContinue | ForEach-Object {
+            $prop = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+            if (-not $prop) { return }
+            $pn = if ($prop.ProductName) { [string]$prop.ProductName } else { '' }
+            if ($pn -match 'Python 3\.13') {
+                $code = $_.PSChildName
+                try {
+                    Remove-Item -Path $_.PSPath -Recurse -Force -ErrorAction Stop
+                    Write-Ok "Windows Installer Products 정리: $pn"
+                    $cleaned++
+                    # 같은 code 의 Features / Patches entry 도 정리 (있으면)
+                    $featuresBase = $base -replace '\\Products$', '\Features'
+                    $featuresPath = Join-Path $featuresBase $code
+                    if (Test-Path $featuresPath) {
+                        Remove-Item -Path $featuresPath -Recurse -Force -ErrorAction SilentlyContinue
+                        Write-Ok "Windows Installer Features 정리: $code"
+                    }
+                    $patchesBase = $base -replace '\\Products$', '\Patches'
+                    $patchesPath = Join-Path $patchesBase $code
+                    if (Test-Path $patchesPath) {
+                        Remove-Item -Path $patchesPath -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                } catch {
+                    Write-Warn2 "Installer Products 삭제 실패: $pn — $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    # ⑤ HKLM UserData (현재 사용자 SID 의 Python 3.13 MSI 등록) — 권한 있으면만 정리
+    # per-user install 이라도 일부 메타데이터는 HKLM 의 UserData\<SID>\Products 에 기록됨.
+    # 관리자 권한 없으면 삭제 실패할 수 있으나 graceful.
+    try {
+        $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $userDataKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\$currentSid\Products"
+        if (Test-Path $userDataKey) {
+            Get-ChildItem -Path $userDataKey -ErrorAction SilentlyContinue | ForEach-Object {
+                $installPropsKey = Join-Path $_.PSPath 'InstallProperties'
+                if (Test-Path $installPropsKey) {
+                    $prop = Get-ItemProperty -Path $installPropsKey -ErrorAction SilentlyContinue
+                    if (-not $prop) { return }
+                    $dn = if ($prop.DisplayName) { [string]$prop.DisplayName } else { '' }
+                    if ($dn -match 'Python 3\.13') {
+                        try {
+                            Remove-Item -Path $_.PSPath -Recurse -Force -ErrorAction Stop
+                            Write-Ok "HKLM UserData entry 정리: $dn"
+                            $cleaned++
+                        } catch {
+                            Write-Warn2 "HKLM UserData 삭제 실패 (권한 부족 가능): $dn"
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        # SID 조회 실패 등 — graceful
+    }
+
     if ($cleaned -gt 0) {
         Write-Ok "orphan 정리 완료 ($cleaned 항목 처리됨)"
     } else {
