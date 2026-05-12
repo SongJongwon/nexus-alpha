@@ -818,7 +818,98 @@ function Get-Repo {
     }
 
     if (Test-Path $INSTALL_DIR) {
-        Fail "$INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다. 다른 경로 또는 \$env:NEXUS_ALPHA_DIR 사용."
+        # PR #130 — 비-git $INSTALL_DIR 자동 recovery
+        # 배경 (사용자 보고): Install-LocalPython313 / Install-EmbeddablePython 의
+        #   이전 시도가 ``$INSTALL_DIR\python313\`` 폴더를 남기고 Get-Repo 전에 종료
+        #   → 다음 실행 시 ``$INSTALL_DIR`` 가 존재하나 .git 없음 → Fail.
+        # 처방: 폴더 내용이 *우리 artifact 만* 이면 안전 recovery (백업 → clone → 복원).
+        #       사용자 데이터가 있으면 기존대로 Fail (안전 우선).
+        $children = @(Get-ChildItem -Path $INSTALL_DIR -Force -ErrorAction SilentlyContinue)
+        # 우리 artifacts: python313/ (Install-LocalPython313/Embeddable), .env (Initialize-EnvFile),
+        # .venv/ (Install-Venv), broken backup 폴더 등.
+        $ourArtifacts = @('python313', '.env', '.venv')
+        $unknownChildren = $children | Where-Object {
+            $_.Name -notin $ourArtifacts -and $_.Name -notlike '*.broken.*'
+        }
+
+        if ($unknownChildren) {
+            $sample = (($unknownChildren | Select-Object -First 5).Name) -join ', '
+            $more = if ($unknownChildren.Count -gt 5) { "...(+$($unknownChildren.Count - 5))" } else { '' }
+            Fail @"
+$INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다.
+  알 수 없는 항목 검출 (사용자 데이터 보호 위해 자동 정리 안 함):
+    $sample$more
+
+수동 조치:
+  ① 폴더 백업 후 삭제:
+       Move-Item -Path '$INSTALL_DIR' -Destination '$INSTALL_DIR.bak'
+       irm https://raw.githubusercontent.com/$REPO/$BRANCH/install.ps1 | iex
+  ② 또는 다른 경로 지정:
+       `$env:NEXUS_ALPHA_DIR = 'C:\다른경로'
+       irm https://raw.githubusercontent.com/$REPO/$BRANCH/install.ps1 | iex
+"@
+        }
+
+        # 우리 artifacts 만 있음 → 안전 recovery
+        Write-Warn2 "$INSTALL_DIR 에 이전 시도의 artifact 만 존재 — 자동 정리 후 fresh clone"
+        $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+        $tempBackup = Join-Path $env:TEMP "nexus-alpha-recovery-$timestamp"
+        New-Item -ItemType Directory -Path $tempBackup -Force | Out-Null
+
+        # python313/ 백업 (있으면)
+        $pythonDir = Join-Path $INSTALL_DIR 'python313'
+        $pythonBackedUp = $false
+        if (Test-Path $pythonDir) {
+            try {
+                Move-Item -Path $pythonDir -Destination (Join-Path $tempBackup 'python313') -ErrorAction Stop
+                $pythonBackedUp = $true
+                Write-Ok "python313/ 임시 백업 → $tempBackup\python313 (로컬 격리 Python 보존)"
+            } catch {
+                Write-Warn2 "python313/ 백업 실패 ($($_.Exception.Message)) — fresh install 진행"
+            }
+        }
+        # .env 백업 (있으면)
+        $envFile = Join-Path $INSTALL_DIR '.env'
+        $envBackedUp = $false
+        if (Test-Path $envFile) {
+            try {
+                Copy-Item -Path $envFile -Destination (Join-Path $tempBackup '.env') -ErrorAction Stop
+                $envBackedUp = $true
+                Write-Ok ".env 백업 → $tempBackup\.env"
+            } catch {
+                Write-Warn2 ".env 백업 실패 ($($_.Exception.Message))"
+            }
+        }
+
+        # 남은 INSTALL_DIR 삭제 (이제 우리 artifact 만 남음)
+        try {
+            Remove-Item -Path $INSTALL_DIR -Recurse -Force -ErrorAction Stop
+        } catch {
+            Fail "기존 $INSTALL_DIR 삭제 실패: $($_.Exception.Message) | 수동 삭제: Remove-Item -Recurse -Force '$INSTALL_DIR'"
+        }
+
+        # Fresh clone
+        Invoke-CleanClone
+
+        # 백업한 artifacts 복원
+        if ($pythonBackedUp) {
+            try {
+                Move-Item -Path (Join-Path $tempBackup 'python313') -Destination $pythonDir -ErrorAction Stop
+                Write-Ok 'python313/ 복원 완료 (로컬 격리 Python 재사용)'
+            } catch {
+                Write-Warn2 "python313/ 복원 실패 ($($_.Exception.Message)) — Install-Venv 가 시스템 Python 사용"
+            }
+        }
+        if ($envBackedUp) {
+            try {
+                Copy-Item -Path (Join-Path $tempBackup '.env') -Destination $envFile -ErrorAction Stop
+                Write-Ok '.env 복원 완료'
+            } catch {
+                Write-Warn2 ".env 복원 실패 ($($_.Exception.Message))"
+            }
+        }
+        Remove-Item -Path $tempBackup -Recurse -Force -ErrorAction SilentlyContinue
+        return
     }
     Invoke-CleanClone
 }
