@@ -73,8 +73,10 @@ function Invoke-NativeSafely {
         [Parameter(Mandatory=$true)][string]$Executable,
         [string[]]$Arguments = @()
     )
-    # stderr 를 discard 하여 NativeCommandError 회피.
-    # stdout 은 string 으로 capture. exit code 는 caller 가 $LASTEXITCODE 로 확인.
+    # PR #126 — 함수 내부 EAP 격리: 외부에서 'Stop' 이어도 내부는 'Continue'.
+    # native command 의 stderr / non-zero exit 가 throw 되지 않음을 100% 보장.
+    $savedEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     $stdout = ''
     $exit = -1
     try {
@@ -83,6 +85,8 @@ function Invoke-NativeSafely {
     } catch {
         $stdout = ''
         $exit = -1
+    } finally {
+        $ErrorActionPreference = $savedEAP
     }
     [pscustomobject]@{
         StdOut    = if ($stdout) { $stdout.Trim() } else { '' }
@@ -292,6 +296,13 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).
 function Test-Prereqs {
     Write-Step 'Step 1/6 — 사전 요구사항 확인'
 
+    # PR #126 — Test-Prereqs 전체에서 EAP 격리: native command (git/python/py) 의
+    # stderr / non-zero exit 가 외부 EAP=Stop 영향 받지 않음 100% 보장.
+    # 모든 native 호출은 Invoke-NativeSafely 또는 동등 패턴 사용.
+    $savedEAPPrereqs = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+
     # git
     $git = Get-Command git -ErrorAction SilentlyContinue
     if (-not $git) {
@@ -302,7 +313,8 @@ git 이 PATH 에 없습니다.
         또는 https://git-scm.com/download/win
 "@
     }
-    Write-Ok "git: $(git --version)"
+    $gitVerResult = Invoke-NativeSafely -Executable 'git' -Arguments @('--version')
+    Write-Ok "git: $($gitVerResult.StdOut)"
 
     # PR #112 — 기존 .venv 검출 시 시스템 python 체크 skip.
     # 사용자가 ``py -3.13 -m venv $HOME\nexus-alpha\.venv`` 로 *수동* 으로 venv 만든
@@ -310,7 +322,7 @@ git 이 PATH 에 없습니다.
     # 직접 지원.
     $existingVenvPython = Join-Path $INSTALL_DIR '.venv\Scripts\python.exe'
     if (Test-Path $existingVenvPython) {
-        $venvVersion = (& $existingVenvPython --version 2>&1).ToString().Trim()
+        $venvVersion = (Invoke-NativeSafely -Executable $existingVenvPython -Arguments @('--version')).StdOut
         Write-Ok "python (기존 .venv): $venvVersion"
         Write-Warn2 '시스템 python 버전 체크 skip — .venv 가 이미 검증된 환경으로 간주'
         # gh CLI 만 마저 검증 후 함수 종료
@@ -349,11 +361,10 @@ git 이 PATH 에 없습니다.
     # PR #124 — python --version 실행 실패 / Microsoft Store stub alias 검출 강화.
     # Windows 10+ 는 ``python`` PATH stub 으로 Microsoft Store 페이지를 열 수 있음 →
     # ``python --version`` 호출 시 stderr 만 출력 / 빈 출력 / "Reparse" 메시지.
-    # 이전 (PR #110~#123) 은 정규식 매치 실패 시 단순 Warn → 설치 함수 미호출 →
-    # Step 2/6 부터 venv 생성 fail.
-    $pyVersionOutput = & python --version 2>&1
-    $pyVersionExit = $LASTEXITCODE
-    $pyVersion = if ($null -ne $pyVersionOutput) { ($pyVersionOutput | Out-String).Trim() } else { '' }
+    # PR #126 — Invoke-NativeSafely 로 NativeCommandError 완전 회피.
+    $pyVerResult = Invoke-NativeSafely -Executable 'python' -Arguments @('--version')
+    $pyVersion = $pyVerResult.StdOut
+    $pyVersionExit = $pyVerResult.ExitCode
     $isStoreStub = ($pyVersion -match 'Microsoft Store|Reparse|App Installer') -or `
                    ($pyVersionExit -ne 0) -or `
                    ([string]::IsNullOrWhiteSpace($pyVersion))
@@ -383,42 +394,28 @@ git 이 PATH 에 없습니다.
                 Write-Ok "python: $pyVersion (3.13 권장, 현재 버전도 호환)"
             }
         } elseif ($major -gt 3 -or ($major -eq 3 -and $minor -ge 14)) {
-            # PR #114 / #125 — 3.14+ fallback chain:
-            #   ① ``py -3.13 --version`` 시도 (이미 3.13 설치되어 있으면 happy path)
-            #   ② 실패 시 ``py install 3.13`` (py launcher 3.11+ 의 자동 설치) — happy path 2
-            #   ③ 그래도 실패 시 ``Install-LocalPython313`` (최후의 안전망)
-            # 모든 native call 은 ``Invoke-NativeSafely`` 로 NativeCommandError 회피.
-            Write-Warn2 "시스템 python: $pyVersion (CrewAI 1.14.x 미지원). ``py -3.13`` launcher 시도..."
+            # PR #126 — 단순 2-단 분기 (PR #125 의 ``py install 3.13`` 단계 제거):
+            #   ① ``py -3.13 --version`` 검출 (이미 설치 시 happy path)
+            #   ② 실패 시 ``Install-LocalPython313`` (deterministic)
+            # 제거 이유: ``py install`` 명령은 일부 환경에서 *대화형 prompt* 또는 *hang*
+            # 위험 (Windows Hello 인증 prompt / Microsoft Store 페이지 등). generic 보장을
+            # 위해 외부 변수 의존 제거.
+            Write-Warn2 "시스템 python: $pyVersion (CrewAI 1.14.x 미지원). ``py -3.13`` launcher 검출..."
             $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
             $pyOk = $false
             if ($pyLauncher) {
                 $r1 = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '--version')
                 if ($r1.Succeeded -and $r1.StdOut -match 'Python\s+3\.13') {
                     $pyOk = $true
-                    Write-Ok "py -3.13 fallback: $($r1.StdOut) (venv 생성에 사용)"
-                } else {
-                    # Happy path 2 — py launcher 신기능 (3.11+) ``py install 3.13``.
-                    # 사용자 보고 메시지 ('No runtime installed that matches 3.13.
-                    # Try running "py install 3.13"') 의 안내를 *프로그래밍 적으로 실행*.
-                    Write-Warn2 "py -3.13 미설치 — ``py install 3.13`` 자동 시도 (py launcher 신기능)..."
-                    $r2 = Invoke-NativeSafely -Executable 'py' -Arguments @('install', '3.13')
-                    if ($r2.Succeeded) {
-                        $r3 = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '--version')
-                        if ($r3.Succeeded -and $r3.StdOut -match 'Python\s+3\.13') {
-                            $pyOk = $true
-                            Write-Ok "``py install 3.13`` 성공: $($r3.StdOut) (venv 생성에 사용)"
-                        }
-                    } else {
-                        Write-Warn2 "``py install 3.13`` 미가용 (py launcher <3.11 또는 네트워크 차단)"
-                    }
+                    Write-Ok "py -3.13 검출: $($r1.StdOut) (venv 생성에 사용)"
                 }
             }
             if ($pyOk) {
                 $script:PYTHON_VENV_EXE  = 'py'
                 $script:PYTHON_VENV_ARGS = @('-3.13')
             } else {
-                # PR #123 — 최후의 안전망: 로컬 격리 설치 (시스템 미터치)
-                Write-Warn2 'py launcher 경로 모두 실패 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
+                # 최후의 안전망: 로컬 격리 설치 (시스템 미터치, deterministic)
+                Write-Warn2 'py -3.13 미가용 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
                 Install-LocalPython313
             }
         } else {
@@ -440,6 +437,11 @@ git 이 PATH 에 없습니다.
     } else {
         Write-Warn2 'gh CLI 미설치 — Draft Release 발행 단계는 skip 됩니다.'
         Write-Warn2 '  설치: winget install --id GitHub.cli -e  (선택)'
+    }
+
+    } finally {
+        # PR #126 — EAP 복원 (정상 종료 / Fail / 예외 모두 cover)
+        $ErrorActionPreference = $savedEAPPrereqs
     }
 }
 
@@ -638,6 +640,12 @@ function Test-Install {
 
     $venvPython = Join-Path $INSTALL_DIR '.venv\Scripts\python.exe'
     Push-Location $INSTALL_DIR
+    # PR #126 — smoke test 도 EAP 격리 + stderr 를 *file handle* 로 redirect:
+    # ``2>&1 | Out-String`` 사용 금지 (NativeCommandError 트리거). stderr 는 임시 파일로
+    # 분리 capture → 안전 + 진단 정보 양쪽 모두 확보.
+    $savedEAPSmoke = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $stderrFile = Join-Path $env:TEMP "nexus-alpha-smoke-stderr-$([System.Guid]::NewGuid().ToString('N')).txt"
     try {
         $smoke = @'
 import sys
@@ -646,14 +654,24 @@ import src.workflows.analyze_and_implement  # noqa: F401
 import src.workflows.automate_workflow  # noqa: F401
 print("OK")
 '@
-        $output = $smoke | & $venvPython - 2>&1
-        if ($LASTEXITCODE -ne 0 -or $output -notmatch 'OK') {
-            Write-Warn2 'smoke test 경고 — 일부 모듈 import 실패 (실 사용 시 오류 가능):'
-            Write-Host $output -ForegroundColor DarkGray
+        # stderr → 임시 파일 (PowerShell pipeline 미경유 → NativeCommandError 미발생)
+        $stdout = $smoke | & $venvPython - 2>$stderrFile | Out-String
+        $smokeExit = $LASTEXITCODE
+        $stderrText = ''
+        if (Test-Path $stderrFile) {
+            $stderrText = Get-Content -Path $stderrFile -Raw -ErrorAction SilentlyContinue
+            if (-not $stderrText) { $stderrText = '' }
+        }
+        if ($smokeExit -ne 0 -or $stdout -notmatch 'OK') {
+            Write-Warn2 "smoke test 경고 — 일부 모듈 import 실패 (exit=$smokeExit, 실 사용 시 오류 가능):"
+            if ($stdout) { Write-Host $stdout -ForegroundColor DarkGray }
+            if ($stderrText) { Write-Host $stderrText -ForegroundColor DarkGray }
         } else {
             Write-Ok 'workflow 모듈 import OK'
         }
     } finally {
+        Remove-Item -Path $stderrFile -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $savedEAPSmoke
         Pop-Location
     }
 }
