@@ -180,6 +180,19 @@ function Install-LocalPython313 {
 
     Write-Warn2 "Python $pyVer 로컬 격리 설치 시도 — 시스템/사용자 Python 영향 0 (대상 폴더: $pyDir)"
 
+    # PR #128 — 부모 디렉토리 미생성 시 인스톨러 silent fail 사례 (사용자 보고).
+    # Install-LocalPython313 은 Step 1/6 (Get-Repo 이전) 에서 호출되므로 $INSTALL_DIR
+    # 가 아직 미존재 가능. Python 공식 인스톨러는 TargetDir 의 *부모 폴더 자동 생성*
+    # 을 보장하지 않음 → 수동 사전 생성.
+    if (-not (Test-Path $INSTALL_DIR)) {
+        try {
+            New-Item -ItemType Directory -Path $INSTALL_DIR -Force -ErrorAction Stop | Out-Null
+            Write-Ok "설치 폴더 사전 생성: $INSTALL_DIR (Python 인스톨러 TargetDir 부모)"
+        } catch {
+            Fail "설치 폴더 생성 실패 ($INSTALL_DIR): $($_.Exception.Message)"
+        }
+    }
+
     # 기존 로컬 설치 재사용 (idempotent) — PR #125 NativeCommandError 회피
     if (Test-Path $pyExe) {
         $existingVer = (Invoke-NativeSafely -Executable $pyExe -Arguments @('--version')).StdOut
@@ -228,16 +241,24 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
 
     # 로컬 격리 설치 (~30 sec)
     Write-Warn2 "Python $pyVer 로컬 설치 중 (~30초, 시스템 영향 없음) ..."
-    # SimpleInstall=1: 인스톨러 UI 미표시
-    # TargetDir: install 폴더 내부에 격리
+    # PR #128 — Python 인스톨러 로그 capture (silent fail 진단용)
+    $installLog = Join-Path $env:TEMP "nexus-alpha-python-install-$pyVer.log"
+    # TargetDir + DefaultJustForMeTargetDir: install 폴더 내부에 격리 (PR #128 — 일부
+    #   환경에서 TargetDir 단독으로는 무시되고 DefaultJustForMeTargetDir 가 사용되는
+    #   보고. 둘 다 지정해 둘 중 어느 쪽이 사용돼도 동일 경로 보장).
     # InstallAllUsers=0: per-user, 관리자 권한 불필요
     # PrependPath=0: PATH 미변경 (시스템 영향 회피)
     # Include_launcher=0: py.exe launcher 미설치 (시스템 영향 회피)
     # Include_pip=1: pip 포함 (venv 생성 후 의존성 설치 가능)
     # Shortcuts=0 + AssociateFiles=0: 바로가기 / .py 파일 연결 미변경
+    # SimpleInstall=1 제거 (PR #128): /quiet 와 중복 + 일부 환경에서 사용자 정의
+    #   옵션을 무시하고 기본 위치로 설치하는 사례 보고됨.
     $installArgs = @(
         '/quiet'
+        '/log'
+        $installLog
         "TargetDir=$pyDir"
+        "DefaultJustForMeTargetDir=$pyDir"
         'InstallAllUsers=0'
         'PrependPath=0'
         'Include_launcher=0'
@@ -247,7 +268,6 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         'Shortcuts=0'
         'AssociateFiles=0'
         'CompileAll=0'
-        'SimpleInstall=1'
     )
 
     try {
@@ -261,13 +281,15 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
     }
 
     if ($exitCode -ne 0) {
+        $logHint = if (Test-Path $installLog) { "`n  인스톨러 로그: $installLog" } else { '' }
         Fail @"
-Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).
+Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
 
 가능한 원인:
   - 디스크 공간 부족 ($pyDir 가용 공간 확인)
   - 파일 잠금 (이전 설치 잔존)
   - $pyDir 경로에 한글 등 비-ASCII 문자
+  - AntiVirus / EDR 차단
 
 수동 fallback:
   https://www.python.org/downloads/release/python-3137/ 다운로드 후
@@ -275,9 +297,28 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).
 "@
     }
 
-    # 검증 — python.exe 생성 + 버전 확인
+    # PR #128 — 검증: TargetDir 위치 확인 + 일부 환경에서 무시될 경우 기본 위치 fallback
     if (-not (Test-Path $pyExe)) {
-        Fail "Python 설치 후 $pyExe 미생성 — 인스톨러 동작 이상"
+        # 기본 user 위치 (per-user install) 확인 — TargetDir 가 무시된 경우
+        $userDefaultDir = Join-Path $env:LocalAppData 'Programs\Python\Python313'
+        $userDefaultExe = Join-Path $userDefaultDir 'python.exe'
+        if (Test-Path $userDefaultExe) {
+            Write-Warn2 "TargetDir ($pyExe) 미생성, 기본 user 위치 검출: $userDefaultExe"
+            Write-Warn2 '인스톨러가 TargetDir 를 무시하고 기본 위치에 설치함 — 해당 경로 사용 (격리는 부분적: %LocalAppData% 안에 설치됨)'
+            $pyExe = $userDefaultExe
+            $pyDir = $userDefaultDir
+        } else {
+            $logHint = if (Test-Path $installLog) { "`n  인스톨러 로그: $installLog" } else { '' }
+            Fail @"
+Python 설치 완료 (exit=0) 했으나 python.exe 미검출.
+  TargetDir 위치: $pyExe (없음)
+  기본 user 위치: $userDefaultExe (없음)$logHint
+
+가능한 원인:
+  - AntiVirus 가 인스톨러 silent block (가장 흔함)
+  - 인스톨러가 다른 경로에 설치 (수동 확인 필요)
+"@
+        }
     }
     # PR #125 — Invoke-NativeSafely 로 NativeCommandError 회피
     $installedVer = (Invoke-NativeSafely -Executable $pyExe -Arguments @('--version')).StdOut
