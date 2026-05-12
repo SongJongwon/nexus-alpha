@@ -1701,6 +1701,88 @@ def test_install_ps1_install_local_python_verifies_tkinter() -> None:
     )
 
 
+def test_install_ps1_has_remove_orphan_python313_artifacts_helper() -> None:
+    """PR #133 — uninstall 1603 fallback 으로 orphan registry/cache 수동 삭제 helper.
+
+    배경 (사용자 라이브 검증, 2026-05-12, PR #133 1차 시도):
+        Burn bundle ``/uninstall /quiet`` 가 exit=1603 으로 실패 — Package Cache 의
+        Python 인스톨러 .exe 가 corrupt 되어 Burn 이 자체 uninstall 불가. 이후 install
+        도 phantom "이미 설치됨" 판단으로 silent fail.
+
+    PR #133 처방:
+        uninstall 실패 시 ``Remove-OrphanPython313Artifacts`` 호출 — registry +
+        Package Cache + Add/Remove Programs 항목을 *직접 강제 삭제* 후 install retry.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    assert "function Remove-OrphanPython313Artifacts" in text, (
+        "Remove-OrphanPython313Artifacts helper 정의 누락"
+    )
+    # 핵심 3개 정리 대상
+    assert "Python\\PythonCore\\3.13" in text, "registry path Python\\PythonCore\\3.13 미참조"
+    assert "Package Cache" in text, "MSI Package Cache 정리 누락"
+    assert "CurrentVersion\\Uninstall" in text, "Add/Remove Programs (Uninstall) 정리 누락"
+    # 3.13 외 다른 버전 영향 X — Python 3.13 으로 정확 매칭
+    import re as _re
+    func_match = _re.search(
+        r"function Remove-OrphanPython313Artifacts\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert func_match is not None
+    body = func_match.group(1)
+    assert "Python 3\\.13" in body or "PythonCore\\3.13" in body, (
+        "3.13 정확 매칭 미보장 — 다른 버전 영향 위험"
+    )
+
+
+def test_install_ps1_install_local_python_retries_after_orphan_cleanup() -> None:
+    """PR #133 — Install-LocalPython313 가 MSI 실패 시 orphan cleanup + retry 1회.
+
+    Flow:
+      ① 1차 MSI install → python.exe 미생성 (phantom)
+      ② Remove-OrphanPython313Artifacts 호출 (registry/cache/uninstall entry 강제 삭제)
+      ③ 2차 MSI install (재시도) → 성공 or 명시적 Fail
+
+    Burn bundle phantom install 상태에서 사용자 수동 작업 없이 자동 복구.
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    # cleanup helper 호출
+    assert "Remove-OrphanPython313Artifacts" in body, (
+        "Install-LocalPython313 가 cleanup helper 미호출 — 자동 복구 없음"
+    )
+    # retry 변수 또는 키워드
+    assert "retry" in body.lower() or "재시도" in body or "재설치" in body, (
+        "MSI install retry 분기 누락 — phantom install 1회 자동 복구 없음"
+    )
+
+
+def test_install_ps1_uninstall_failure_triggers_manual_cleanup() -> None:
+    """PR #133 — orphan uninstall 가 0 외 exit (1603 등) 면 수동 강제 정리 호출."""
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None
+    body = local_func.group(1)
+    # uninstall exit 코드 분기 → Remove-OrphanPython313Artifacts 호출
+    # (정확한 패턴: $uninstallExit 가 0 외일 때 helper 호출)
+    assert "uninstallExit" in body
+    # uninstall 실패 시 helper 호출이 본문에 존재
+    uninstall_fallback = _re.search(
+        r"uninstallExit\s*-ne\s*0|else\s*\{[^}]*Remove-OrphanPython313Artifacts",
+        body, _re.DOTALL
+    )
+    # 더 단순한 검증: uninstallExit 분기와 helper 호출이 같은 본문에 존재
+    assert "uninstallExit" in body and "Remove-OrphanPython313Artifacts" in body, (
+        "uninstall exit 분기에서 Remove-OrphanPython313Artifacts 호출 누락"
+    )
+
+
 def test_install_ps1_test_prereqs_checks_existing_venv_tkinter() -> None:
     """PR #133 — Test-Prereqs 가 기존 .venv 의 tkinter 포함 여부 검증.
 

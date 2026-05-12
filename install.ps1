@@ -151,6 +151,92 @@ function Get-ExistingPython313 {
     return [pscustomobject]@{ Found=$false; Path=''; Orphan=$false; RegistryKey='' }
 }
 
+# ─── PR #133 — Orphan Python 3.13 MSI 잔재 수동 정리 ──────────────────────
+# 배경 (사용자 라이브 검증, 2026-05-12, PR #133 1차 시도):
+#   PR #128 이 도입한 ``Burn bundle /uninstall /quiet`` 가 ``exit=1603`` (ERROR_
+#   INSTALL_FAILURE) 으로 실패 — Package Cache 의 .exe 가 corrupt 되어 Burn 이
+#   자체 uninstall 불가. 이후 install 도 phantom "이미 설치됨" 판단으로 silent fail.
+# 처방 (PR #133):
+#   uninstall 실패 시 registry + Package Cache + Add/Remove Programs 항목을 *직접
+#   강제 삭제* 후 install retry. 모든 정리는 ``Python 3.13`` 으로 *정확 매칭* — 다른
+#   버전 (3.10/3.11/3.12/3.14+) 영향 0, 사용자 데이터 영향 0.
+function Remove-OrphanPython313Artifacts {
+    Write-Warn2 'orphan MSI registry / Package Cache 수동 정리 중 (uninstall 1603 fallback)...'
+    $cleaned = 0
+
+    # ① registry: HKCU/HKLM 의 PythonCore\3.13 키 직접 삭제
+    $registryRoots = @(
+        'HKCU:\Software\Python\PythonCore\3.13',
+        'HKLM:\Software\Python\PythonCore\3.13',
+        'HKLM:\SOFTWARE\Wow6432Node\Python\PythonCore\3.13'
+    )
+    foreach ($k in $registryRoots) {
+        if (Test-Path $k) {
+            try {
+                Remove-Item -Path $k -Recurse -Force -ErrorAction Stop
+                Write-Ok "registry 삭제: $k"
+                $cleaned++
+            } catch {
+                Write-Warn2 "registry 삭제 실패 (권한 부족 가능): $k — $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # ② MSI Package Cache — Python 3.13.x 만 매칭
+    # Burn bundle 가 만드는 폴더는 GUID 기반. 폴더 안의 .exe 의 VersionInfo.ProductName 로 식별.
+    $pcRoot = Join-Path $env:LocalAppData 'Package Cache'
+    if (Test-Path $pcRoot) {
+        $children = Get-ChildItem -Path $pcRoot -Directory -ErrorAction SilentlyContinue
+        foreach ($d in $children) {
+            $burnExe = Get-ChildItem -Path $d.FullName -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $burnExe) { continue }
+            $prodName = ''
+            try { $prodName = $burnExe.VersionInfo.ProductName } catch {}
+            if ($prodName -match 'Python 3\.13') {
+                try {
+                    Remove-Item -Path $d.FullName -Recurse -Force -ErrorAction Stop
+                    Write-Ok "Package Cache 정리: $($d.Name) [$prodName]"
+                    $cleaned++
+                } catch {
+                    Write-Warn2 "Package Cache 삭제 실패: $($d.Name) — $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    # ③ Add/Remove Programs — Python 3.13.x 의 Uninstall registry entry 직접 삭제
+    $uninstallRoots = @(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($base in $uninstallRoots) {
+        if (-not (Test-Path $base)) { continue }
+        Get-ChildItem -Path $base -ErrorAction SilentlyContinue | ForEach-Object {
+            $prop = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+            if (-not $prop) { return }
+            $dn = if ($prop.DisplayName) { [string]$prop.DisplayName } else { '' }
+            if ($dn -match 'Python 3\.13') {
+                try {
+                    Remove-Item -Path $_.PSPath -Recurse -Force -ErrorAction Stop
+                    Write-Ok "Add/Remove Programs entry 정리: $dn"
+                    $cleaned++
+                } catch {
+                    Write-Warn2 "uninstall entry 삭제 실패: $dn — $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    if ($cleaned -gt 0) {
+        Write-Ok "orphan 정리 완료 ($cleaned 항목 처리됨)"
+    } else {
+        Write-Warn2 'orphan 정리 대상 없음 (이미 모두 정리됨 또는 권한 부족)'
+    }
+    return $cleaned
+}
+
 # ─── PR #133 — Embeddable Python 경로 *완전 제거* ─────────────────────────
 # 배경 (사용자 라이브 검증, 2026-05-12):
 #   PR #129 가 도입한 embeddable Python fallback 은 venv 생성까지는 통과시켰으나
@@ -325,6 +411,8 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
     # PR #128 — orphan MSI registry 정리: 다운로드한 인스톨러로 /uninstall /quiet 호출.
     # Burn bundle 이 "이미 설치됨" 으로 잘못 판단해 install 을 ``Modify execute: None``
     # 으로 변환하는 문제 해결. uninstall 은 실제 파일이 없어도 안전 (실패해도 무시).
+    # PR #133 — uninstall 이 1603 등으로 실패 시 (Burn cache 손상) registry + Package
+    # Cache + Add/Remove Programs entry 를 *직접 강제 삭제* 로 fallback.
     if ($orphanedRegistry) {
         Write-Warn2 "Orphan MSI registry uninstall 중 (~10초) — Burn bundle 잘못된 'Modify' 회피"
         $uninstallLog = Join-Path $env:TEMP "nexus-alpha-python-uninstall-$pyVer.log"
@@ -340,7 +428,9 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         if ($uninstallExit -eq 0) {
             Write-Ok 'Orphan MSI registry 정리 완료'
         } else {
-            Write-Warn2 "Uninstall exit=$uninstallExit (로그: $uninstallLog) — 계속 진행 (install 이 정리할 수도 있음)"
+            # PR #133 — uninstall 실패 (Burn cache 손상 추정) → 수동 강제 정리
+            Write-Warn2 "Uninstall exit=$uninstallExit (로그: $uninstallLog) — 수동 강제 정리 시도"
+            $null = Remove-OrphanPython313Artifacts
         }
     }
 
@@ -407,6 +497,7 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
     }
 
     # PR #128 — 검증: TargetDir 위치 확인 + 일부 환경에서 무시될 경우 기본 위치 fallback
+    # PR #133 — MSI 실패 시 orphan 강제 정리 + 재시도 (1회) 후 Fail
     if (-not (Test-Path $pyExe)) {
         # 기본 user 위치 (per-user install) 확인 — TargetDir 가 무시된 경우
         $userDefaultDir = Join-Path $env:LocalAppData 'Programs\Python\Python313'
@@ -417,10 +508,46 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
             $pyExe = $userDefaultExe
             $pyDir = $userDefaultDir
         } else {
-            # PR #133 — embeddable fallback 제거. MSI phantom install 발생 시 사용자에게
-            # 명확한 메시지로 Fail (조용한 추락보다 명시적 실패가 도움).
-            $logHint = if (Test-Path $installLog) { "`n  인스톨러 로그: $installLog" } else { '' }
-            Fail @"
+            # PR #133 — MSI phantom install 발견 → orphan 수동 강제 정리 후 재시도 (1회).
+            Write-Warn2 'MSI install 후 python.exe 미생성 — orphan 잔재 의심, 수동 강제 정리 + 재시도 1회'
+            $extraCleaned = Remove-OrphanPython313Artifacts
+            Write-Warn2 "Python $pyVer MSI 재설치 중 (cleanup 후, ~30초)..."
+            $retryLog = Join-Path $env:TEMP "nexus-alpha-python-install-$pyVer-retry.log"
+            # $installArgs 중 /log 만 새 경로로 교체. 나머지 인자는 동일.
+            $retryArgs = @()
+            $i = 0
+            while ($i -lt $installArgs.Count) {
+                if ($installArgs[$i] -eq '/log') {
+                    $retryArgs += '/log'
+                    $retryArgs += $retryLog
+                    $i += 2
+                } else {
+                    $retryArgs += $installArgs[$i]
+                    $i += 1
+                }
+            }
+            $retryExit = -1
+            try {
+                $procRetry = Start-Process -FilePath $installerPath -ArgumentList $retryArgs -Wait -PassThru -NoNewWindow
+                $retryExit = $procRetry.ExitCode
+            } catch {
+                Write-Warn2 "재설치 예외: $($_.Exception.Message)"
+            }
+            if ($retryExit -eq 0 -and (Test-Path $pyExe)) {
+                Write-Ok "Python $pyVer 재설치 성공 (orphan 정리 후)"
+            } elseif ($retryExit -eq 0 -and (Test-Path $userDefaultExe)) {
+                Write-Warn2 "재설치도 TargetDir 무시 — 기본 위치 사용: $userDefaultExe"
+                $pyExe = $userDefaultExe
+                $pyDir = $userDefaultDir
+            } else {
+                # PR #133 — 재시도도 실패 → 명시적 Fail (사용자에게 actionable guidance).
+                $logHint = ''
+                if (Test-Path $retryLog) {
+                    $logHint = "`n  재시도 로그: $retryLog"
+                } elseif (Test-Path $installLog) {
+                    $logHint = "`n  최초 로그: $installLog"
+                }
+                Fail @"
 Python $pyVer MSI 인스톨러 실행 후 python.exe 미생성 [TargetDir + LocalAppData 모두 없음].
 원인 추정: MSI Burn bundle phantom install — registry 잔재 + MSI cache 손상 동시 발생.$logHint
 
@@ -439,6 +566,7 @@ Python $pyVer MSI 인스톨러 실행 후 python.exe 미생성 [TargetDir + Loca
 PR #129~#132 의 embeddable Python fallback 은 tkinter 미포함 문제로 PR #133 에서 제거됨.
 GUI 앱 [.exe] 빌드에는 풀 Python 인스톨러 필수.
 "@
+            }
         }
     }
     # PR #125 — Invoke-NativeSafely 로 NativeCommandError 회피
