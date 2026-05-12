@@ -76,73 +76,38 @@ function Fail {
     exit 1
 }
 
-# ─── PR #117/#120 — Python 3.13 자동 설치 (winget --scope user) ──────────
-# 핵심 보장:
-#   ① 기존 Python 버전 (3.10/3.11/3.12/3.14 등) *절대* 미영향 — ``-e`` exact match
-#      + Python 공식 인스톨러는 메이저.마이너 별 별도 디렉터리 (side-by-side)
-#   ② ``--scope user`` — 관리자 권한 불필요 (per-user 설치)
-#   ③ ``py -3.13`` 으로 호출 — PATH 갱신 의존성 0 (registry 기반 py launcher 사용)
-#   ④ try/catch + 상세 에러 메시지 + Fail 의 pause (창 닫힘 방지)
-# 본 함수 종료 시 ``$script:PYTHON_VENV_EXE='py'``, ``$script:PYTHON_VENV_ARGS=@('-3.13')``
-# 설정 → Install-Venv (Step 3/6) 가 ``py -3.13 -m venv`` 사용.
+# ─── PR #117/#120 — Python 3.13 자동 설치 via winget (시스템 미설치 시) ──
+# 사용 시점 (PR #123 갱신): *Python 이 시스템에 전혀 없을 때만*. 기존 Python
+# 버전이 있는 경우는 ``Install-LocalPython313`` (로컬 격리) 사용 — 사용자의
+# 기존 Python 환경 보호.
 function Install-Python313ViaWinget {
-    Write-Warn2 'Python 3.13 자동 설치 시도 (winget --scope user, 관리자 권한 불필요) — 기존 Python 버전은 side-by-side 보존'
+    Write-Warn2 'Python 3.13 자동 설치 (winget --scope user, 관리자 권한 불필요)'
 
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if (-not $winget) {
-        Fail @"
-winget 이 PATH 에 없습니다 (Windows 10 1809+ / Windows 11 기본 탑재).
-
-가능한 원인:
-  - Windows 10 1809 미만 (winget 미지원 버전)
-  - App Installer 패키지 미설치 (Microsoft Store 에서 'App Installer' 검색)
-
-수동 설치 (winget 없이):
-  1. https://www.python.org/downloads/release/python-3137/ 다운로드
-  2. 설치 시 사용자 디렉터리 (관리자 권한 불필요) 선택
-  3. 설치 완료 후 새 PowerShell 창에서 install.ps1 재실행:
-       irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
-"@
+        Write-Warn2 'winget 미설치 → 로컬 격리 설치로 전환 (Install-LocalPython313)'
+        Install-LocalPython313
+        return
     }
 
-    # PR #120 — --scope user (관리자 권한 불필요) + 약관 자동 수락 + try/catch
     $installExitCode = -1
     try {
         & winget install --id Python.Python.3.13 -e --scope user --silent `
             --accept-source-agreements --accept-package-agreements | Out-Null
         $installExitCode = $LASTEXITCODE
     } catch {
-        Fail @"
-winget 명령 실행 중 예외 발생:
-  $($_.Exception.Message)
-
-수동 설치 (권장):
-  1. https://www.python.org/downloads/release/python-3137/ 다운로드
-  2. 설치 (사용자 디렉터리, 관리자 권한 불필요)
-  3. 새 PowerShell 창에서 install.ps1 재실행
-"@
+        Write-Warn2 "winget 예외 발생 ($($_.Exception.Message)) → 로컬 격리 설치로 전환"
+        Install-LocalPython313
+        return
     }
     if ($installExitCode -ne 0) {
-        Fail @"
-winget Python 3.13 자동 설치 실패 (exit=$installExitCode).
-
-가능한 원인:
-  - 네트워크 연결 / 프록시 문제
-  - winget 소스 동기화 필요 ('winget source update' 후 재시도)
-  - 디스크 공간 부족
-  - 인증서 만료
-
-수동 설치 (권장 — 100% 작동):
-  1. https://www.python.org/downloads/release/python-3137/ 다운로드
-  2. 설치 시 'Install for all users' 체크 *해제* (사용자 디렉터리, 관리자 권한 불필요)
-  3. 새 PowerShell 창에서 install.ps1 재실행:
-       irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
-"@
+        Write-Warn2 "winget 설치 실패 (exit=$installExitCode) → 로컬 격리 설치로 전환"
+        Install-LocalPython313
+        return
     }
-    Write-Ok 'winget Python 3.13 설치 완료 (--scope user, 기존 Python 버전 미영향)'
+    Write-Ok 'winget Python 3.13 설치 완료 (--scope user)'
 
-    # PR #120 — py launcher 로 새 3.13 검출 — 현재 PowerShell PATH 미갱신 무관
-    # (py.exe 는 registry 기반 lookup 으로 모든 Python 버전 인식)
+    # py launcher 검출
     $launcherVer = $null
     $launcherExitCode = -1
     $hasLauncher = $null -ne (Get-Command py -ErrorAction SilentlyContinue)
@@ -150,37 +115,149 @@ winget Python 3.13 자동 설치 실패 (exit=$installExitCode).
         try {
             $launcherVer = (& py -3.13 --version 2>&1 | Out-String).Trim()
             $launcherExitCode = $LASTEXITCODE
-        } catch {
-            $launcherVer = $null
-        }
+        } catch { $launcherVer = $null }
     }
     if (-not $hasLauncher -or $launcherExitCode -ne 0 -or $launcherVer -notmatch 'Python\s+3\.13') {
-        Fail @"
-winget Python 3.13 설치는 성공했으나 ``py -3.13`` launcher 호출 실패.
-
-가능한 원인:
-  - py launcher (py.exe) 미설치 — Python 인스톨러 옵션 'py launcher' 가 비활성화됐을 가능성
-  - 설치 직후 registry 동기화 지연
-
-해결책 (택일):
-  1. 새 PowerShell 창 열고 재실행 (가장 간단):
-       exit  # 현재 창 종료
-       # 새 창에서:
-       irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/main/install.ps1 | iex
-
-  2. py launcher 별도 설치:
-       winget install --id Python.Launcher -e --scope user --silent
-
-  3. 수동 venv 생성 (Python 3.13 인스톨 디렉터리 직접 사용):
-       & "${env:LOCALAPPDATA}\Programs\Python\Python313\python.exe" -m venv "${HOME}\nexus-alpha\.venv"
-       # 후 install.ps1 재실행 (.venv 검출 → 의존성만 설치)
-"@
+        Write-Warn2 'winget 설치 후 py launcher 미가용 → 로컬 격리 설치로 전환'
+        Install-LocalPython313
+        return
     }
     Write-Ok "py -3.13 검출: $launcherVer (venv 생성에 사용)"
 
-    # PR #114 fallback 변수 — Install-Venv 가 ``py -3.13 -m venv`` 호출
     $script:PYTHON_VENV_EXE  = 'py'
     $script:PYTHON_VENV_ARGS = @('-3.13')
+}
+
+# ─── PR #123 — Python 3.13 로컬 격리 설치 (기존 Python 있을 때 사용) ────
+# 핵심 보장:
+#   ① 기존 Python 버전 (3.10/3.11/3.12/3.14 등) *완전 무관* — 시스템 / 사용자
+#      Python 설치 어디에도 영향 X. 본 프로그램 전용 Python 을 *install 폴더 내부*
+#      (``$INSTALL_DIR\python313\``) 에 격리 설치.
+#   ② Python 공식 Windows 인스톨러 (.exe) 직접 호출 — winget 의존성 0
+#      ``TargetDir=$INSTALL_DIR\python313 InstallAllUsers=0 PrependPath=0``
+#   ③ PATH / 시스템 Python registry / py launcher 모두 미변경
+#      (``PrependPath=0 Include_launcher=0``)
+#   ④ 관리자 권한 불필요 (``InstallAllUsers=0``)
+# 본 함수 종료 시 ``$script:PYTHON_VENV_EXE=<로컬 python.exe 절대경로>``,
+# ``$script:PYTHON_VENV_ARGS=@()`` 설정 → Install-Venv 가 *로컬 Python 으로* venv 생성.
+function Install-LocalPython313 {
+    $pyVer = if ($env:NEXUS_ALPHA_PYTHON_VERSION) { $env:NEXUS_ALPHA_PYTHON_VERSION } else { '3.13.7' }
+    $pyDir = Join-Path $INSTALL_DIR 'python313'
+    $pyExe = Join-Path $pyDir 'python.exe'
+
+    Write-Warn2 "Python $pyVer 로컬 격리 설치 시도 — 시스템/사용자 Python 영향 0 (대상 폴더: $pyDir)"
+
+    # 기존 로컬 설치 재사용 (idempotent)
+    if (Test-Path $pyExe) {
+        $existingVer = $null
+        try { $existingVer = (& $pyExe --version 2>&1 | Out-String).Trim() } catch { }
+        if ($existingVer -match 'Python\s+3\.13') {
+            Write-Ok "기존 로컬 Python 검출: $existingVer ($pyExe) — 재사용"
+            $script:PYTHON_VENV_EXE  = $pyExe
+            $script:PYTHON_VENV_ARGS = @()
+            return
+        }
+        Write-Warn2 "기존 로컬 Python 손상 추정 ($existingVer) — 폴더 삭제 후 재설치"
+        try { Remove-Item -Path $pyDir -Recurse -Force -ErrorAction Stop } catch {
+            Fail "기존 로컬 Python 폴더 삭제 실패: $($_.Exception.Message) | 수동 삭제: $pyDir"
+        }
+    }
+
+    # 다운로드
+    $installerUrl  = "https://www.python.org/ftp/python/$pyVer/python-$pyVer-amd64.exe"
+    $installerPath = Join-Path $env:TEMP "nexus-alpha-python-$pyVer-amd64.exe"
+
+    Write-Warn2 "Python $pyVer Windows 인스톨러 다운로드 중 (~25 MB) ..."
+    try {
+        $oldProg = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+        $ProgressPreference = $oldProg
+    } catch {
+        Fail @"
+Python $pyVer 다운로드 실패: $($_.Exception.Message)
+
+가능한 원인:
+  - 네트워크 연결 / 프록시 / 방화벽 (https://www.python.org 차단)
+  - DNS 해석 실패
+
+수동 fallback:
+  1. https://www.python.org/downloads/release/python-3137/ 에서 직접 다운로드
+  2. 'python-$pyVer-amd64.exe' 실행 시 'Customize installation' 선택
+  3. Install Location = $pyDir (정확히)
+  4. 'Install for all users' 체크 *해제*
+  5. install.ps1 재실행 (로컬 Python 검출 → 의존성만 설치)
+"@
+    }
+    if (-not (Test-Path $installerPath)) {
+        Fail "Python 인스톨러 다운로드 후 파일 미존재: $installerPath"
+    }
+    Write-Ok "Python $pyVer 인스톨러 다운로드 완료"
+
+    # 로컬 격리 설치 (~30 sec)
+    Write-Warn2 "Python $pyVer 로컬 설치 중 (~30초, 시스템 영향 없음) ..."
+    # SimpleInstall=1: 인스톨러 UI 미표시
+    # TargetDir: install 폴더 내부에 격리
+    # InstallAllUsers=0: per-user, 관리자 권한 불필요
+    # PrependPath=0: PATH 미변경 (시스템 영향 회피)
+    # Include_launcher=0: py.exe launcher 미설치 (시스템 영향 회피)
+    # Include_pip=1: pip 포함 (venv 생성 후 의존성 설치 가능)
+    # Shortcuts=0 + AssociateFiles=0: 바로가기 / .py 파일 연결 미변경
+    $installArgs = @(
+        '/quiet'
+        "TargetDir=$pyDir"
+        'InstallAllUsers=0'
+        'PrependPath=0'
+        'Include_launcher=0'
+        'Include_pip=1'
+        'Include_doc=0'
+        'Include_test=0'
+        'Shortcuts=0'
+        'AssociateFiles=0'
+        'CompileAll=0'
+        'SimpleInstall=1'
+    )
+
+    try {
+        $proc = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
+        $exitCode = $proc.ExitCode
+    } catch {
+        Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
+        Fail "Python 인스톨러 실행 예외: $($_.Exception.Message)"
+    } finally {
+        Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
+    }
+
+    if ($exitCode -ne 0) {
+        Fail @"
+Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).
+
+가능한 원인:
+  - 디스크 공간 부족 ($pyDir 가용 공간 확인)
+  - 파일 잠금 (이전 설치 잔존)
+  - $pyDir 경로에 한글 등 비-ASCII 문자
+
+수동 fallback:
+  https://www.python.org/downloads/release/python-3137/ 다운로드 후
+  TargetDir = $pyDir 로 수동 설치 → install.ps1 재실행.
+"@
+    }
+
+    # 검증 — python.exe 생성 + 버전 확인
+    if (-not (Test-Path $pyExe)) {
+        Fail "Python 설치 후 $pyExe 미생성 — 인스톨러 동작 이상"
+    }
+    $installedVer = $null
+    try { $installedVer = (& $pyExe --version 2>&1 | Out-String).Trim() } catch { }
+    if (-not $installedVer -or $installedVer -notmatch 'Python\s+3\.13') {
+        Fail "로컬 Python 설치는 했으나 버전 확인 실패: '$installedVer'"
+    }
+    Write-Ok "Python 로컬 설치 완료: $installedVer ($pyExe)"
+    Write-Ok '시스템 Python / PATH / registry / py launcher 모두 미변경 (격리 보장)'
+
+    # Install-Venv 가 *로컬 Python* 으로 venv 생성하도록 설정
+    $script:PYTHON_VENV_EXE  = $pyExe
+    $script:PYTHON_VENV_ARGS = @()
 }
 
 # ─── 1. 사전 검사 ───────────────────────────────────────────────────────────
@@ -269,14 +346,14 @@ git 이 PATH 에 없습니다.
                 $script:PYTHON_VENV_ARGS = @('-3.13')
                 Write-Ok "py -3.13 fallback: $launcherVer (venv 생성에 사용)"
             } else {
-                # PR #117 — py -3.13 fallback 도 실패 → winget 으로 자동 설치
-                Write-Warn2 'py -3.13 launcher 가용 불가 → Python 3.13 자동 설치 시도 (기존 버전 보존)'
-                Install-Python313ViaWinget
+                # PR #123 — 기존 Python 있음 (호환 안 됨) → 로컬 격리 설치 (시스템 미터치)
+                Write-Warn2 'py -3.13 launcher 가용 불가 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
+                Install-LocalPython313
             }
         } else {
-            # 3.10 미만 (3.9, 3.8 등 EOL) — PR #117 자동 설치
-            Write-Warn2 "현재 $pyVersion (CrewAI 미지원) → Python 3.13 자동 설치 시도 (기존 버전 보존)"
-            Install-Python313ViaWinget
+            # 3.10 미만 (3.9, 3.8 등 EOL) — PR #123 로컬 격리 (기존 Python 미터치)
+            Write-Warn2 "현재 $pyVersion (CrewAI 미지원) → 로컬 격리 Python 설치 (기존 시스템 Python 보존)"
+            Install-LocalPython313
         }
     } else {
         Write-Warn2 "Python 버전 파싱 실패 ($pyVersion) — 계속 진행하지만 의존성 호환 미보장."
@@ -419,8 +496,11 @@ function Install-Venv {
     if (Test-Path $venvPython) {
         Write-Ok '.venv 이미 존재 — 의존성만 재설치'
     } else {
-        # PR #114 — $script:PYTHON_VENV_EXE / $script:PYTHON_VENV_ARGS 는 Test-Prereqs 에서 설정.
-        # 기본값 'python' (3.10~3.13 정상) 또는 'py -3.13' (3.14+ 자동 fallback).
+        # PR #114/#123 — $script:PYTHON_VENV_EXE / $script:PYTHON_VENV_ARGS 는 Test-Prereqs 에서 설정.
+        # 가능 값:
+        #   - 'python' (3.10~3.13 정상)
+        #   - 'py' + @('-3.13') (3.14+ py launcher fallback)
+        #   - '<INSTALL_DIR>\python313\python.exe' (PR #123 로컬 격리 설치 시 절대 경로)
         # 미설정 (.venv 이미 존재해서 Test-Prereqs 가 early return 한 경우) → 'python' 기본.
         if (-not $script:PYTHON_VENV_EXE) { $script:PYTHON_VENV_EXE = 'python' }
         if ($null -eq $script:PYTHON_VENV_ARGS) { $script:PYTHON_VENV_ARGS = @() }
