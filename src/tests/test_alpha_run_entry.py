@@ -467,16 +467,13 @@ def test_install_ps1_auto_winget_python_install() -> None:
     assert "--accept-source-agreements" in text and "--accept-package-agreements" in text, (
         "winget 약관 자동 수락 플래그 누락 (사용자 비인터랙티브 보장)"
     )
-    # 3 시나리오 모두 자동 설치 호출
+    # PR #123 — winget 은 ``python 미설치`` 시나리오 1건만 호출 (시스템 Python 없음)
+    # 기존 Python 존재 (3.14+ / <3.10) 시는 Install-LocalPython313 (격리) 사용 — 시스템 미터치.
+    # winget 함수는 fallback chain 내부에서 Install-LocalPython313 도 호출 (winget 실패 시).
     install_calls = text.count("Install-Python313ViaWinget")
-    # 1 정의 + 3 호출 = 최소 4 occurrences
-    assert install_calls >= 4, (
+    assert install_calls >= 2, (
         f"Install-Python313ViaWinget 호출 횟수 부족 ({install_calls} 회) — "
-        "3 시나리오 (python 미설치 / 3.14+ fallback fail / <3.10) 모두 자동 설치 호출 필요"
-    )
-    # side-by-side 안내 — 기존 Python 버전 보존 메시지
-    assert "side-by-side" in text or "기존 Python 버전" in text, (
-        "side-by-side 설치 (기존 버전 보존) 안내 누락"
+        "최소 1 정의 + 1 호출 (python 미설치 시나리오) 필요"
     )
     # 자동 설치 후 PYTHON_VENV_EXE/ARGS 설정 — Install-Venv 가 py -3.13 사용하도록
     import re as _re
@@ -489,6 +486,94 @@ def test_install_ps1_auto_winget_python_install() -> None:
         "Install-Python313ViaWinget 가 $script:PYTHON_VENV_EXE 미설정 — Install-Venv 와 미연결"
     )
     assert "'-3.13'" in install_body, "py -3.13 launcher 인자 미설정"
+    # PR #123 — winget 실패 시 로컬 격리 fallback 호출
+    assert "Install-LocalPython313" in install_body, (
+        "winget 실패 시 Install-LocalPython313 fallback 호출 누락 — PR #123 graceful 회피 미구현"
+    )
+
+
+def test_install_ps1_local_python_install_for_wrong_version() -> None:
+    """install.ps1 이 기존 Python 호환 안 됨 시 *로컬 격리 설치* 사용 (PR #123).
+
+    배경 (사용자 정책 갱신):
+        PR #117/#120 의 winget 자동 설치는 *시스템 / user-profile* 에 Python 추가 →
+        사용자가 기존 Python 환경을 보존하고 싶을 때 부담스러움. 사용자 요청:
+
+        "이미 설치되어있는 파이썬은 건들지 말고, 해당 프로그램 동작에 필요한
+         Python 을 *install 로컬 폴더에 격리 설치* 해서 진행"
+
+    PR #123 처방:
+        - ``python`` 미설치: ``Install-Python313ViaWinget`` 호출 (시스템 깨끗하므로 추가 안전)
+        - ``python`` 있으나 호환 안 됨 (3.14+ + py -3.13 미가용 / <3.10):
+            ``Install-LocalPython313`` 호출 — Python 공식 ``.exe`` 인스톨러를
+            ``TargetDir=$INSTALL_DIR\\python313`` 으로 로컬 격리 설치.
+
+        로컬 인스톨러 옵션:
+          - ``InstallAllUsers=0`` (per-user, 관리자 권한 불필요)
+          - ``PrependPath=0`` (PATH 미변경, 시스템 영향 0)
+          - ``Include_launcher=0`` (py.exe launcher 미설치, 시스템 영향 0)
+          - ``Include_pip=1`` (venv 생성 후 의존성 설치 가능)
+
+    회귀 차단 — 본 테스트가 깨지면 사용자가 의도와 달리 시스템 Python 환경이
+    오염됨 (winget 광범위 사용 등).
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    # 신규 함수 존재
+    assert "function Install-LocalPython313" in text, (
+        "Install-LocalPython313 함수 정의 누락"
+    )
+    # Python 공식 인스톨러 URL
+    assert "python.org/ftp/python" in text, "python.org/ftp/python 다운로드 URL 누락"
+    assert "amd64.exe" in text, "Windows amd64 인스톨러 파일명 패턴 누락"
+    # 격리 설치 옵션 (시스템 영향 0)
+    assert "TargetDir=" in text, "TargetDir 격리 경로 누락"
+    assert "InstallAllUsers=0" in text, "InstallAllUsers=0 (per-user) 누락"
+    assert "PrependPath=0" in text, "PrependPath=0 (PATH 미변경) 누락"
+    assert "Include_launcher=0" in text, "Include_launcher=0 (py launcher 미설치) 누락"
+    assert "Include_pip=1" in text, "Include_pip=1 (pip 포함) 누락"
+    # 함수 본문에서 PYTHON_VENV_EXE 절대 경로 설정
+    import re as _re
+    local_func = _re.search(
+        r"function Install-LocalPython313\s*\{(.*?)\n\}\n", text, _re.DOTALL
+    )
+    assert local_func is not None, "Install-LocalPython313 함수 본문 추출 실패"
+    body = local_func.group(1)
+    assert "$script:PYTHON_VENV_EXE" in body, (
+        "Install-LocalPython313 가 $script:PYTHON_VENV_EXE 미설정"
+    )
+    # 절대 경로 사용 (`<INSTALL_DIR>\python313\python.exe`)
+    assert "python313" in body, "로컬 Python 격리 폴더 (python313) 참조 누락"
+    # idempotent — 기존 로컬 Python 검출 시 재사용
+    assert "재사용" in body or "Test-Path" in body, (
+        "idempotent 처리 누락 — 재실행 시 중복 다운로드 위험"
+    )
+
+
+def test_install_ps1_test_prereqs_routes_correctly() -> None:
+    """Test-Prereqs 가 시나리오별 정확한 설치 함수 호출 (PR #123).
+
+    - python 미설치 → Install-Python313ViaWinget (시스템 안전)
+    - 3.14+ + py -3.13 실패 → Install-LocalPython313 (시스템 미터치)
+    - <3.10 → Install-LocalPython313 (시스템 미터치)
+    """
+    text = INSTALL_PS1_PATH.read_text(encoding="utf-8")
+    import re as _re
+    # Test-Prereqs 함수 본문 추출
+    prereqs = _re.search(r"function Test-Prereqs\s*\{(.*?)\n\}\n", text, _re.DOTALL)
+    assert prereqs is not None, "Test-Prereqs 본문 추출 실패"
+    body = prereqs.group(1)
+    # python 미설치 분기 → winget
+    # 3.14+ / <3.10 분기 → LocalPython313 (2회 호출)
+    local_calls = body.count("Install-LocalPython313")
+    assert local_calls >= 2, (
+        f"Install-LocalPython313 호출 횟수 부족 ({local_calls} 회) — "
+        "3.14+ fallback 실패 + <3.10 두 시나리오 모두 호출 필요"
+    )
+    winget_calls = body.count("Install-Python313ViaWinget")
+    assert winget_calls >= 1, (
+        f"Install-Python313ViaWinget 호출 누락 ({winget_calls} 회) — "
+        "python 미설치 시나리오에서 winget 호출 필요"
+    )
 
 
 def test_install_ps1_winget_uses_scope_user() -> None:
@@ -560,12 +645,13 @@ def test_install_ps1_winget_install_uses_try_catch() -> None:
     )
     assert install_func is not None, "Install-Python313ViaWinget 함수 추출 실패"
     body = install_func.group(1)
-    # try/catch + 상세 안내 메시지
+    # try/catch + Install-LocalPython313 fallback (PR #123 — winget 실패 시 로컬 격리)
     assert "try {" in body or "try{" in body, "winget 호출에 try 블록 누락"
     assert "} catch {" in body or "}catch{" in body, "winget 호출에 catch 블록 누락"
-    # 수동 설치 fallback URL — 사용자 안내
-    assert "python.org/downloads/release/python-3137" in body, (
-        "수동 설치 fallback URL 누락 — 사용자가 자동 설치 실패 시 막힘"
+    # PR #123 — winget 실패 시 graceful fallback: Install-LocalPython313 호출
+    # (수동 설치 URL 안내는 Install-LocalPython313 의 fail 메시지로 이동)
+    assert "Install-LocalPython313" in body, (
+        "winget 실패 시 Install-LocalPython313 graceful fallback 누락"
     )
 
 
