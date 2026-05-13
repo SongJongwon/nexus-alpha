@@ -288,24 +288,24 @@ def _format_code_layout(code_files: list[Path]) -> str:
 def _select_entry_point(
     code_files: list[Path], entry_hint: str
 ) -> tuple[Optional[Path], str]:
-    """Entry .py 파일 선택 + 선택 이유 반환 (PR #133 fixup #9).
+    """Entry .py 파일 선택 + 선택 이유 반환 (PR #133 fixup #12 — test 파일 배제).
 
-    배경 (사용자 라이브 검증 3회차, 2026-05-13):
-        fixup #8 의 _resolve_entry_path 는 ``entry_hint`` 를 PRIORITY 1 로 두었음.
-        그러나 호출 측이 잘못된 hint (예: ``theme.py``) 를 넘기면 __main__ block
-        체크가 무력화 → theme.py 가 entry 로 잘못 선택 → no-op .exe (창 안 뜸).
+    배경 (사용자 라이브 검증 6회차, 2026-05-13):
+        LLM 이 app.py + test_calculator.py 둘 다 생성 + 둘 다 __main__ block 보유.
+        fixup #9 의 entry 휴리스틱이 test_calculator.py 채택 → 빈 .exe.
 
-        사용자 PR 리뷰: __main__ block 보유 파일이 PRIORITY 1 이 되어야 함.
-
-    우선순위 (사용자 명시):
-        ① ``if __name__ == '__main__'`` 블록 보유 파일
-           - 여러 개면 entry_hint 매칭 우선 → 이름 휴리스틱 → 첫 후보
-        ② entry_hint 매칭 (main block 보유 파일이 *전혀 없을* 때만)
-        ③ 이름 휴리스틱 — ``main.py`` / ``app.py`` / ``__main__.py`` / ``run.py`` / ``entry.py``
-        ④ 마지막 fallback — 첫 파일
+    우선순위:
+        절대경로 entry_hint 가 직접 존재하면 무조건 사용 (호출 측 확신 escape hatch).
+        그 외:
+          PRIORITY 1: non-test 파일 중 __main__ block 보유 (entry_hint > name 휴리스틱 > 첫 파일)
+          PRIORITY 2: non-test 파일 중 entry_hint 매칭
+          PRIORITY 3: non-test 파일 중 name 휴리스틱
+          PRIORITY 4: non-test 파일 중 첫 파일
+          PRIORITY 5 (FALLBACK): test 파일 (다른 후보 전혀 없을 때만)
 
     Returns:
-        (path, reason). reason 은 사용자 감사 추적용 — 25_executor_result.md 에 기록.
+        (path, reason). reason 은 25_executor_result.md 감사 추적용.
+        excluded test file 정보도 reason 끝에 포함.
     """
     if not code_files:
         return None, "no code_files provided"
@@ -314,55 +314,93 @@ def _select_entry_point(
     if not existing:
         return None, "no existing code_files"
 
-    # 절대경로 hint 가 직접 존재하면 1순위 무시하고 사용 (호출 측이 확신)
+    # 절대경로 entry_hint 가 직접 존재하면 모든 휴리스틱 무시 (호출 측 확신)
     if entry_hint:
         candidate = Path(entry_hint)
         if candidate.is_absolute() and candidate.exists():
-            reason = f"explicit absolute entry_hint: {candidate}"
-            return candidate, reason
+            return candidate, f"explicit absolute entry_hint: {candidate}"
 
     hint_name = Path(entry_hint).name if entry_hint else ""
 
-    # ① __main__ block 보유 파일들
-    main_block_files = [p for p in existing if _has_main_block(p)]
-    if main_block_files:
-        # ①-a entry_hint 가 main_block_files 중 하나와 매칭
+    # PR #133 fixup #12 — test 파일 분리
+    non_test_files = [p for p in existing if not _is_test_file(p)]
+    test_files = [p for p in existing if _is_test_file(p)]
+    excluded_test_names = [p.name for p in test_files]
+    excluded_suffix = (
+        f" | excluded test files: {excluded_test_names}" if excluded_test_names else ""
+    )
+
+    NAME_PRIORITY = ['app.py', 'main.py', '__main__.py', 'run.py', 'entry.py']
+
+    # ────────────────────────────────────────────────
+    # PRIORITY 1: non-test 파일 중 __main__ block 보유
+    # ────────────────────────────────────────────────
+    non_test_main = [p for p in non_test_files if _has_main_block(p)]
+    if non_test_main:
+        # ①-a entry_hint 가 non_test_main 중 하나와 매칭
         if hint_name:
-            for p in main_block_files:
+            for p in non_test_main:
                 if p.name == hint_name:
-                    return p, f"has __main__ block + matches entry_hint: {p.name}"
-        # ①-b 이름 휴리스틱 (main_block_files 중에서)
-        name_priority = ['app.py', 'main.py', '__main__.py', 'run.py', 'entry.py']
-        files_by_name = {p.name.lower(): p for p in main_block_files}
-        for hint in name_priority:
-            if hint in files_by_name:
-                return files_by_name[hint], (
-                    f"has __main__ block + name heuristic: {hint}"
+                    return p, (
+                        f"non-test + has __main__ block + matches entry_hint: {p.name}"
+                        + excluded_suffix
+                    )
+        # ①-b 이름 휴리스틱
+        files_by_name = {p.name.lower(): p for p in non_test_main}
+        for name in NAME_PRIORITY:
+            if name in files_by_name:
+                return files_by_name[name], (
+                    f"non-test + has __main__ block + name heuristic: {name}"
+                    + excluded_suffix
                 )
-        # ①-c 첫 main_block_file
-        return main_block_files[0], (
-            f"has __main__ block (first of {len(main_block_files)})"
+        # ①-c 첫 non_test_main
+        return non_test_main[0], (
+            f"non-test + has __main__ block (first of {len(non_test_main)})"
+            + excluded_suffix
         )
 
-    # ② __main__ block 보유 파일이 전혀 없으면 — entry_hint 사용
+    # ────────────────────────────────────────────────
+    # PRIORITY 2: non-test entry_hint 매칭 (main block 없을 때)
+    # ────────────────────────────────────────────────
     if hint_name:
-        for p in existing:
+        for p in non_test_files:
             if p.name == hint_name:
                 return p, (
-                    f"no __main__ block in any code_file — falling back to entry_hint: {p.name}"
+                    f"non-test + entry_hint match (no __main__ block): {p.name}"
+                    + excluded_suffix
                 )
 
-    # ③ 이름 휴리스틱
-    name_priority = ['app.py', 'main.py', '__main__.py', 'run.py', 'entry.py']
-    files_by_name = {p.name.lower(): p for p in existing}
-    for hint in name_priority:
-        if hint in files_by_name:
-            return files_by_name[hint], (
-                f"no __main__ block — name heuristic fallback: {hint}"
+    # ────────────────────────────────────────────────
+    # PRIORITY 3: non-test name 휴리스틱
+    # ────────────────────────────────────────────────
+    files_by_name = {p.name.lower(): p for p in non_test_files}
+    for name in NAME_PRIORITY:
+        if name in files_by_name:
+            return files_by_name[name], (
+                f"non-test + name heuristic (no __main__ or hint match): {name}"
+                + excluded_suffix
             )
 
-    # ④ 첫 파일
-    return existing[0], f"no __main__ block — last resort: first code_file ({existing[0].name})"
+    # ────────────────────────────────────────────────
+    # PRIORITY 4: non-test 첫 파일
+    # ────────────────────────────────────────────────
+    if non_test_files:
+        return non_test_files[0], (
+            f"non-test + first file (no __main__ / hint / name match): {non_test_files[0].name}"
+            + excluded_suffix
+        )
+
+    # ────────────────────────────────────────────────
+    # PRIORITY 5 (FALLBACK): test 파일밖에 없으면 그것을 사용
+    # ────────────────────────────────────────────────
+    test_main = [p for p in test_files if _has_main_block(p)]
+    if test_main:
+        return test_main[0], (
+            f"⚠ FALLBACK: all code_files are test files — picking first test with __main__: {test_main[0].name}"
+        )
+    return test_files[0] if test_files else None, (
+        "⚠ FALLBACK: only test files exist + no __main__ block — picking first"
+    )
 
 
 def _resolve_entry_path(code_files: list[Path], entry_hint: str) -> Optional[Path]:
@@ -757,6 +795,35 @@ def _resolve_mutex_groups(
 
     kept = [d for d in direct_deps if d in deps_set]
     return kept, excluded
+
+
+_TEST_FILE_PATTERNS = [
+    re.compile(r'^test_', re.IGNORECASE),
+    re.compile(r'_test\.py$', re.IGNORECASE),
+    re.compile(r'^tests_', re.IGNORECASE),
+    re.compile(r'^conftest\.py$', re.IGNORECASE),
+]
+
+
+def _is_test_file(path: Path) -> bool:
+    """파일명이 test 파일 패턴에 매칭되는지 (PR #133 fixup #12).
+
+    배경 (사용자 라이브 검증 6회차, 2026-05-13):
+        LLM 이 app.py + test_calculator.py 둘 다 생성 + 둘 다 __main__ block 보유.
+        fixup #9 의 entry 선택 휴리스틱이 test_calculator.py 채택 → 빈 .exe.
+
+    검출 패턴:
+        ① test_*.py
+        ② *_test.py
+        ③ tests_*.py
+        ④ conftest.py
+        ⑤ TODO: pytest_*, setup.py 도 후보 (필요 시 추가)
+    """
+    name = path.name
+    for pattern in _TEST_FILE_PATTERNS:
+        if pattern.search(name):
+            return True
+    return False
 
 
 def _has_main_block(path: Path) -> bool:

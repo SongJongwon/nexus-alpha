@@ -945,6 +945,182 @@ def test_resolve_build_deps_collect_all_whitelist(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PR #133 fixup #12 — test 파일 entry 배제
+# ---------------------------------------------------------------------------
+
+
+def test_select_entry_excludes_test_prefix_files(tmp_path: Path) -> None:
+    """fixup #12 핵심 — 사용자 라이브 시나리오 정확 재현.
+
+    LLM 이 app.py + test_calculator.py 둘 다 생성 + 둘 다 __main__ block.
+    fixup #9 까지는 test_*.py 잘못 선택 → fixup #12 가 차단.
+    """
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "code"
+    project.mkdir()
+    (project / "app.py").write_text(
+        'import customtkinter as ctk\n'
+        'if __name__ == "__main__":\n    ctk.CTk().mainloop()\n',
+        encoding="utf-8",
+    )
+    (project / "test_calculator.py").write_text(
+        'def test_add(): assert 1+1 == 2\n'
+        'if __name__ == "__main__":\n    import unittest; unittest.main()\n',
+        encoding="utf-8",
+    )
+    (project / "calculator_engine.py").write_text("def add(a,b): return a+b\n", encoding="utf-8")
+
+    code_files = [
+        project / "calculator_engine.py",
+        project / "test_calculator.py",
+        project / "app.py",
+    ]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    assert path.name == "app.py", (
+        f"test_calculator.py 가 잘못 선택됨: {path.name} (reason: {reason})"
+    )
+    # audit log 에 excluded test files 명시
+    assert "excluded test files" in reason
+    assert "test_calculator.py" in reason
+
+
+def test_select_entry_excludes_test_suffix_files(tmp_path: Path) -> None:
+    """fixup #12 — *_test.py 패턴도 배제."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+    (project / "calculator_test.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+
+    code_files = [project / "calculator_test.py", project / "app.py"]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    assert path.name == "app.py"
+
+
+def test_select_entry_excludes_conftest(tmp_path: Path) -> None:
+    """fixup #12 — conftest.py 배제."""
+    from src.workflows.build_workflow import _is_test_file
+
+    assert _is_test_file(Path("conftest.py"))
+    assert _is_test_file(Path("test_foo.py"))
+    assert _is_test_file(Path("foo_test.py"))
+    assert _is_test_file(Path("tests_helper.py"))
+    # 그러나 단순히 'test' 글자 포함은 X (test_/_test 패턴만)
+    assert not _is_test_file(Path("testimony.py"))
+    assert not _is_test_file(Path("app.py"))
+    assert not _is_test_file(Path("calculator.py"))
+
+
+def test_select_entry_test_files_used_as_last_resort(tmp_path: Path) -> None:
+    """fixup #12 — 다른 후보 *전혀 없을 때만* test 파일 사용."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    # 오직 test 파일만 존재
+    (project / "test_only.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+
+    code_files = [project / "test_only.py"]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    assert path.name == "test_only.py"
+    # FALLBACK 표시 (사용자가 audit log 보고 인지)
+    assert "FALLBACK" in reason
+
+
+def test_select_entry_app_py_wins_over_test_with_main_block(tmp_path: Path) -> None:
+    """fixup #12 — app.py 와 test_*.py 둘 다 main block 가지면 app.py 우선."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "test_app.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+    (project / "app.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+
+    # test_app.py 가 먼저 와도
+    code_files = [project / "test_app.py", project / "app.py"]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    assert path.name == "app.py"
+
+
+def test_select_entry_no_main_no_test_uses_app_py(tmp_path: Path) -> None:
+    """fixup #12 — main block 없어도 test 파일은 우선순위 낮음."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "test_calculator.py").touch()
+    (project / "theme.py").touch()
+    (project / "app.py").touch()
+
+    code_files = [
+        project / "test_calculator.py",
+        project / "theme.py",
+        project / "app.py",
+    ]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    # main block 없으므로 name heuristic → app.py
+    assert path.name == "app.py"
+    assert "non-test" in reason
+
+
+def test_select_entry_explicit_hint_test_file_still_excluded(tmp_path: Path) -> None:
+    """fixup #12 — entry_hint 가 test 파일을 가리켜도 다른 non-test 후보 있으면 우선."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "test_foo.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+    (project / "app.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+
+    code_files = [project / "test_foo.py", project / "app.py"]
+    # entry_hint = test_foo.py 라도 app.py 가 더 적절한 후보
+    path, reason = _select_entry_point(code_files, "test_foo.py")
+    assert path is not None
+    assert path.name == "app.py", (
+        f"entry_hint 가 test 파일이라도 non-test 후보 우선해야 함 (실제: {path.name})"
+    )
+
+
+def test_select_entry_absolute_hint_still_escape_hatch(tmp_path: Path) -> None:
+    """fixup #12 — 절대경로 entry_hint 는 escape hatch 로 모든 휴리스틱 무시 (호출 측 확신)."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    # 절대경로 hint (test 파일이라도) — 호출 측이 명시했으면 무조건 사용
+    abs_test = tmp_path / "test_chosen.py"
+    abs_test.write_text("# explicit test file\n", encoding="utf-8")
+    other = tmp_path / "app.py"
+    other.write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+
+    code_files = [other]
+    path, reason = _select_entry_point(code_files, str(abs_test))
+    assert path == abs_test
+    assert "absolute" in reason
+
+
+# ---------------------------------------------------------------------------
 # PR #133 fixup #11 — Pre-PyInstaller validation + LLM hidden_imports 필터
 # ---------------------------------------------------------------------------
 
@@ -1316,7 +1492,8 @@ def test_select_entry_point_no_main_block_falls_back_to_hint(tmp_path: Path) -> 
     path, reason = _select_entry_point(code_files, "config.py")
     assert path is not None
     assert path.name == "config.py"
-    assert "falling back to entry_hint" in reason
+    # fixup #12 의 새 reason 포맷: "non-test + entry_hint match"
+    assert "entry_hint match" in reason
 
 
 def test_select_entry_point_no_main_no_hint_uses_name_heuristic(tmp_path: Path) -> None:
