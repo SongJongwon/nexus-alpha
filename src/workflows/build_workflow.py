@@ -391,15 +391,18 @@ def _select_entry_point(
         )
 
     # ────────────────────────────────────────────────
-    # PRIORITY 5 (FALLBACK): test 파일밖에 없으면 그것을 사용
+    # PR #133 fixup #15 — FALLBACK 제거: test 파일만 있으면 build 거부.
+    # 배경 (사용자 라이브 검증 5회차, 2026-05-14):
+    #   LLM 이 test_clock_widget.py 만 (그것도 __main__ block 없이) 생성 →
+    #   이전 FALLBACK 분기가 어쩔 수 없이 그걸로 .exe 빌드 → 더블클릭 시 즉시 종료
+    #   (mainloop 없음 + test 코드는 unittest.main() 호출 안 함).
+    #   사용자 PC 에 useless .exe 가 배포되는 것보다 명시적 build 실패가 훨씬 도움.
+    # 처방: None 반환 → caller 가 build 중단 + 명확한 에러 메시지로 LLM 재생성 유도.
     # ────────────────────────────────────────────────
-    test_main = [p for p in test_files if _has_main_block(p)]
-    if test_main:
-        return test_main[0], (
-            f"⚠ FALLBACK: all code_files are test files — picking first test with __main__: {test_main[0].name}"
-        )
-    return test_files[0] if test_files else None, (
-        "⚠ FALLBACK: only test files exist + no __main__ block — picking first"
+    return None, (
+        f"⚠ no valid entry — only test files in code_files ({len(test_files)}). "
+        f"LLM may have misunderstood the request (expected app entry, "
+        f"got test scaffold). Test files: {[p.name for p in test_files]}"
     )
 
 
@@ -1608,9 +1611,41 @@ def run_build_workflow(
         executor_result: Optional[ExecuteResult] = None
         entry_selection_reason = ""
         if enable_executor and code_files and workflow_dir is not None:
-            # PR #133 fixup #9 — _select_entry_point 사용 + 선택 이유 캡처
+            # PR #133 fixup #9/#15 — _select_entry_point 사용 + 선택 이유 캡처
             entry_path, entry_selection_reason = _select_entry_point(code_files, entry_hint)
-            if entry_path is not None:
+            # PR #133 fixup #15 — entry_path 가 None 이면 build 중단 (test 파일만 있는 경우 등)
+            if entry_path is None:
+                executor_result = ExecuteResult(
+                    success=False,
+                    exit_code=-7,
+                    elapsed_sec=0.0,
+                    error_message=(
+                        f"적합한 entry .py 파일 없음 — LLM 산출 코드 점검 필요.\n"
+                        f"reason: {entry_selection_reason}\n\n"
+                        f"가능한 원인:\n"
+                        f"  - LLM 이 entry 파일 없이 test 파일만 생성\n"
+                        f"  - 모든 파일에 ``if __name__ == '__main__':`` 블록 부재\n"
+                        f"  - 자연어 요청이 모호하여 LLM 이 의도 못 파악\n"
+                        f"권장 조치: 요청을 구체화 (예: \"GUI 계산기 — tkinter 사용, "
+                        f"app.py 에 main entry\") 후 재실행."
+                    ),
+                )
+                # 25_executor_result.md 저장 (사용자가 확인할 수 있도록)
+                executor_md = workflow_dir / "25_executor_result.md"
+                executor_md.write_text(
+                    f"## PR #133 — entry 미탐지 (fixup #15)\n\n"
+                    f"- Selected entry: None\n"
+                    f"- Reason: {entry_selection_reason}\n\n"
+                    f"---\n\n"
+                    f"# PyInstaller 실행 결과\n\n"
+                    f"**상태**: 🔴 SKIPPED (no valid entry)\n"
+                    f"**Exit Code**: `-7`\n"
+                    f"**Elapsed**: 0.00초\n\n"
+                    f"**에러 메시지**: {executor_result.error_message}\n",
+                    encoding="utf-8",
+                )
+                saved.append(executor_md)
+            elif entry_path is not None:
                 # GUI 여부는 ui_spec 의 need_gui 파싱 (단순 substring 매치).
                 windowed = "need_gui: yes" in ui_spec or "need_gui=yes" in ui_spec
                 # 앱 이름은 entry 파일명 또는 user_request 단서 → 안전한 단순 휴리스틱

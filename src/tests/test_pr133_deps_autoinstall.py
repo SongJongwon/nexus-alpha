@@ -1019,8 +1019,14 @@ def test_select_entry_excludes_conftest(tmp_path: Path) -> None:
     assert not _is_test_file(Path("calculator.py"))
 
 
-def test_select_entry_test_files_used_as_last_resort(tmp_path: Path) -> None:
-    """fixup #12 — 다른 후보 *전혀 없을 때만* test 파일 사용."""
+def test_select_entry_test_files_only_returns_none(tmp_path: Path) -> None:
+    """fixup #15 — test 파일만 있을 때 None 반환 (이전 fixup #12 의 FALLBACK 제거).
+
+    배경 (사용자 라이브 검증 5회차):
+        LLM 이 test_clock_widget.py 만 (그것도 __main__ block 없이) 생성 →
+        이전 FALLBACK 분기가 어쩔 수 없이 빌드 → useless .exe (더블클릭 시 즉시 종료).
+        사용자 PC 에 useless .exe 배포되는 것 회피 위해 None 반환 + caller 가 fail.
+    """
     from src.workflows.build_workflow import _select_entry_point
 
     project = tmp_path / "proj"
@@ -1032,10 +1038,55 @@ def test_select_entry_test_files_used_as_last_resort(tmp_path: Path) -> None:
 
     code_files = [project / "test_only.py"]
     path, reason = _select_entry_point(code_files, "")
+    # fixup #15: None 반환 (이전: FALLBACK 으로 test 파일 사용)
+    assert path is None, (
+        f"fixup #15: test 파일만 있을 땐 None 반환해야 함 (실제: {path})"
+    )
+    assert "no valid entry" in reason.lower() or "test files" in reason
+    assert "test_only.py" in reason
+
+
+def test_select_entry_test_files_no_main_returns_none(tmp_path: Path) -> None:
+    """fixup #15 — test 파일 + __main__ 도 없으면 None (사용자 시나리오 정확 재현).
+
+    실제 사용자 5차 케이스: test_clock_widget.py (no __main__ block) → None.
+    """
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "test_clock_widget.py").write_text(
+        "import unittest\n"
+        "class TestClock(unittest.TestCase):\n"
+        "    def test_now(self):\n"
+        "        self.assertEqual(1+1, 2)\n",
+        # __main__ block 없음
+        encoding="utf-8",
+    )
+
+    code_files = [project / "test_clock_widget.py"]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is None, "fixup #15: useless .exe 양산 방지를 위해 None 반환"
+
+
+def test_select_entry_test_files_and_non_test_still_works(tmp_path: Path) -> None:
+    """fixup #15 회귀 방지 — non-test 파일이 *있을 때는* 이전과 동일 동작 (None X)."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "test_app.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+    (project / "app.py").write_text(
+        'if __name__ == "__main__":\n    pass\n', encoding="utf-8"
+    )
+
+    code_files = [project / "test_app.py", project / "app.py"]
+    path, reason = _select_entry_point(code_files, "")
+    # non-test 파일 (app.py) 가 있으므로 그것을 선택
     assert path is not None
-    assert path.name == "test_only.py"
-    # FALLBACK 표시 (사용자가 audit log 보고 인지)
-    assert "FALLBACK" in reason
+    assert path.name == "app.py"
 
 
 def test_select_entry_app_py_wins_over_test_with_main_block(tmp_path: Path) -> None:
