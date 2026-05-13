@@ -1264,7 +1264,12 @@ def _maybe_run_sandbox(
     if not code_files:
         return None, "(없음 — code_files 비었음)"
 
-    sb = run_python_package_in_sandbox(code_files, timeout_sec=timeout_sec)
+    # PR #133 fixup #13 — sandbox 단계 예외가 빌드 전체를 죽이지 않도록 wrap.
+    # sandbox 는 *advisory* 검증이지 hard gate 아님. 실패해도 PyInstaller 호출은 계속.
+    try:
+        sb = run_python_package_in_sandbox(code_files, timeout_sec=timeout_sec)
+    except Exception as e:  # noqa: BLE001
+        return None, f"(sandbox 실행 중 예외 — graceful skip: {type(e).__name__}: {e})"
     if sb is None:
         return None, "(없음 — entry 파일 미탐지로 sandbox 실행 skip)"
 
