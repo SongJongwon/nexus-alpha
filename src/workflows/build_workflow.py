@@ -41,6 +41,7 @@ Nexus Alpha 빌드 워크플로우 (Phase 4.5 통합 — v4).
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -444,6 +445,142 @@ def _parse_deps_from_report(dependency_report: str) -> tuple[list[str], list[str
     return direct_deps, hidden_imports
 
 
+def _scan_imports_from_py(entry_path: Path) -> list[str]:
+    """Entry .py 의 top-level import 문 정적 스캔 → 외부 패키지명 추출 (PR #133 fixup #6 공용).
+
+    AST walk 로 ``import X``, ``from X import Y`` 의 X 를 모두 수집 후 top-level
+    (점 앞부분) 만 남김. stdlib + build 도구 제외.
+
+    배경:
+        PR #133 fixup #6 — Track A 의 LLM dependency_report 가 일부 패키지를
+        빠뜨릴 수 있음 (예: flet 을 명시 안 함). entry .py 의 AST 스캔으로
+        보완. Track B 는 이미 이 함수를 사용 중.
+
+    Args:
+        entry_path: 스캔할 .py 파일 경로.
+
+    Returns:
+        외부 패키지명 목록 (dedupe + stdlib 제외).
+    """
+    if not entry_path.exists():
+        return []
+    try:
+        tree = ast.parse(entry_path.read_text(encoding='utf-8', errors='replace'))
+    except (SyntaxError, ValueError):
+        return []
+
+    pkgs: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                pkgs.append(alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level and node.level > 0:
+                continue
+            if node.module:
+                pkgs.append(node.module.split('.')[0])
+
+    stdlib = set(getattr(sys, 'stdlib_module_names', ()))
+    blocklist = {
+        'pyinstaller', 'pip', 'setuptools', 'wheel',
+        'pytest', 'pytest_cov', 'pytest_mock',
+    }
+    third_party = [
+        p for p in pkgs
+        if p
+        and p not in stdlib
+        and p.lower() not in blocklist
+        and not p.startswith('_')
+    ]
+    return list(dict.fromkeys(third_party))
+
+
+# Import name (Python module) → pip install name 매핑. PR #133 fixup #6:
+# AST 스캔이 추출하는 건 import 이름이지만 pip install 은 패키지 이름이 다를 수 있음.
+_IMPORT_TO_PIP_NAME: dict[str, str] = {
+    'PIL': 'pillow',
+    'cv2': 'opencv-python',
+    'sklearn': 'scikit-learn',
+    'bs4': 'beautifulsoup4',
+    'yaml': 'pyyaml',
+    'OpenSSL': 'pyOpenSSL',
+    'docx': 'python-docx',
+    'pptx': 'python-pptx',
+    'magic': 'python-magic',
+    'dotenv': 'python-dotenv',
+    'serial': 'pyserial',
+    'win32com': 'pywin32',
+    'win32api': 'pywin32',
+}
+
+
+def _normalize_pip_names(deps: list[str]) -> list[str]:
+    """Import 이름을 pip install 이름으로 정규화 (PR #133 fixup #6).
+
+    예: ``PIL`` → ``pillow``, ``cv2`` → ``opencv-python``.
+    매핑 없는 패키지는 그대로 반환.
+    """
+    return [_IMPORT_TO_PIP_NAME.get(d, d) for d in deps]
+
+
+def _resolve_build_deps(
+    dependency_report: str,
+    entry_path: Optional[Path],
+    code_files: Optional[list[Path]] = None,
+) -> tuple[list[str], list[str]]:
+    """LLM dependency_report + entry/code AST 스캔 UNION → 빌드용 전체 의존성 (PR #133 fixup #6).
+
+    배경 (사용자 라이브 검증, 2026-05-13):
+        Track A 에서 LLM 이 ``customtkinter`` 는 명시했지만 ``flet`` 은 보고서에
+        누락 — 결과 .exe 가 런타임 ``ModuleNotFoundError: No module named 'flet'``.
+        ``_parse_deps_from_report`` 단독으로는 LLM 변동성을 못 막음.
+
+    처방:
+        - LLM 보고서의 direct_dependencies + hidden_imports 추출 (기존 로직)
+        - entry .py + 모든 code_files 의 AST import 스캔
+        - 둘을 UNION → pip name 정규화 → 반환
+
+    Args:
+        dependency_report: Dependency Analyzer LLM 산출 markdown.
+        entry_path: 빌드 entry .py.
+        code_files: 전체 코드 파일 목록 (entry 외 추가 스캔 대상).
+
+    Returns:
+        (direct_deps, hidden_imports). direct_deps 는 pip install 이름으로 정규화됨.
+    """
+    direct_deps, hidden_imports = _parse_deps_from_report(dependency_report)
+
+    scanned: list[str] = []
+    if entry_path:
+        scanned.extend(_scan_imports_from_py(entry_path))
+    if code_files:
+        for f in code_files:
+            if f != entry_path and f.exists():
+                scanned.extend(_scan_imports_from_py(f))
+
+    # UNION (LLM report 우선 — 그 뒤로 AST scan 추가)
+    merged = list(dict.fromkeys(direct_deps + scanned))
+
+    # build 도구 / stdlib / blocklist 한 번 더 필터 (안전망)
+    stdlib = set(getattr(sys, 'stdlib_module_names', ()))
+    filtered: list[str] = []
+    for pkg in merged:
+        top = pkg.split('.')[0].split('[')[0].lower()
+        if not top:
+            continue
+        if top in _BUILD_DEP_BLOCKLIST:
+            continue
+        if top in {s.lower() for s in stdlib}:
+            continue
+        filtered.append(pkg)
+
+    # pip name 정규화 (PIL → pillow 등)
+    normalized = _normalize_pip_names(filtered)
+    direct_deps_final = list(dict.fromkeys(normalized))
+
+    return direct_deps_final, hidden_imports
+
+
 def _install_dependencies_for_build(
     deps: list[str],
     timeout_sec: int = 180,
@@ -743,6 +880,7 @@ def run_build_workflow(
 
         # PR #36 — PyInstaller 실제 호출 (enable_executor=True 일 때만)
         # PR #133 — Dependency Analyzer 보고서 파싱 → pip install → hidden_imports 자동 주입
+        # PR #133 fixup #6 — LLM 보고서 + entry AST 스캔 UNION + --collect-all + 실패 시 build 중단
         executor_result: Optional[ExecuteResult] = None
         if enable_executor and code_files and workflow_dir is not None:
             entry_path = _resolve_entry_path(code_files, entry_hint)
@@ -752,37 +890,55 @@ def run_build_workflow(
                 # 앱 이름은 entry 파일명 또는 user_request 단서 → 안전한 단순 휴리스틱
                 app_name = entry_path.stem.title() or "App"
 
-                # PR #133 — 의존성 자동 설치 + hidden_imports 자동 주입
-                direct_deps, hidden_imports = _parse_deps_from_report(dependency_report)
+                # PR #133 fixup #6 — LLM 보고서 + entry/code AST 스캔 UNION
+                direct_deps, hidden_imports = _resolve_build_deps(
+                    dependency_report, entry_path, code_files
+                )
                 pip_log = "deps=0 (no install needed)"
+                pip_ok = True
                 if direct_deps:
                     pip_ok, pip_log = _install_dependencies_for_build(direct_deps)
-                    if not pip_ok:
-                        # graceful — pip install 실패해도 PyInstaller 호출 계속.
-                        # 결과 .exe 가 런타임에 ModuleNotFoundError 낼 수 있으나,
-                        # 25_executor_result.md 의 pip_log 로 추적 가능.
-                        pass
 
-                executor_result = execute_pyinstaller(
-                    entry_path=entry_path,
-                    output_dir=workflow_dir / "build_output",
-                    app_name=app_name,
-                    windowed=windowed,
-                    onefile=True,
-                    hidden_imports=hidden_imports if hidden_imports else None,
-                    timeout_sec=executor_timeout_sec,
-                )
+                if not pip_ok:
+                    # PR #133 fixup #6 — pip install 실패 → PyInstaller 호출 중단.
+                    # 빈 껍데기 .exe 생성하느니 명시적 실패가 사용자에게 도움.
+                    elapsed_now = 0.0
+                    executor_result = ExecuteResult(
+                        success=False,
+                        exit_code=-4,
+                        elapsed_sec=elapsed_now,
+                        error_message=(
+                            f"필수 의존성 pip install 실패 — PyInstaller 호출 중단. "
+                            f"누락된 패키지를 .exe 가 런타임에 못 찾으므로 빌드 무의미. "
+                            f"실패 로그: {pip_log}"
+                        ),
+                    )
+                else:
+                    executor_result = execute_pyinstaller(
+                        entry_path=entry_path,
+                        output_dir=workflow_dir / "build_output",
+                        app_name=app_name,
+                        windowed=windowed,
+                        onefile=True,
+                        hidden_imports=hidden_imports if hidden_imports else None,
+                        # PR #133 fixup #6 — direct_deps 모두에 --collect-all
+                        # (flet / customtkinter 등 data files / 플러그인 가진 패키지 대응)
+                        collect_all=direct_deps if direct_deps else None,
+                        timeout_sec=executor_timeout_sec,
+                    )
                 # 25_executor_result.md 저장 — 사용자 가시 산출물
                 executor_md = workflow_dir / "25_executor_result.md"
                 executor_md_body = _format_executor_result_md(executor_result)
                 # PR #133 — 의존성 자동 설치 결과를 산출물 상단에 prepend
                 pr133_header = (
-                    "## PR #133 — 의존성 자동 설치 결과\n\n"
+                    "## PR #133 — 의존성 자동 설치 결과 (fixup #6: LLM + AST UNION)\n\n"
                     f"- direct_dependencies: {len(direct_deps)}개 "
                     f"({', '.join(direct_deps) if direct_deps else '없음'})\n"
                     f"- hidden_imports: {len(hidden_imports)}개 "
                     f"({', '.join(hidden_imports) if hidden_imports else '없음'})\n"
-                    f"- pip install: {pip_log}\n\n"
+                    f"- pip install: {pip_log}\n"
+                    f"- PyInstaller --collect-all: {len(direct_deps)}개 "
+                    f"({', '.join(direct_deps) if direct_deps else '없음'})\n\n"
                     "---\n\n"
                 )
                 executor_md.write_text(
