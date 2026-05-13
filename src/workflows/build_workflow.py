@@ -440,6 +440,44 @@ _COLLECT_ALL_WHITELIST: set[str] = {
 }
 
 
+# PR #133 fixup #10 — Multi-package 라이브러리의 runtime extras 매핑.
+# 일부 패키지는 분할 구조 (예: flet 0.21+ 는 flet / flet-desktop / flet-web 로 분리).
+# AST 스캔은 사용자 코드의 ``import flet`` 만 catch → flet-desktop 같은 transitive
+# runtime dependency 는 자동 설치 안 됨 → .exe 가 ``ModuleNotFoundError: flet_desktop`` 으로 실패.
+#
+# 매핑 키: AST 가 검출하는 top-level import name (lowercase)
+# 매핑 값: 추가로 필요한 pip 패키지 + PyInstaller --collect-all 대상 모듈명
+#
+# TODO: 매핑 항목이 많아지면 별도 yaml/json 파일로 분리 (사용자 PR 리뷰 제안).
+@dataclass
+class RuntimeExtras:
+    """Multi-package 라이브러리의 추가 런타임 패키지."""
+    pip_install: list[str]
+    """pip install 인자에 추가할 패키지명 (dash 형식 — flet-desktop)."""
+    collect_all: list[str]
+    """PyInstaller --collect-all 인자에 추가할 모듈명 (underscore 형식 — flet_desktop)."""
+
+
+_PACKAGE_RUNTIME_EXTRAS: dict[str, RuntimeExtras] = {
+    # flet 0.21+ multi-package 분할:
+    #   - flet (코어 API)
+    #   - flet-desktop (Windows/Mac/Linux 데스크톱 런타임 — flet 내부에서 동적 import)
+    #   - flet-web (웹 런타임, 옵션)
+    # 사용자 라이브 검증 (2026-05-13): flet.app() 호출 시
+    #   ``from flet_desktop import close_flet_view`` 가 .exe 에서 실패.
+    'flet': RuntimeExtras(
+        pip_install=['flet-desktop'],
+        collect_all=['flet_desktop'],
+    ),
+    # 추후 발견되는 multi-package 라이브러리는 여기에 추가.
+    # 예시 (검증되지 않음 — 발견 시 enable):
+    #   'streamlit': RuntimeExtras(
+    #       pip_install=['streamlit-extras'],
+    #       collect_all=['streamlit_extras'],
+    #   ),
+}
+
+
 def _parse_deps_from_report(dependency_report: str) -> tuple[list[str], list[str]]:
     """Dependency Analyzer 산출 markdown 에서 ``direct_dependencies`` + ``hidden_imports`` 추출.
 
@@ -881,8 +919,27 @@ def _resolve_build_deps(
         files_for_count.append(entry_path)
     direct_deps_resolved, excluded = _resolve_mutex_groups(direct_deps, files_for_count)
 
-    # 7) --collect-all 화이트리스트 — direct_deps 중 명시된 것만
+    # 7) PR #133 fixup #10 — multi-package runtime extras 확장 (flet → flet-desktop 등)
+    extras_pip_added: list[str] = []
+    extras_collect_added: list[str] = []
+    for dep in list(direct_deps_resolved):
+        extras = _PACKAGE_RUNTIME_EXTRAS.get(dep.lower())
+        if not extras:
+            continue
+        for pip_extra in extras.pip_install:
+            if pip_extra not in direct_deps_resolved and pip_extra not in extras_pip_added:
+                extras_pip_added.append(pip_extra)
+        for collect_extra in extras.collect_all:
+            if collect_extra not in extras_collect_added:
+                extras_collect_added.append(collect_extra)
+    direct_deps_resolved = direct_deps_resolved + extras_pip_added
+
+    # 8) --collect-all 화이트리스트 — direct_deps 중 명시된 것만 + extras 의 collect_all 추가
     collect_all = [d for d in direct_deps_resolved if d.lower() in _COLLECT_ALL_WHITELIST]
+    # extras 의 collect_all 은 화이트리스트 무관 무조건 포함 (의도된 runtime 추가)
+    for c in extras_collect_added:
+        if c not in collect_all:
+            collect_all.append(c)
 
     return BuildDepsResolution(
         direct_deps_to_install=direct_deps_resolved,

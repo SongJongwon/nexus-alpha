@@ -687,8 +687,13 @@ def test_resolve_build_deps_excludes_local_project_modules(tmp_path: Path) -> No
     ]
     result = _resolve_build_deps("", project / "calculator.py", code_files)
     direct = result.direct_deps_to_install
-    # 외부 패키지 flet 만 남고, theme/views/storage 는 모두 로컬로 인식
-    assert direct == ["flet"], f"fixup #7: 로컬 모듈이 외부로 분류됨: {direct}"
+    # 외부 패키지 flet 검출 + theme/views/storage 는 모두 로컬로 인식
+    assert "flet" in direct, f"flet 미검출: {direct}"
+    assert "theme" not in direct, f"로컬 모듈 theme 누수: {direct}"
+    assert "views" not in direct
+    assert "storage" not in direct
+    # fixup #10: flet 검출 시 flet-desktop 자동 추가
+    assert "flet-desktop" in direct, f"flet-desktop runtime extra 미추가: {direct}"
 
 
 def test_collect_local_modules_finds_sibling_py_files(tmp_path: Path) -> None:
@@ -785,8 +790,10 @@ def test_resolve_build_deps_mixed_stdlib_local_external(tmp_path: Path) -> None:
     code_files = [project / "app.py", project / "theme.py"]
     result = _resolve_build_deps("", project / "app.py", code_files)
     direct = result.direct_deps_to_install
-    # External 만 남아야 함
-    assert sorted(direct) == sorted(["requests", "flet"]), f"deps mismatch: {direct}"
+    # External 가 남아야 함 (fixup #10: flet 검출 시 flet-desktop 도 자동 추가)
+    assert "requests" in direct
+    assert "flet" in direct
+    assert "flet-desktop" in direct  # fixup #10 runtime extras
     assert "json" not in direct
     assert "pathlib" not in direct
     assert "theme" not in direct
@@ -930,6 +937,123 @@ def test_resolve_build_deps_collect_all_whitelist(tmp_path: Path) -> None:
     assert "numpy" not in result.collect_all_packages, (
         "numpy 는 PyInstaller 내장 hook 에 위임 — --collect-all 불필요"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #133 fixup #10 — Multi-package runtime extras (flet → flet-desktop)
+# ---------------------------------------------------------------------------
+
+
+def test_flet_triggers_flet_desktop_install(tmp_path: Path) -> None:
+    """fixup #10 — flet 검출 시 flet-desktop 자동 pip install + collect_all.
+
+    사용자 라이브 검증 (2026-05-13): flet 만 설치된 .venv 로 빌드한 .exe 가
+    런타임에 `from flet_desktop import close_flet_view` 로 실패. flet 의
+    분할 구조 (flet / flet-desktop / flet-web) 를 우리가 인지해 보조 패키지
+    까지 자동 처리.
+    """
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "import flet\n"
+        "def main(page: flet.Page):\n    page.add(flet.Text('Hello'))\n\n"
+        "if __name__ == '__main__':\n    flet.app(target=main)\n",
+        encoding="utf-8",
+    )
+
+    result = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    # 사용자 코드는 flet 만 import 했지만 flet-desktop 도 자동 추가됨
+    assert "flet" in result.direct_deps_to_install
+    assert "flet-desktop" in result.direct_deps_to_install, (
+        f"flet-desktop runtime extra 미추가: {result.direct_deps_to_install}"
+    )
+    # PyInstaller --collect-all 에도 import name (flet_desktop) 포함
+    assert "flet" in result.collect_all_packages
+    assert "flet_desktop" in result.collect_all_packages, (
+        f"flet_desktop --collect-all 미추가: {result.collect_all_packages}"
+    )
+
+
+def test_non_mapped_package_unaffected_by_runtime_extras(tmp_path: Path) -> None:
+    """매핑되지 않은 패키지는 extras 영향 X."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "import requests\n"
+        "import numpy\n"
+        "if __name__ == '__main__':\n    requests.get('https://example.com')\n",
+        encoding="utf-8",
+    )
+    result = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    # extras 매핑 없는 패키지는 본인만 설치
+    assert sorted(result.direct_deps_to_install) == sorted(["requests", "numpy"])
+
+
+def test_runtime_extras_no_duplicate(tmp_path: Path) -> None:
+    """flet 이 여러 파일에서 import 되어도 flet-desktop 은 1번만 추가."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "import flet\nif __name__ == '__main__':\n    flet.app()\n", encoding="utf-8"
+    )
+    (project / "views.py").write_text("import flet\n", encoding="utf-8")
+    code_files = [project / "app.py", project / "views.py"]
+    result = _resolve_build_deps("", project / "app.py", code_files)
+    # flet-desktop 정확히 1번
+    assert result.direct_deps_to_install.count("flet-desktop") == 1
+    assert result.collect_all_packages.count("flet_desktop") == 1
+
+
+def test_runtime_extras_mapping_extensible() -> None:
+    """매핑 테이블 구조 검증 — 향후 패키지 추가 가능."""
+    from src.workflows.build_workflow import (
+        RuntimeExtras,
+        _PACKAGE_RUNTIME_EXTRAS,
+    )
+
+    # flet 매핑 정확
+    flet_extras = _PACKAGE_RUNTIME_EXTRAS.get("flet")
+    assert flet_extras is not None
+    assert isinstance(flet_extras, RuntimeExtras)
+    assert "flet-desktop" in flet_extras.pip_install
+    assert "flet_desktop" in flet_extras.collect_all
+
+    # 새 매핑 추가 시뮬레이션 (사용자가 확장 가능)
+    new_extras = RuntimeExtras(
+        pip_install=["foo-runtime"],
+        collect_all=["foo_runtime"],
+    )
+    assert isinstance(new_extras, RuntimeExtras)
+
+
+def test_runtime_extras_with_mutex_resolution(tmp_path: Path) -> None:
+    """Mutex group 해소 + extras 확장 둘 다 적용."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    # flet (extras 있음) + PySide6 (mutex 그룹) 동시 사용 시나리오
+    (project / "app.py").write_text(
+        "import flet\n"
+        "import PySide6\n"  # 1번
+        "import PyQt6\n"    # 1번 (priority 로 PySide6 win)
+        "if __name__ == '__main__':\n    flet.app()\n",
+        encoding="utf-8",
+    )
+    result = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    # flet + flet-desktop 둘 다
+    assert "flet" in result.direct_deps_to_install
+    assert "flet-desktop" in result.direct_deps_to_install
+    # PySide6 채택, PyQt6 mutex 차단
+    assert "PySide6" in result.direct_deps_to_install
+    assert "PyQt6" not in result.direct_deps_to_install
+    assert "PyQt6" in result.excluded_modules
 
 
 # ---------------------------------------------------------------------------
