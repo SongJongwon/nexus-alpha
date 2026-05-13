@@ -1267,6 +1267,7 @@ def _run_track_b_build(
         _install_dependencies_for_build,
         _pre_pyinstaller_validation,
         _resolve_build_deps,
+        _validate_module_attributes,
     )
 
     entry_path = _resolve_track_b_entry_path(domain, saved_code_files)
@@ -1301,6 +1302,21 @@ def _run_track_b_build(
             error_message=(
                 f"Track B: Pre-PyInstaller validation 실패 — 코드 자체 결함이 있어 "
                 f"PyInstaller 호출해도 .exe 가 런타임 실패할 것. build 중단.\n\n{pre_log}"
+            ),
+        )
+
+    # PR #133 fixup #14 — Track B 도 정적 attribute 검증
+    attr_ok, attr_broken = _validate_module_attributes(entry_path, saved_code_files)
+    if not attr_ok:
+        return ExecuteResult(
+            success=False,
+            exit_code=-6,
+            elapsed_sec=0.0,
+            error_message=(
+                f"Track B: 정적 attribute 검증 실패 — LLM 코드가 설치된 모듈의 존재하지 "
+                f"않는 attribute 를 사용. build 중단.\n"
+                f"누락 attribute 체인 ({len(attr_broken)}개):\n  "
+                + "\n  ".join(attr_broken[:10])
             ),
         )
 

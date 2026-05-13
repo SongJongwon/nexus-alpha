@@ -1069,6 +1069,165 @@ def _resolve_build_deps(
     )
 
 
+def _extract_module_aliases(tree: ast.Module) -> dict[str, str]:
+    """``import X``, ``import X as Y`` 의 alias 매핑 추출 (PR #133 fixup #14 helper).
+
+    Returns:
+        local_name → actual_module_name (예: {'ft': 'flet', 'np': 'numpy'}).
+        ``from X import Y`` 는 처리 X (Y 가 module 가 아닐 수 있어 검증 불가).
+    """
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias_node in node.names:
+                local_name = alias_node.asname or alias_node.name.split('.')[0]
+                aliases[local_name] = alias_node.name
+    return aliases
+
+
+def _extract_attribute_chains(tree: ast.Module) -> list[tuple[str, ...]]:
+    """모든 attribute access chain 추출 (PR #133 fixup #14 helper).
+
+    AST 의 Attribute 노드를 walk:
+        ``flet.colors.RED``  → ('flet', 'colors', 'RED')
+        ``np.array.shape``    → ('np', 'array', 'shape')
+        ``self.x.y``          → ('self', 'x', 'y')  (filter 단계에서 제거)
+        ``f().attr``          → 시작이 Name 아님 → skip
+
+    Returns:
+        chain tuples list (각 chain 의 첫 element 는 Name).
+    """
+    chains: list[tuple[str, ...]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        chain: list[str] = []
+        curr: Optional[ast.AST] = node
+        while isinstance(curr, ast.Attribute):
+            chain.insert(0, curr.attr)
+            curr = curr.value
+        if isinstance(curr, ast.Name):
+            chain.insert(0, curr.id)
+            if len(chain) >= 2:
+                chains.append(tuple(chain))
+    return chains
+
+
+def _validate_module_attributes(
+    entry_path: Optional[Path],
+    code_files: Optional[list[Path]] = None,
+) -> tuple[bool, list[str]]:
+    """LLM 코드의 attribute access 를 실제 설치된 모듈과 정적 검증 (PR #133 fixup #14).
+
+    배경 (사용자 라이브 검증, 2026-05-13):
+        LLM 이 ``flet.colors.XXX`` 사용 → 설치된 Flet 버전엔 ``colors`` 없음
+        → .exe 가 사용자 PC 에서 AttributeError popup. fixup #11 의 subprocess
+        validation 은 Flet 의 internal error handler 가 catch 해 popup 으로만
+        표시하므로 못 잡음.
+
+    처방:
+        1) 모든 code file 의 ``import X`` / ``import X as Y`` alias 매핑 수집
+        2) 모든 Attribute 노드의 chain 추출 (e.g., ``flet.colors.RED``)
+        3) Chain top-level 이 import 된 module alias 인 경우만 검증
+        4) importlib.import_module + walk hasattr/getattr → 누락 시 broken 추가
+
+    *Conservative* — false positive 위험 최소화 (사용자 명시 요구사항):
+        - top-level 이 import 된 module alias 가 아니면 skip
+          (instance attr 'self.x.y' / 함수 결과 등은 검증 X)
+        - module 이 import 안 되면 skip (local module / 미설치)
+        - hasattr/getattr 중 예외 발생 시 valid 로 간주 (dynamic __getattr__ 등)
+        - stdlib 자동 skip (PyInstaller 가 처리)
+
+    Returns:
+        (ok, broken_chains). ok=False 면 build 중단 권고 (사용자 PC 빈 .exe 회피).
+    """
+    import importlib
+    import sys as _sys
+
+    files: list[Path] = []
+    if entry_path:
+        files.append(entry_path)
+    if code_files:
+        for f in code_files:
+            if f and f.exists() and f not in files:
+                files.append(f)
+    if not files:
+        return True, []
+
+    # ① import alias + attribute chain 수집 (모든 파일 합산)
+    all_aliases: dict[str, str] = {}
+    all_chains: list[tuple[str, ...]] = []
+    for f in files:
+        try:
+            tree = ast.parse(f.read_text(encoding='utf-8', errors='replace'))
+        except (SyntaxError, ValueError):
+            continue
+        all_aliases.update(_extract_module_aliases(tree))
+        all_chains.extend(_extract_attribute_chains(tree))
+
+    if not all_chains:
+        return True, []
+
+    # ② chains 를 import 된 module 별로 group
+    stdlib = set(getattr(_sys, 'stdlib_module_names', ()))
+    chains_by_module: dict[str, list[tuple[str, ...]]] = {}
+    for chain in all_chains:
+        top = chain[0]
+        if top.startswith('_'):
+            continue
+        # 핵심 필터: top 이 import 된 module 의 alias 여야 함
+        # (instance attr, 함수 결과 등은 정적 검증 불가 → 안전하게 skip)
+        if top not in all_aliases:
+            continue
+        actual_module = all_aliases[top]
+        actual_top = actual_module.split('.')[0]
+        if actual_top in stdlib:
+            continue
+        chains_by_module.setdefault(actual_module, []).append(chain)
+
+    if not chains_by_module:
+        return True, []
+
+    # ③ 각 module 의 chain 검증
+    broken: list[str] = []
+    for module_name, module_chains in chains_by_module.items():
+        try:
+            mod = importlib.import_module(module_name)
+        except Exception:  # noqa: BLE001 — import 실패 = local module 또는 미설치 → skip
+            continue
+        seen_chains: set[str] = set()
+        for chain in module_chains:
+            obj = mod
+            chain_so_far = chain[0]
+            broken_here = False
+            for attr in chain[1:]:
+                chain_so_far = f"{chain_so_far}.{attr}"
+                try:
+                    has = hasattr(obj, attr)
+                except Exception:  # noqa: BLE001 — dynamic __getattr__ 등 → valid 로 간주
+                    has = True
+                    break
+                if not has:
+                    broken_here = True
+                    full_chain = '.'.join(chain)
+                    if chain_so_far not in seen_chains:
+                        seen_chains.add(chain_so_far)
+                        broken.append(
+                            f"'{module_name}' has no attribute path '{chain_so_far}' "
+                            f"(used in code as '{full_chain}')"
+                        )
+                    break
+                try:
+                    obj = getattr(obj, attr)
+                except Exception:  # noqa: BLE001
+                    break
+            if broken_here and len(broken) >= 20:
+                # 너무 많은 broken chain 시 잘라냄 (UX)
+                return False, broken
+
+    return (len(broken) == 0), broken
+
+
 def _pre_pyinstaller_validation(
     entry_path: Path,
     timeout_sec: int = 5,
@@ -1485,6 +1644,10 @@ def run_build_workflow(
                     # PR #133 fixup #11 — pre-PyInstaller validation
                     # 코드 자체 결함 (AttributeError 등) 사전 검출 → 빈 껍데기 .exe 양산 차단
                     pre_ok, pre_log = _pre_pyinstaller_validation(entry_path)
+                    # PR #133 fixup #14 — 정적 attribute 검증 (subprocess 가 못 잡는 deferred error)
+                    attr_ok, attr_broken = (True, [])
+                    if pre_ok:
+                        attr_ok, attr_broken = _validate_module_attributes(entry_path, code_files)
                     if not pre_ok:
                         executor_result = ExecuteResult(
                             success=False,
@@ -1494,6 +1657,21 @@ def run_build_workflow(
                                 f"Pre-PyInstaller validation 실패 — 코드 자체 결함이 "
                                 f"있어 PyInstaller 호출해도 .exe 가 런타임 실패할 것. "
                                 f"build 중단.\n\n{pre_log}"
+                            ),
+                        )
+                    elif not attr_ok:
+                        # PR #133 fixup #14 — Flet 처럼 internal error handler 가 catch 하는
+                        # 케이스. subprocess 는 exit 0 로 종료하지만 LLM 코드는 broken.
+                        executor_result = ExecuteResult(
+                            success=False,
+                            exit_code=-6,
+                            elapsed_sec=0.0,
+                            error_message=(
+                                f"정적 attribute 검증 실패 — LLM 코드가 설치된 모듈의 "
+                                f"존재하지 않는 attribute 를 사용. .exe 빌드해도 사용자 PC "
+                                f"에서 AttributeError popup 발생할 것이므로 build 중단.\n"
+                                f"누락 attribute 체인 ({len(attr_broken)}개):\n  "
+                                + "\n  ".join(attr_broken[:10])
                             ),
                         )
                     else:
