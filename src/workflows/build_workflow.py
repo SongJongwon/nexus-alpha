@@ -285,46 +285,93 @@ def _format_code_layout(code_files: list[Path]) -> str:
     return "\n".join(lines)
 
 
-def _resolve_entry_path(code_files: list[Path], entry_hint: str) -> Optional[Path]:
-    """entry_hint (상대경로 string) 를 실제 Path 로 해석 (PR #133 fixup #8 강화).
+def _select_entry_point(
+    code_files: list[Path], entry_hint: str
+) -> tuple[Optional[Path], str]:
+    """Entry .py 파일 선택 + 선택 이유 반환 (PR #133 fixup #9).
 
-    배경 (사용자 라이브 검증, 2026-05-13):
-        LLM 산출 코드가 calculator.py / theme.py / views.py / storage.py 같은 다
-        파일 구조일 때, 첫 파일이 알파벳 순으로 theme.py 가 되어 entry 로 선택됨.
-        그러나 진짜 entry 는 ``if __name__ == '__main__'`` 블록 가진 파일.
+    배경 (사용자 라이브 검증 3회차, 2026-05-13):
+        fixup #8 의 _resolve_entry_path 는 ``entry_hint`` 를 PRIORITY 1 로 두었음.
+        그러나 호출 측이 잘못된 hint (예: ``theme.py``) 를 넘기면 __main__ block
+        체크가 무력화 → theme.py 가 entry 로 잘못 선택 → no-op .exe (창 안 뜸).
 
-    우선순위:
-        ① entry_hint 매칭 (caller 가 명시했으면 신뢰)
-        ② code_files 중 ``if __name__ == '__main__'`` 블록 가진 파일
-        ③ 이름 휴리스틱 — ``main.py`` / ``app.py`` / ``__main__.py`` / ``run.py``
+        사용자 PR 리뷰: __main__ block 보유 파일이 PRIORITY 1 이 되어야 함.
+
+    우선순위 (사용자 명시):
+        ① ``if __name__ == '__main__'`` 블록 보유 파일
+           - 여러 개면 entry_hint 매칭 우선 → 이름 휴리스틱 → 첫 후보
+        ② entry_hint 매칭 (main block 보유 파일이 *전혀 없을* 때만)
+        ③ 이름 휴리스틱 — ``main.py`` / ``app.py`` / ``__main__.py`` / ``run.py`` / ``entry.py``
         ④ 마지막 fallback — 첫 파일
+
+    Returns:
+        (path, reason). reason 은 사용자 감사 추적용 — 25_executor_result.md 에 기록.
     """
     if not code_files:
-        return None
-    # ① entry_hint 매칭
-    candidate = Path(entry_hint)
-    if candidate.is_absolute() and candidate.exists():
-        return candidate
-    hint_name = candidate.name
+        return None, "no code_files provided"
+
+    existing = [p for p in code_files if p.exists()]
+    if not existing:
+        return None, "no existing code_files"
+
+    # 절대경로 hint 가 직접 존재하면 1순위 무시하고 사용 (호출 측이 확신)
+    if entry_hint:
+        candidate = Path(entry_hint)
+        if candidate.is_absolute() and candidate.exists():
+            reason = f"explicit absolute entry_hint: {candidate}"
+            return candidate, reason
+
+    hint_name = Path(entry_hint).name if entry_hint else ""
+
+    # ① __main__ block 보유 파일들
+    main_block_files = [p for p in existing if _has_main_block(p)]
+    if main_block_files:
+        # ①-a entry_hint 가 main_block_files 중 하나와 매칭
+        if hint_name:
+            for p in main_block_files:
+                if p.name == hint_name:
+                    return p, f"has __main__ block + matches entry_hint: {p.name}"
+        # ①-b 이름 휴리스틱 (main_block_files 중에서)
+        name_priority = ['app.py', 'main.py', '__main__.py', 'run.py', 'entry.py']
+        files_by_name = {p.name.lower(): p for p in main_block_files}
+        for hint in name_priority:
+            if hint in files_by_name:
+                return files_by_name[hint], (
+                    f"has __main__ block + name heuristic: {hint}"
+                )
+        # ①-c 첫 main_block_file
+        return main_block_files[0], (
+            f"has __main__ block (first of {len(main_block_files)})"
+        )
+
+    # ② __main__ block 보유 파일이 전혀 없으면 — entry_hint 사용
     if hint_name:
-        for p in code_files:
-            if p.name == hint_name and p.exists():
-                return p
+        for p in existing:
+            if p.name == hint_name:
+                return p, (
+                    f"no __main__ block in any code_file — falling back to entry_hint: {p.name}"
+                )
 
-    # ② __main__ block 가진 파일
-    for p in code_files:
-        if p.exists() and _has_main_block(p):
-            return p
-
-    # ③ 이름 휴리스틱 (대소문자 무시)
-    name_priority = ['main.py', 'app.py', '__main__.py', 'run.py', 'entry.py']
-    files_by_name = {p.name.lower(): p for p in code_files if p.exists()}
+    # ③ 이름 휴리스틱
+    name_priority = ['app.py', 'main.py', '__main__.py', 'run.py', 'entry.py']
+    files_by_name = {p.name.lower(): p for p in existing}
     for hint in name_priority:
         if hint in files_by_name:
-            return files_by_name[hint]
+            return files_by_name[hint], (
+                f"no __main__ block — name heuristic fallback: {hint}"
+            )
 
-    # ④ 마지막 fallback — 첫 파일
-    return code_files[0] if code_files[0].exists() else None
+    # ④ 첫 파일
+    return existing[0], f"no __main__ block — last resort: first code_file ({existing[0].name})"
+
+
+def _resolve_entry_path(code_files: list[Path], entry_hint: str) -> Optional[Path]:
+    """Backward-compat wrapper — _select_entry_point 의 path 만 반환.
+
+    Reason 도 필요하면 _select_entry_point 직접 호출.
+    """
+    path, _reason = _select_entry_point(code_files, entry_hint)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -1146,8 +1193,10 @@ def run_build_workflow(
         # PR #133 — Dependency Analyzer 보고서 파싱 → pip install → hidden_imports 자동 주입
         # PR #133 fixup #6 — LLM 보고서 + entry AST 스캔 UNION + --collect-all + 실패 시 build 중단
         executor_result: Optional[ExecuteResult] = None
+        entry_selection_reason = ""
         if enable_executor and code_files and workflow_dir is not None:
-            entry_path = _resolve_entry_path(code_files, entry_hint)
+            # PR #133 fixup #9 — _select_entry_point 사용 + 선택 이유 캡처
+            entry_path, entry_selection_reason = _select_entry_point(code_files, entry_hint)
             if entry_path is not None:
                 # GUI 여부는 ui_spec 의 need_gui 파싱 (단순 substring 매치).
                 windowed = "need_gui: yes" in ui_spec or "need_gui=yes" in ui_spec
@@ -1195,7 +1244,8 @@ def run_build_workflow(
                 executor_md = workflow_dir / "25_executor_result.md"
                 executor_md_body = _format_executor_result_md(executor_result)
                 pr133_header = (
-                    "## PR #133 — 의존성 자동 설치 결과 (fixup #8: AST primary + Mutex + Whitelist)\n\n"
+                    "## PR #133 — 의존성 자동 설치 결과 (fixup #9: __main__ block 우선 entry 선택)\n\n"
+                    f"- Selected entry: `{entry_path.name}` (reason: {entry_selection_reason})\n"
                     f"- direct_dependencies (AST scan): {len(build_deps.direct_deps_to_install)}개 "
                     f"({', '.join(build_deps.direct_deps_to_install) if build_deps.direct_deps_to_install else '없음'})\n"
                     f"- hidden_imports (LLM): {len(build_deps.hidden_imports)}개 "

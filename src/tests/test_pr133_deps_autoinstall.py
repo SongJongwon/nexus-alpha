@@ -932,6 +932,180 @@ def test_resolve_build_deps_collect_all_whitelist(tmp_path: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# PR #133 fixup #9 — __main__ block PRIORITY 1 (entry_hint 우선순위 강등)
+# ---------------------------------------------------------------------------
+
+
+def test_select_entry_point_main_block_beats_wrong_entry_hint(tmp_path: Path) -> None:
+    """fixup #9 핵심 — entry_hint 가 잘못된 파일을 가리켜도 __main__ block 가진 파일 선택.
+
+    사용자 라이브 검증 3회차 (2026-05-13) 의 정확한 시나리오 재현:
+        - code_files: [theme.py, app.py, calculator_engine.py, ...]
+        - app.py 만 __main__ block 보유
+        - 어떤 이유로 entry_hint = "theme.py"
+        - fixup #8 까지: theme.py 선택 → no-op .exe (창 안 뜸)
+        - fixup #9 부터: app.py 선택 (__main__ block PRIORITY 1)
+    """
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "code"
+    project.mkdir()
+    # 사용자 라이브 시나리오 정확 재현
+    (project / "theme.py").write_text(
+        'DARK_TEXT_SECONDARY = "#A8A29E"\nFONT_FAMILY = "Helvetica"\n',
+        encoding="utf-8",
+    )
+    (project / "app.py").write_text(
+        'import customtkinter as ctk\n'
+        'def main():\n    app = ctk.CTk()\n    app.mainloop()\n\n'
+        'if __name__ == "__main__":\n    main()\n',
+        encoding="utf-8",
+    )
+    (project / "calculator_engine.py").write_text(
+        "def add(a, b): return a + b\n", encoding="utf-8"
+    )
+    (project / "main_window.py").write_text(
+        "class MainWindow: pass\n", encoding="utf-8"
+    )
+
+    code_files = [
+        project / "theme.py",
+        project / "app.py",
+        project / "calculator_engine.py",
+        project / "main_window.py",
+    ]
+    # 잘못된 entry_hint
+    path, reason = _select_entry_point(code_files, "theme.py")
+    assert path is not None
+    assert path.name == "app.py", (
+        f"잘못된 entry_hint 가 theme.py 를 가리키는데도 app.py 가 선택되어야 함. "
+        f"실제 선택: {path.name}, reason: {reason}"
+    )
+    assert "__main__" in reason or "main" in reason.lower()
+
+
+def test_select_entry_point_multiple_main_blocks_prefers_hint(tmp_path: Path) -> None:
+    """여러 파일에 __main__ block 있을 때 entry_hint 매칭 우선."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "if __name__ == '__main__':\n    print('app')\n", encoding="utf-8"
+    )
+    (project / "tool.py").write_text(
+        "if __name__ == '__main__':\n    print('tool')\n", encoding="utf-8"
+    )
+
+    code_files = [project / "app.py", project / "tool.py"]
+    # entry_hint 가 tool.py 를 가리키면 그게 선택됨 (둘 다 __main__ 있으므로)
+    path, reason = _select_entry_point(code_files, "tool.py")
+    assert path is not None
+    assert path.name == "tool.py"
+    assert "matches entry_hint" in reason
+
+
+def test_select_entry_point_multiple_main_blocks_no_hint_uses_name_priority(
+    tmp_path: Path,
+) -> None:
+    """여러 main_block, entry_hint 없으면 이름 휴리스틱."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "tool.py").write_text(
+        "if __name__ == '__main__':\n    pass\n", encoding="utf-8"
+    )
+    (project / "app.py").write_text(
+        "if __name__ == '__main__':\n    pass\n", encoding="utf-8"
+    )
+    (project / "main.py").write_text(
+        "if __name__ == '__main__':\n    pass\n", encoding="utf-8"
+    )
+
+    code_files = [project / "tool.py", project / "app.py", project / "main.py"]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    # 우선순위: app.py > main.py > __main__.py > run.py > entry.py
+    assert path.name == "app.py", f"app.py 가 1순위여야 함 (실제: {path.name})"
+    assert "name heuristic" in reason
+
+
+def test_select_entry_point_no_main_block_falls_back_to_hint(tmp_path: Path) -> None:
+    """__main__ block 보유 파일이 *전혀 없을 때만* entry_hint 사용."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "theme.py").write_text("X = 1\n", encoding="utf-8")
+    (project / "config.py").write_text("Y = 2\n", encoding="utf-8")
+
+    code_files = [project / "theme.py", project / "config.py"]
+    path, reason = _select_entry_point(code_files, "config.py")
+    assert path is not None
+    assert path.name == "config.py"
+    assert "falling back to entry_hint" in reason
+
+
+def test_select_entry_point_no_main_no_hint_uses_name_heuristic(tmp_path: Path) -> None:
+    """__main__ block 없고 hint 도 없으면 이름 휴리스틱."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "theme.py").touch()
+    (project / "app.py").touch()  # 우선순위 1
+    (project / "views.py").touch()
+
+    code_files = [project / "theme.py", project / "app.py", project / "views.py"]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    assert path.name == "app.py"
+    assert "name heuristic" in reason
+
+
+def test_select_entry_point_last_resort_first_file(tmp_path: Path) -> None:
+    """모든 우선순위 실패 시 첫 파일."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "alpha.py").touch()
+    (project / "beta.py").touch()
+    (project / "gamma.py").touch()
+
+    code_files = [project / "alpha.py", project / "beta.py", project / "gamma.py"]
+    path, reason = _select_entry_point(code_files, "")
+    assert path is not None
+    assert path.name == "alpha.py"
+    assert "last resort" in reason or "first" in reason
+
+
+def test_select_entry_point_returns_none_for_empty_input() -> None:
+    """code_files 비었으면 (None, reason) 반환."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    path, reason = _select_entry_point([], "anything")
+    assert path is None
+    assert reason
+
+
+def test_select_entry_point_absolute_hint_wins(tmp_path: Path) -> None:
+    """절대경로 entry_hint 가 직접 존재하면 무조건 사용 (호출 측 확신 신뢰)."""
+    from src.workflows.build_workflow import _select_entry_point
+
+    abs_entry = tmp_path / "absolute_entry.py"
+    abs_entry.write_text("# no main block\n", encoding="utf-8")
+    other = tmp_path / "other_with_main.py"
+    other.write_text("if __name__ == '__main__':\n    pass\n", encoding="utf-8")
+
+    # 절대경로 hint → __main__ 있는 다른 파일보다 우선
+    path, reason = _select_entry_point([other], str(abs_entry))
+    assert path == abs_entry
+    assert "absolute" in reason
+
+
 def test_resolve_entry_path_prefers_main_block(tmp_path: Path) -> None:
     """fixup #8 — code_files 중 if __name__ == '__main__' 블록 가진 파일 우선."""
     from src.workflows.build_workflow import _resolve_entry_path
@@ -981,8 +1155,13 @@ def test_resolve_entry_path_name_heuristic_when_no_main_block(tmp_path: Path) ->
     )
 
 
-def test_resolve_entry_path_explicit_hint_wins(tmp_path: Path) -> None:
-    """fixup #8 — entry_hint 가 매칭되면 다른 휴리스틱 무시."""
+def test_resolve_entry_path_main_block_wins_over_wrong_hint(tmp_path: Path) -> None:
+    """fixup #9 — __main__ block 보유 파일이 PRIORITY 1.
+
+    이전 fixup #8 의 "explicit hint > main block" 가정은 잘못됐음 (사용자 라이브
+    검증으로 확인). hint 가 main block 미보유 파일을 가리키면 hint 무시 + main
+    block 파일 선택.
+    """
     from src.workflows.build_workflow import _resolve_entry_path
 
     project = tmp_path / "proj"
@@ -990,13 +1169,15 @@ def test_resolve_entry_path_explicit_hint_wins(tmp_path: Path) -> None:
     (project / "main.py").write_text(
         "if __name__ == '__main__':\n    pass\n", encoding="utf-8"
     )
-    (project / "custom_entry.py").touch()
+    (project / "custom_entry.py").touch()  # main block 없음
 
     code_files = [project / "main.py", project / "custom_entry.py"]
-    # entry_hint 가 custom_entry.py 이면 main block 가진 main.py 가 있어도 hint 우선
+    # entry_hint 가 custom_entry.py 를 가리켜도 main.py 가 main block 보유 → main.py 우선
     entry = _resolve_entry_path(code_files, "custom_entry.py")
     assert entry is not None
-    assert entry.name == "custom_entry.py"
+    assert entry.name == "main.py", (
+        f"main block 보유 파일이 우선이어야 함 (실제: {entry.name})"
+    )
 
 
 def test_has_main_block_detects_standard_form(tmp_path: Path) -> None:
