@@ -436,6 +436,7 @@ hidden_imports:
   - module: customtkinter.windows.widgets.theme
 ```
 """
+    # _parse_deps_from_report 의 API 는 (direct, hidden) tuple 유지 (PR #133 fixup #8 에서도)
     direct, hidden = build_workflow._parse_deps_from_report(sample_report)
     assert direct == ["customtkinter"]
     assert hidden == ["customtkinter.windows.widgets.theme"]
@@ -446,11 +447,11 @@ hidden_imports:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_build_deps_unions_llm_and_ast_scan() -> None:
-    """LLM 이 일부 패키지 누락해도 entry .py AST 스캔이 보완 (fixup #6 핵심).
+def test_resolve_build_deps_ast_primary_drops_llm_direct_deps() -> None:
+    """PR #133 fixup #8 — LLM direct_dependencies 는 *버림*, AST 만 신뢰.
 
-    사용자 라이브 검증에서 발견된 케이스: LLM 이 customtkinter 만 적고 flet 누락
-    → .exe 가 flet ModuleNotFoundError 로 실패. fixup #6 로 AST 스캔 추가.
+    사용자 라이브 검증에서 확인된 결함: LLM 이 PySide6 + PyQt6 둘 다 보고하면
+    PyInstaller 가 abort. AST primary 로 가면 실제 import 만 남아서 자연 해결.
     """
     from src.workflows.build_workflow import _resolve_build_deps
 
@@ -466,7 +467,7 @@ def main(page: flet.Page):
         f.write(src)
         p = Path(f.name)
 
-    # LLM 보고서가 flet 누락
+    # LLM 이 거짓 양성으로 customtkinter 보고 (실제 코드는 안 씀)
     llm_report = """```yaml
 direct_dependencies:
   - name: customtkinter
@@ -474,10 +475,13 @@ hidden_imports: []
 ```
 """
     try:
-        direct, _ = _resolve_build_deps(llm_report, p, [p])
-        assert "flet" in direct, f"AST scan 이 flet 못 찾음: {direct}"
-        # customtkinter 도 LLM report 에서 유지
-        assert "customtkinter" in direct
+        result = _resolve_build_deps(llm_report, p, [p])
+        # AST 가 catch 한 flet 만 남아야 함
+        assert "flet" in result.direct_deps_to_install
+        # LLM 의 거짓 양성 customtkinter 는 *제외*
+        assert "customtkinter" not in result.direct_deps_to_install, (
+            f"LLM 거짓 양성이 누수됨: {result.direct_deps_to_install}"
+        )
     finally:
         p.unlink()
 
@@ -497,7 +501,8 @@ from bs4 import BeautifulSoup
         p = Path(f.name)
 
     try:
-        direct, _ = _resolve_build_deps("", p, [p])
+        result = _resolve_build_deps("", p, [p])
+        direct = result.direct_deps_to_install
         # 정규화 결과
         assert "pillow" in direct, f"PIL → pillow 정규화 실패: {direct}"
         assert "opencv-python" in direct, f"cv2 → opencv-python 정규화 실패: {direct}"
@@ -512,7 +517,7 @@ from bs4 import BeautifulSoup
 
 
 def test_resolve_build_deps_dearpygui_scenario() -> None:
-    """dearpygui 시나리오 — LLM 누락 시 AST 가 catch."""
+    """dearpygui 시나리오 — AST 가 catch."""
     from src.workflows.build_workflow import _resolve_build_deps
 
     src = """
@@ -525,14 +530,16 @@ dpg.create_context()
         p = Path(f.name)
 
     try:
-        direct, _ = _resolve_build_deps("", p, [p])
-        assert "dearpygui" in direct, f"dearpygui 미검출: {direct}"
+        result = _resolve_build_deps("", p, [p])
+        assert "dearpygui" in result.direct_deps_to_install, (
+            f"dearpygui 미검출: {result.direct_deps_to_install}"
+        )
     finally:
         p.unlink()
 
 
 def test_resolve_build_deps_pyside6_scenario() -> None:
-    """PySide6 시나리오 — LLM + AST 둘 다 catch (정규화 매핑 불필요)."""
+    """PySide6 시나리오 — AST 가 catch (정규화 매핑 불필요)."""
     from src.workflows.build_workflow import _resolve_build_deps
 
     src = """
@@ -546,10 +553,12 @@ app = QApplication(sys.argv)
         p = Path(f.name)
 
     try:
-        direct, _ = _resolve_build_deps("", p, [p])
-        assert "PySide6" in direct, f"PySide6 미검출: {direct}"
+        result = _resolve_build_deps("", p, [p])
+        assert "PySide6" in result.direct_deps_to_install, (
+            f"PySide6 미검출: {result.direct_deps_to_install}"
+        )
         # sys 는 stdlib 이라 제외
-        assert "sys" not in direct
+        assert "sys" not in result.direct_deps_to_install
     finally:
         p.unlink()
 
@@ -558,12 +567,10 @@ def test_resolve_build_deps_scans_multiple_code_files() -> None:
     """entry 외의 다른 code_files 의 import 도 함께 스캔."""
     from src.workflows.build_workflow import _resolve_build_deps
 
-    # entry: 단순 main, third-party import 없음
     entry_src = """
 from helper import do_work
 do_work()
 """
-    # helper: 실제 third-party 사용
     helper_src = """
 import customtkinter
 def do_work():
@@ -577,9 +584,9 @@ def do_work():
         helper_p = Path(f.name)
 
     try:
-        direct, _ = _resolve_build_deps("", entry_p, [entry_p, helper_p])
-        assert "customtkinter" in direct, (
-            f"helper.py 의 customtkinter import 스캔 누락: {direct}"
+        result = _resolve_build_deps("", entry_p, [entry_p, helper_p])
+        assert "customtkinter" in result.direct_deps_to_install, (
+            f"helper.py 의 customtkinter import 스캔 누락: {result.direct_deps_to_install}"
         )
     finally:
         entry_p.unlink()
@@ -678,7 +685,8 @@ def test_resolve_build_deps_excludes_local_project_modules(tmp_path: Path) -> No
         project / "views.py",
         project / "storage.py",
     ]
-    direct, _ = _resolve_build_deps("", project / "calculator.py", code_files)
+    result = _resolve_build_deps("", project / "calculator.py", code_files)
+    direct = result.direct_deps_to_install
     # 외부 패키지 flet 만 남고, theme/views/storage 는 모두 로컬로 인식
     assert direct == ["flet"], f"fixup #7: 로컬 모듈이 외부로 분류됨: {direct}"
 
@@ -743,7 +751,8 @@ def test_resolve_build_deps_relative_imports_excluded(tmp_path: Path) -> None:
         "import requests\n",  # 진짜 외부
         encoding="utf-8",
     )
-    direct, _ = _resolve_build_deps("", project / "main.py", [project / "main.py"])
+    result = _resolve_build_deps("", project / "main.py", [project / "main.py"])
+    direct = result.direct_deps_to_install
     assert "requests" in direct
     # relative imports 의 어떤 이름도 외부로 분류되면 안 됨
     assert "sibling" not in direct
@@ -774,7 +783,8 @@ def test_resolve_build_deps_mixed_stdlib_local_external(tmp_path: Path) -> None:
     (local_pkg / "__init__.py").touch()
 
     code_files = [project / "app.py", project / "theme.py"]
-    direct, _ = _resolve_build_deps("", project / "app.py", code_files)
+    result = _resolve_build_deps("", project / "app.py", code_files)
+    direct = result.direct_deps_to_install
     # External 만 남아야 함
     assert sorted(direct) == sorted(["requests", "flet"]), f"deps mismatch: {direct}"
     assert "json" not in direct
@@ -794,7 +804,8 @@ def test_resolve_build_deps_excludes_dunder_names(tmp_path: Path) -> None:
         "import flet\n",
         encoding="utf-8",
     )
-    direct, _ = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    result = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    direct = result.direct_deps_to_install
     assert "flet" in direct
     # __future__ 는 어떤 식으로든 제외
     assert "__future__" not in direct
@@ -821,9 +832,245 @@ direct_dependencies:
 hidden_imports: []
 ```
 """
-    direct, _ = _resolve_build_deps(bad_report, project / "main.py", [project / "main.py", project / "theme.py"])
+    result = _resolve_build_deps(bad_report, project / "main.py", [project / "main.py", project / "theme.py"])
+    direct = result.direct_deps_to_install
     assert "flet" in direct
     assert "theme" not in direct, "fixup #7 가 LLM 의 잘못된 로컬 모듈 보고를 차단해야 함"
+
+
+# ---------------------------------------------------------------------------
+# PR #133 fixup #8 — AST primary + Mutex groups + --collect-all whitelist + Entry 개선
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_build_deps_returns_dataclass() -> None:
+    """fixup #8 — BuildDepsResolution dataclass 반환 (4 필드)."""
+    from src.workflows.build_workflow import BuildDepsResolution, _resolve_build_deps
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+        f.write("import flet\n")
+        p = Path(f.name)
+    try:
+        result = _resolve_build_deps("", p, [p])
+        assert isinstance(result, BuildDepsResolution)
+        assert hasattr(result, "direct_deps_to_install")
+        assert hasattr(result, "hidden_imports")
+        assert hasattr(result, "collect_all_packages")
+        assert hasattr(result, "excluded_modules")
+    finally:
+        p.unlink()
+
+
+def test_resolve_build_deps_qt_mutex_pyside6_wins_over_pyqt6(tmp_path: Path) -> None:
+    """fixup #8 — PySide6 + PyQt6 동시 검출 시 1개만 채택 + 나머지 --exclude-module.
+
+    사용자 라이브 검증 (2026-05-13) 의 정확한 시나리오 재현:
+        direct_dependencies: 2개 (PySide6, PyQt6) → PyInstaller abort.
+    fixup #8 가 _MUTEX_GROUPS 로 1개만 채택.
+    """
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    # PySide6 가 더 자주 import 됨 (AST count 5 vs PyQt6 1)
+    (project / "app.py").write_text(
+        "from PySide6.QtWidgets import QApplication, QMainWindow\n"
+        "from PySide6.QtCore import Qt\n"
+        "from PySide6.QtGui import QIcon\n"
+        "from PySide6.QtSvg import QSvgRenderer\n"
+        "import PySide6\n"
+        "import PyQt6\n",  # 1번만 (호환성 보조)
+        encoding="utf-8",
+    )
+    result = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    # PySide6 채택, PyQt6 제외
+    assert "PySide6" in result.direct_deps_to_install
+    assert "PyQt6" not in result.direct_deps_to_install
+    assert "PyQt6" in result.excluded_modules
+
+
+def test_resolve_build_deps_qt_mutex_priority_tiebreaker(tmp_path: Path) -> None:
+    """fixup #8 — Qt mutex 등장 횟수 동률 시 priority table 로 PySide6 우선."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "import PySide6\nimport PyQt6\n",  # 각 1번
+        encoding="utf-8",
+    )
+    result = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    # 우선순위에 따라 PySide6 채택
+    assert "PySide6" in result.direct_deps_to_install
+    assert "PyQt6" not in result.direct_deps_to_install
+    assert "PyQt6" in result.excluded_modules
+
+
+def test_resolve_build_deps_collect_all_whitelist(tmp_path: Path) -> None:
+    """fixup #8 — --collect-all 화이트리스트 외 패키지 (numpy 등) 는 --collect-all 안 붙음."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "import flet\n"      # 화이트리스트 → --collect-all
+        "import numpy\n"     # 화이트리스트 X → PyInstaller 내장 hook 에 위임
+        "import customtkinter\n",  # 화이트리스트 → --collect-all
+        encoding="utf-8",
+    )
+    result = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    # 모두 pip install 대상
+    assert "flet" in result.direct_deps_to_install
+    assert "numpy" in result.direct_deps_to_install
+    assert "customtkinter" in result.direct_deps_to_install
+    # 화이트리스트만 --collect-all
+    assert "flet" in result.collect_all_packages
+    assert "customtkinter" in result.collect_all_packages
+    assert "numpy" not in result.collect_all_packages, (
+        "numpy 는 PyInstaller 내장 hook 에 위임 — --collect-all 불필요"
+    )
+
+
+def test_resolve_entry_path_prefers_main_block(tmp_path: Path) -> None:
+    """fixup #8 — code_files 중 if __name__ == '__main__' 블록 가진 파일 우선."""
+    from src.workflows.build_workflow import _resolve_entry_path
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    # theme.py — main block 없음
+    (project / "theme.py").write_text("COLORS = {}\n", encoding="utf-8")
+    # calculator.py — main block 있음
+    (project / "calculator.py").write_text(
+        "import flet\n\n"
+        "def main(page):\n    pass\n\n"
+        "if __name__ == '__main__':\n    flet.app(target=main)\n",
+        encoding="utf-8",
+    )
+    # views.py — main block 없음
+    (project / "views.py").write_text("class View: pass\n", encoding="utf-8")
+
+    # entry_hint 미매칭 (다른 파일명) → __main__ block 가진 calculator.py 채택
+    code_files = [
+        project / "theme.py",
+        project / "calculator.py",
+        project / "views.py",
+    ]
+    entry = _resolve_entry_path(code_files, "nonexistent.py")
+    assert entry is not None
+    assert entry.name == "calculator.py", (
+        f"__main__ block 가진 파일 우선 미적용: {entry.name if entry else None}"
+    )
+
+
+def test_resolve_entry_path_name_heuristic_when_no_main_block(tmp_path: Path) -> None:
+    """fixup #8 — main block 없으면 main.py / app.py 등 이름 휴리스틱."""
+    from src.workflows.build_workflow import _resolve_entry_path
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "theme.py").touch()
+    (project / "app.py").touch()  # 이름 휴리스틱 우선
+    (project / "views.py").touch()
+
+    code_files = [project / "theme.py", project / "app.py", project / "views.py"]
+    entry = _resolve_entry_path(code_files, "")
+    assert entry is not None
+    assert entry.name == "app.py", (
+        f"이름 휴리스틱 (app.py) 미적용: {entry.name if entry else None}"
+    )
+
+
+def test_resolve_entry_path_explicit_hint_wins(tmp_path: Path) -> None:
+    """fixup #8 — entry_hint 가 매칭되면 다른 휴리스틱 무시."""
+    from src.workflows.build_workflow import _resolve_entry_path
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "main.py").write_text(
+        "if __name__ == '__main__':\n    pass\n", encoding="utf-8"
+    )
+    (project / "custom_entry.py").touch()
+
+    code_files = [project / "main.py", project / "custom_entry.py"]
+    # entry_hint 가 custom_entry.py 이면 main block 가진 main.py 가 있어도 hint 우선
+    entry = _resolve_entry_path(code_files, "custom_entry.py")
+    assert entry is not None
+    assert entry.name == "custom_entry.py"
+
+
+def test_has_main_block_detects_standard_form(tmp_path: Path) -> None:
+    """_has_main_block — 표준 form 검출."""
+    from src.workflows.build_workflow import _has_main_block
+
+    p1 = tmp_path / "with_main.py"
+    p1.write_text("if __name__ == '__main__':\n    pass\n", encoding="utf-8")
+    p2 = tmp_path / "without_main.py"
+    p2.write_text("def foo(): pass\n", encoding="utf-8")
+    p3 = tmp_path / "reversed.py"
+    p3.write_text("if '__main__' == __name__:\n    pass\n", encoding="utf-8")
+
+    assert _has_main_block(p1) is True
+    assert _has_main_block(p2) is False
+    assert _has_main_block(p3) is True  # reversed form 도 검출
+
+
+def test_execute_pyinstaller_accepts_exclude_modules(monkeypatch, tmp_path: Path) -> None:
+    """fixup #8 — execute_pyinstaller 가 --exclude-module <pkg> 자동 추가."""
+    from src.agents.build_release import build_executor
+
+    captured: dict = {}
+
+    def _fake_resolve():
+        return Path("fake.exe")
+
+    def _fake_run(cmd, **kwargs):  # noqa: ANN001
+        captured["cmd"] = list(cmd)
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr(build_executor, "_resolve_pyinstaller_executable", _fake_resolve)
+    monkeypatch.setattr(build_executor.subprocess, "run", _fake_run)
+
+    entry = tmp_path / "app.py"
+    entry.write_text("import PySide6\n", encoding="utf-8")
+    out = tmp_path / "out"
+
+    build_executor.execute_pyinstaller(
+        entry_path=entry,
+        output_dir=out,
+        app_name="App",
+        exclude_modules=["PyQt6", "PyQt5"],
+    )
+
+    cmd = captured["cmd"]
+    # --exclude-module PyQt6 + --exclude-module PyQt5
+    assert "--exclude-module" in cmd
+    assert "PyQt6" in cmd
+    assert "PyQt5" in cmd
+    # 각 패키지마다 --exclude-module 가 앞서야 함
+    pyqt6_idx = cmd.index("PyQt6")
+    assert cmd[pyqt6_idx - 1] == "--exclude-module"
+
+
+def test_count_import_occurrences_basic(tmp_path: Path) -> None:
+    """_count_import_occurrences — top-level 매칭만 카운트."""
+    from src.workflows.build_workflow import _count_import_occurrences
+
+    p = tmp_path / "code.py"
+    p.write_text(
+        "import PySide6\n"
+        "from PySide6.QtCore import Qt\n"
+        "from PySide6.QtGui import QIcon\n"
+        "import PyQt6\n",
+        encoding="utf-8",
+    )
+    assert _count_import_occurrences("PySide6", [p]) == 3
+    assert _count_import_occurrences("PyQt6", [p]) == 1
+    assert _count_import_occurrences("nonexistent", [p]) == 0
 
 
 def test_build_workflow_halts_on_pip_install_failure(monkeypatch, tmp_path: Path) -> None:
@@ -852,7 +1099,8 @@ def test_build_workflow_halts_on_pip_install_failure(monkeypatch, tmp_path: Path
     entry = tmp_path / "app.py"
     entry.write_text(src, encoding="utf-8")
 
-    direct, _ = build_workflow._resolve_build_deps("", entry, [entry])
+    result = build_workflow._resolve_build_deps("", entry, [entry])
+    direct = result.direct_deps_to_install
     assert "flet" in direct
 
     # _install_dependencies_for_build mock 호출

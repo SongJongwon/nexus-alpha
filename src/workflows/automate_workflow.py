@@ -1265,19 +1265,18 @@ def _run_track_b_build(
     from src.agents.build_release.build_executor import ExecuteResult, execute_pyinstaller
     from src.workflows.build_workflow import (
         _install_dependencies_for_build,
-        _normalize_pip_names,
+        _resolve_build_deps,
     )
 
     entry_path = _resolve_track_b_entry_path(domain, saved_code_files)
     if entry_path is None:
         return None
 
-    # PR #133 — entry .py 의 외부 import 정적 스캔 → 자동 pip install
-    # PR #133 fixup #6 — pip name 정규화 (PIL → pillow 등) + 실패 시 build 중단 + --collect-all
-    raw_deps = _scan_imports_from_py(entry_path)
-    deps = _normalize_pip_names(raw_deps)
-    if deps:
-        pip_ok, pip_log = _install_dependencies_for_build(deps)
+    # PR #133 fixup #8 — Track B 도 AST primary + Mutex + Whitelist (Track A 와 동일 로직)
+    # dependency_report 가 없으므로 빈 문자열 전달 (AST 스캔만 작동)
+    build_deps = _resolve_build_deps("", entry_path, saved_code_files)
+    if build_deps.direct_deps_to_install:
+        pip_ok, pip_log = _install_dependencies_for_build(build_deps.direct_deps_to_install)
         if not pip_ok:
             # PyInstaller 호출 중단 — 누락된 의존성이 있으면 .exe 가 런타임 실패할 것
             return ExecuteResult(
@@ -1298,8 +1297,10 @@ def _run_track_b_build(
         app_name=app_name,
         windowed=False,
         onefile=True,
-        # PR #133 fixup #6 — data files 가진 패키지 (PIL, openpyxl 등) 대응
-        collect_all=deps if deps else None,
+        # fixup #8 — 화이트리스트의 패키지만 --collect-all
+        collect_all=build_deps.collect_all_packages or None,
+        # fixup #8 — mutex group 비채택 패키지 차단
+        exclude_modules=build_deps.excluded_modules or None,
         timeout_sec=timeout_sec,
     )
 

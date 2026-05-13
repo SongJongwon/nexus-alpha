@@ -148,6 +148,7 @@ def execute_pyinstaller(
     onefile: bool = True,
     hidden_imports: Optional[list[str]] = None,
     collect_all: Optional[list[str]] = None,
+    exclude_modules: Optional[list[str]] = None,
     icon_path: Optional[Path] = None,
     timeout_sec: int = _DEFAULT_TIMEOUT_SEC,
     additional_args: Optional[list[str]] = None,
@@ -167,6 +168,10 @@ def execute_pyinstaller(
             패키지가 PyInstaller 기본 정적 분석으로 누락되는 경우 대비.
             ``--collect-all <pkg>`` 는 패키지의 (a) submodules (b) data files
             (c) binaries 를 모두 .exe 에 포함.
+        exclude_modules: PR #133 fixup #8 — ``--exclude-module`` 로 PyInstaller 가
+            *수집 시도조차 안 하도록* 차단할 모듈 목록. 주 용도: mutex group 의 비채택
+            패키지 (예: PySide6 채택 시 PyQt6 차단). 채택된 패키지의 hook 가
+            ``import PyQt6`` 같은 fallback 라인을 만나도 hook 가 실행되지 않음.
         icon_path: ``--icon`` 으로 지정할 .ico/.icns 경로 (Optional).
         timeout_sec: subprocess 타임아웃 (초). 기본 300 (5분).
         additional_args: 추가 raw 인자 — 고급 사용자 escape hatch.
@@ -223,6 +228,9 @@ def execute_pyinstaller(
     # PR #133 fixup #6 — flet / customtkinter 같이 data files 가진 패키지 대응
     for pkg in collect_all or []:
         cmd.extend(["--collect-all", pkg])
+    # PR #133 fixup #8 — mutex group 의 비채택 패키지 (PyQt5 vs PySide6 동시 번들 차단)
+    for mod in exclude_modules or []:
+        cmd.extend(["--exclude-module", mod])
     if icon_path and icon_path.exists():
         cmd.extend(["--icon", str(icon_path)])
     if additional_args:

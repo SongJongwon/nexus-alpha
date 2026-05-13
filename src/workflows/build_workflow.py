@@ -286,24 +286,44 @@ def _format_code_layout(code_files: list[Path]) -> str:
 
 
 def _resolve_entry_path(code_files: list[Path], entry_hint: str) -> Optional[Path]:
-    """entry_hint (상대경로 string) 를 실제 Path 로 해석.
+    """entry_hint (상대경로 string) 를 실제 Path 로 해석 (PR #133 fixup #8 강화).
 
-    `_detect_entry_hint` 가 반환하는 hint 는 보통 PROJECT_ROOT 기준 상대경로 또는
-    파일명. 이 함수는 code_files 에서 일치하는 절대경로를 찾아 반환.
-    못 찾으면 None.
+    배경 (사용자 라이브 검증, 2026-05-13):
+        LLM 산출 코드가 calculator.py / theme.py / views.py / storage.py 같은 다
+        파일 구조일 때, 첫 파일이 알파벳 순으로 theme.py 가 되어 entry 로 선택됨.
+        그러나 진짜 entry 는 ``if __name__ == '__main__'`` 블록 가진 파일.
+
+    우선순위:
+        ① entry_hint 매칭 (caller 가 명시했으면 신뢰)
+        ② code_files 중 ``if __name__ == '__main__'`` 블록 가진 파일
+        ③ 이름 휴리스틱 — ``main.py`` / ``app.py`` / ``__main__.py`` / ``run.py``
+        ④ 마지막 fallback — 첫 파일
     """
     if not code_files:
         return None
-    # hint 가 절대경로 형식이면 그대로
+    # ① entry_hint 매칭
     candidate = Path(entry_hint)
     if candidate.is_absolute() and candidate.exists():
         return candidate
-    # 상대 또는 파일명 — code_files 에서 매치
     hint_name = candidate.name
+    if hint_name:
+        for p in code_files:
+            if p.name == hint_name and p.exists():
+                return p
+
+    # ② __main__ block 가진 파일
     for p in code_files:
-        if p.name == hint_name and p.exists():
+        if p.exists() and _has_main_block(p):
             return p
-    # 마지막 fallback — 첫 파일
+
+    # ③ 이름 휴리스틱 (대소문자 무시)
+    name_priority = ['main.py', 'app.py', '__main__.py', 'run.py', 'entry.py']
+    files_by_name = {p.name.lower(): p for p in code_files if p.exists()}
+    for hint in name_priority:
+        if hint in files_by_name:
+            return files_by_name[hint]
+
+    # ④ 마지막 fallback — 첫 파일
     return code_files[0] if code_files[0].exists() else None
 
 
@@ -330,6 +350,46 @@ _BUILD_DEP_BLOCKLIST: set[str] = {
     'pytest', 'pytest_cov', 'pytest_mock',
     'crewai', 'langchain', 'langgraph',
     'pydantic', 'pydantic_core',
+}
+
+
+# PR #133 fixup #8 — 상호 배타 패키지 그룹.
+# 같은 그룹에서 2개 이상 검출 시 1개만 채택 + 나머지는 PyInstaller --exclude-module.
+# 배경 (사용자 라이브 검증, 2026-05-13):
+#   LLM 보고서 + AST UNION 결과로 PySide6 + PyQt6 둘 다 direct_deps 에 포함 →
+#   PyInstaller 가 "attempt to collect multiple Qt bindings packages" 로 abort.
+_MUTEX_GROUPS: list[set[str]] = [
+    {'PyQt5', 'PyQt6', 'PySide2', 'PySide6'},
+    {'opencv-python', 'opencv-python-headless', 'opencv-contrib-python'},
+    {'tensorflow', 'tensorflow-cpu', 'tensorflow-gpu'},
+    {'protobuf', 'protobuf3'},
+]
+
+# 동률 시 우선순위 (높은 숫자 우선). AST 등장 횟수 동률일 때만 사용.
+_MUTEX_PRIORITY: dict[str, int] = {
+    # Qt: 신버전 우선 (PySide6 = official Qt for Python)
+    'PySide6': 4, 'PyQt6': 3, 'PySide2': 2, 'PyQt5': 1,
+    # OpenCV: 일반 빌드 우선 (headless 는 서버용)
+    'opencv-python': 3, 'opencv-contrib-python': 2, 'opencv-python-headless': 1,
+    # tensorflow: GPU > CPU > base
+    'tensorflow-gpu': 3, 'tensorflow-cpu': 2, 'tensorflow': 1,
+}
+
+
+# PR #133 fixup #8 — PyInstaller --collect-all 화이트리스트.
+# 기본 hook 가 약한 패키지만 --collect-all 적용. 그 외는 PyInstaller 내장 hook 에 위임.
+# 배경:
+#   PySide6/PyQt6/numpy/pandas/scipy 등은 PyInstaller 정교한 hook 보유 — 무차별
+#   --collect-all 는 오히려 부작용 (예: PySide6.scripts.deploy_lib 가 'project_lib'
+#   동적 import 시도 → "ModuleNotFoundError: No module named 'project_lib'" 경고).
+_COLLECT_ALL_WHITELIST: set[str] = {
+    'flet',            # Flutter 바이너리
+    'customtkinter',   # theme JSON / 이미지 파일
+    'dearpygui',       # C 확장 + 리소스
+    'kivy',            # 많은 리소스 파일
+    'pygame',          # C 라이브러리
+    'ttkbootstrap',    # 테마 파일
+    'pillow',          # 일부 codec plugin
 }
 
 
@@ -523,6 +583,121 @@ def _normalize_pip_names(deps: list[str]) -> list[str]:
     return [_IMPORT_TO_PIP_NAME.get(d, d) for d in deps]
 
 
+@dataclass
+class BuildDepsResolution:
+    """PR #133 fixup #8 — 빌드 의존성 해상도 결과 (구조화).
+
+    이전: _resolve_build_deps 가 (direct_deps, hidden_imports) 2-tuple 반환.
+    문제: --collect-all 화이트리스트, mutex 제외 모듈 등 추가 정보가 caller 에 전달 안 됨.
+    해결: 4개 필드를 가진 dataclass.
+    """
+    direct_deps_to_install: list[str]
+    """pip install 인자. AST 스캔 ground truth (LLM 의 거짓 양성 차단)."""
+
+    hidden_imports: list[str]
+    """PyInstaller --hidden-import 인자. LLM 보고서의 hidden_imports 만."""
+
+    collect_all_packages: list[str]
+    """PyInstaller --collect-all 인자. direct_deps 중 화이트리스트에 속한 패키지만."""
+
+    excluded_modules: list[str]
+    """PyInstaller --exclude-module 인자. mutex group 의 비채택 패키지."""
+
+
+def _count_import_occurrences(name: str, files: list[Path]) -> int:
+    """주어진 top-level 패키지 이름이 files 의 AST import 에 몇 번 등장하는지 카운트.
+
+    Mutex group 충돌 시 "AST 등장 횟수 더 많은 쪽" 채택 위한 헬퍼.
+    """
+    if not files:
+        return 0
+    target = name.split('.')[0].lower()
+    count = 0
+    for f in files:
+        if not f.exists():
+            continue
+        try:
+            tree = ast.parse(f.read_text(encoding='utf-8', errors='replace'))
+        except (SyntaxError, ValueError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split('.')[0].lower() == target:
+                        count += 1
+            elif isinstance(node, ast.ImportFrom):
+                if node.level and node.level > 0:
+                    continue
+                if node.module and node.module.split('.')[0].lower() == target:
+                    count += 1
+    return count
+
+
+def _resolve_mutex_groups(
+    direct_deps: list[str],
+    code_files: list[Path],
+) -> tuple[list[str], list[str]]:
+    """Mutex group 충돌 해소 — 1개 채택 + 나머지 제외 (PR #133 fixup #8).
+
+    각 그룹에서 2개 이상 검출 시:
+      ① AST 등장 횟수 더 많은 쪽 채택
+      ② 동률 시 _MUTEX_PRIORITY 우선순위 적용
+
+    Returns:
+        (kept, excluded). kept 는 입력 순서 유지, excluded 는 --exclude-module 인자.
+    """
+    if not direct_deps:
+        return [], []
+
+    excluded: list[str] = []
+    deps_set = set(direct_deps)
+
+    for group in _MUTEX_GROUPS:
+        in_group = [d for d in direct_deps if d in group]
+        if len(in_group) <= 1:
+            continue
+        # AST 등장 횟수 계산
+        counts = {d: _count_import_occurrences(d, code_files) for d in in_group}
+        max_count = max(counts.values())
+        candidates = [d for d, c in counts.items() if c == max_count]
+        if len(candidates) == 1:
+            winner = candidates[0]
+        else:
+            # priority table tiebreaker
+            winner = max(candidates, key=lambda d: _MUTEX_PRIORITY.get(d, 0))
+        for d in in_group:
+            if d != winner:
+                excluded.append(d)
+                deps_set.discard(d)
+
+    kept = [d for d in direct_deps if d in deps_set]
+    return kept, excluded
+
+
+def _has_main_block(path: Path) -> bool:
+    """``if __name__ == '__main__':`` 블록이 .py 에 있는지 검사 (PR #133 fixup #8).
+
+    Entry point 휴리스틱 — main block 가진 파일이 진짜 entry 일 가능성 큼.
+    """
+    if not path.exists():
+        return False
+    try:
+        tree = ast.parse(path.read_text(encoding='utf-8', errors='replace'))
+    except (SyntaxError, ValueError):
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not isinstance(test, ast.Compare):
+            continue
+        # if __name__ == '__main__' or '__main__' == __name__
+        for side in (test.left, *test.comparators):
+            if isinstance(side, ast.Name) and side.id == '__name__':
+                return True
+    return False
+
+
 def _collect_local_modules(
     entry_path: Optional[Path],
     code_files: Optional[list[Path]],
@@ -595,29 +770,31 @@ def _resolve_build_deps(
     dependency_report: str,
     entry_path: Optional[Path],
     code_files: Optional[list[Path]] = None,
-) -> tuple[list[str], list[str]]:
-    """LLM dependency_report + entry/code AST 스캔 UNION → 빌드용 전체 의존성 (PR #133 fixup #6).
+) -> "BuildDepsResolution":
+    """빌드 의존성 해상도 (PR #133 fixup #8 — AST primary + Mutex + Whitelist).
 
     배경 (사용자 라이브 검증, 2026-05-13):
-        Track A 에서 LLM 이 ``customtkinter`` 는 명시했지만 ``flet`` 은 보고서에
-        누락 — 결과 .exe 가 런타임 ``ModuleNotFoundError: No module named 'flet'``.
-        ``_parse_deps_from_report`` 단독으로는 LLM 변동성을 못 막음.
+        fixup #6 의 LLM + AST UNION 이 LLM 거짓 양성 흡수 → PySide6 + PyQt6
+        동시 등장 → PyInstaller abort ("multiple Qt bindings packages").
 
-    처방:
-        - LLM 보고서의 direct_dependencies + hidden_imports 추출 (기존 로직)
-        - entry .py + 모든 code_files 의 AST import 스캔
-        - 둘을 UNION → pip name 정규화 → 반환
+    처방 (fixup #8):
+        - direct_deps: **AST 스캔만** (LLM 의 direct_dependencies 는 신뢰 안 함)
+        - hidden_imports: LLM 보고서의 hidden_imports 만 유지 (PyInstaller --hidden-import)
+        - Mutex group: PyQt5/6 vs PySide2/6, opencv variants 등 1개만 채택
+        - --collect-all 화이트리스트: flet/customtkinter 등만 (PyInstaller hook 약한 패키지)
 
     Args:
-        dependency_report: Dependency Analyzer LLM 산출 markdown.
+        dependency_report: LLM 산출 markdown. hidden_imports 추출용으로만 사용.
         entry_path: 빌드 entry .py.
-        code_files: 전체 코드 파일 목록 (entry 외 추가 스캔 대상).
+        code_files: 전체 코드 파일 목록 (AST 스캔 대상 + local module 추출).
 
     Returns:
-        (direct_deps, hidden_imports). direct_deps 는 pip install 이름으로 정규화됨.
+        BuildDepsResolution — direct_deps / hidden_imports / collect_all / excluded.
     """
-    direct_deps, hidden_imports = _parse_deps_from_report(dependency_report)
+    # 1) LLM 보고서에서 hidden_imports 만 추출 (direct_deps 는 버림)
+    _llm_direct_discarded, hidden_imports = _parse_deps_from_report(dependency_report)
 
+    # 2) AST 스캔 — entry + code_files 의 모든 .py 의 top-level import
     scanned: list[str] = []
     if entry_path:
         scanned.extend(_scan_imports_from_py(entry_path))
@@ -626,37 +803,46 @@ def _resolve_build_deps(
             if f != entry_path and f.exists():
                 scanned.extend(_scan_imports_from_py(f))
 
-    # UNION (LLM report 우선 — 그 뒤로 AST scan 추가)
-    merged = list(dict.fromkeys(direct_deps + scanned))
-
-    # PR #133 fixup #7 — 로컬 프로젝트 모듈 수집 (theme.py / views.py / storage.py 등)
+    # 3) 로컬 프로젝트 모듈 수집 (fixup #7) — theme.py / views.py 등 제외 위함
     local_modules = _collect_local_modules(entry_path, code_files)
 
-    # build 도구 / stdlib / blocklist / 로컬 모듈 필터 (안전망)
+    # 4) 필터 체인 — stdlib + blocklist + 로컬 모듈 + dunder/점 prefix 제외
     stdlib = set(getattr(sys, 'stdlib_module_names', ()))
     stdlib_lower = {s.lower() for s in stdlib}
     filtered: list[str] = []
-    for pkg in merged:
+    for pkg in scanned:
         top = pkg.split('.')[0].split('[')[0].lower()
         if not top:
             continue
-        # dunder / 점 prefix 제외 (__main__, __init__, .relative 등)
         if top.startswith('_') or top.startswith('.'):
             continue
         if top in _BUILD_DEP_BLOCKLIST:
             continue
         if top in stdlib_lower:
             continue
-        # PR #133 fixup #7 — 로컬 프로젝트 모듈은 pip install 대상 X
         if top in local_modules:
             continue
         filtered.append(pkg)
 
-    # pip name 정규화 (PIL → pillow 등)
+    # 5) pip name 정규화 (PIL → pillow 등) + dedupe
     normalized = _normalize_pip_names(filtered)
-    direct_deps_final = list(dict.fromkeys(normalized))
+    direct_deps = list(dict.fromkeys(normalized))
 
-    return direct_deps_final, hidden_imports
+    # 6) Mutex group 충돌 해소 — 1개 채택 + 나머지 --exclude-module
+    files_for_count = list(code_files) if code_files else []
+    if entry_path and entry_path not in files_for_count:
+        files_for_count.append(entry_path)
+    direct_deps_resolved, excluded = _resolve_mutex_groups(direct_deps, files_for_count)
+
+    # 7) --collect-all 화이트리스트 — direct_deps 중 명시된 것만
+    collect_all = [d for d in direct_deps_resolved if d.lower() in _COLLECT_ALL_WHITELIST]
+
+    return BuildDepsResolution(
+        direct_deps_to_install=direct_deps_resolved,
+        hidden_imports=hidden_imports,
+        collect_all_packages=collect_all,
+        excluded_modules=excluded,
+    )
 
 
 def _install_dependencies_for_build(
@@ -968,23 +1154,23 @@ def run_build_workflow(
                 # 앱 이름은 entry 파일명 또는 user_request 단서 → 안전한 단순 휴리스틱
                 app_name = entry_path.stem.title() or "App"
 
-                # PR #133 fixup #6 — LLM 보고서 + entry/code AST 스캔 UNION
-                direct_deps, hidden_imports = _resolve_build_deps(
+                # PR #133 fixup #8 — AST primary + Mutex + Whitelist 구조화 결과
+                build_deps = _resolve_build_deps(
                     dependency_report, entry_path, code_files
                 )
                 pip_log = "deps=0 (no install needed)"
                 pip_ok = True
-                if direct_deps:
-                    pip_ok, pip_log = _install_dependencies_for_build(direct_deps)
+                if build_deps.direct_deps_to_install:
+                    pip_ok, pip_log = _install_dependencies_for_build(
+                        build_deps.direct_deps_to_install
+                    )
 
                 if not pip_ok:
-                    # PR #133 fixup #6 — pip install 실패 → PyInstaller 호출 중단.
-                    # 빈 껍데기 .exe 생성하느니 명시적 실패가 사용자에게 도움.
-                    elapsed_now = 0.0
+                    # pip install 실패 → PyInstaller 호출 중단 (fixup #6).
                     executor_result = ExecuteResult(
                         success=False,
                         exit_code=-4,
-                        elapsed_sec=elapsed_now,
+                        elapsed_sec=0.0,
                         error_message=(
                             f"필수 의존성 pip install 실패 — PyInstaller 호출 중단. "
                             f"누락된 패키지를 .exe 가 런타임에 못 찾으므로 빌드 무의미. "
@@ -998,25 +1184,27 @@ def run_build_workflow(
                         app_name=app_name,
                         windowed=windowed,
                         onefile=True,
-                        hidden_imports=hidden_imports if hidden_imports else None,
-                        # PR #133 fixup #6 — direct_deps 모두에 --collect-all
-                        # (flet / customtkinter 등 data files / 플러그인 가진 패키지 대응)
-                        collect_all=direct_deps if direct_deps else None,
+                        hidden_imports=build_deps.hidden_imports or None,
+                        # fixup #8 — 화이트리스트의 패키지만 --collect-all
+                        collect_all=build_deps.collect_all_packages or None,
+                        # fixup #8 — mutex group 비채택 패키지 차단
+                        exclude_modules=build_deps.excluded_modules or None,
                         timeout_sec=executor_timeout_sec,
                     )
                 # 25_executor_result.md 저장 — 사용자 가시 산출물
                 executor_md = workflow_dir / "25_executor_result.md"
                 executor_md_body = _format_executor_result_md(executor_result)
-                # PR #133 — 의존성 자동 설치 결과를 산출물 상단에 prepend
                 pr133_header = (
-                    "## PR #133 — 의존성 자동 설치 결과 (fixup #6: LLM + AST UNION)\n\n"
-                    f"- direct_dependencies: {len(direct_deps)}개 "
-                    f"({', '.join(direct_deps) if direct_deps else '없음'})\n"
-                    f"- hidden_imports: {len(hidden_imports)}개 "
-                    f"({', '.join(hidden_imports) if hidden_imports else '없음'})\n"
+                    "## PR #133 — 의존성 자동 설치 결과 (fixup #8: AST primary + Mutex + Whitelist)\n\n"
+                    f"- direct_dependencies (AST scan): {len(build_deps.direct_deps_to_install)}개 "
+                    f"({', '.join(build_deps.direct_deps_to_install) if build_deps.direct_deps_to_install else '없음'})\n"
+                    f"- hidden_imports (LLM): {len(build_deps.hidden_imports)}개 "
+                    f"({', '.join(build_deps.hidden_imports) if build_deps.hidden_imports else '없음'})\n"
                     f"- pip install: {pip_log}\n"
-                    f"- PyInstaller --collect-all: {len(direct_deps)}개 "
-                    f"({', '.join(direct_deps) if direct_deps else '없음'})\n\n"
+                    f"- PyInstaller --collect-all: {len(build_deps.collect_all_packages)}개 "
+                    f"({', '.join(build_deps.collect_all_packages) if build_deps.collect_all_packages else '없음'})\n"
+                    f"- PyInstaller --exclude-module (mutex): {len(build_deps.excluded_modules)}개 "
+                    f"({', '.join(build_deps.excluded_modules) if build_deps.excluded_modules else '없음'})\n\n"
                     "---\n\n"
                 )
                 executor_md.write_text(
