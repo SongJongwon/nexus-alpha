@@ -151,135 +151,177 @@ function Get-ExistingPython313 {
     return [pscustomobject]@{ Found=$false; Path=''; Orphan=$false; RegistryKey='' }
 }
 
-# ─── PR #129 — Embeddable Python 설치 (MSI orphan 시 최종 안전망) ─────
-# 배경 (사용자 로그 분석):
-#   사용자 PC 의 MSI 상태가 phantom install — Burn bundle 의 cache (MSI 파일) 가
-#   사라져 uninstall 시 Error 0x80070643 (1603) 으로 실패, install 도 "이미 설치됨"
-#   판단으로 ``Modify execute: None`` 처리. MSI 인스톨러로는 이 상태에서 빠져나올
-#   방법 없음.
-# 처방:
-#   Python 공식 *embeddable* zip (인스톨러/MSI/registry 0) 다운로드 후 압축 풀기.
-#   pip 은 get-pip.py 로 별도 부트스트랩. venv 는 ``--without-pip`` 옵션으로 생성
-#   (embeddable 은 ensurepip 미포함) 후 pip 을 venv 에 별도 설치.
-# 호출 시점:
-#   ``Install-LocalPython313`` 의 모든 fallback (TargetDir / LocalAppData) 실패 시
-#   최종 안전망으로 호출.
-function Install-EmbeddablePython {
-    $pyVer = if ($env:NEXUS_ALPHA_PYTHON_VERSION) { $env:NEXUS_ALPHA_PYTHON_VERSION } else { '3.13.7' }
-    $pyDir = Join-Path $INSTALL_DIR 'python313'
-    $pyExe = Join-Path $pyDir 'python.exe'
+# ─── PR #133 — Orphan Python 3.13 MSI 잔재 수동 정리 ──────────────────────
+# 배경 (사용자 라이브 검증, 2026-05-12, PR #133 1차 시도):
+#   PR #128 이 도입한 ``Burn bundle /uninstall /quiet`` 가 ``exit=1603`` (ERROR_
+#   INSTALL_FAILURE) 으로 실패 — Package Cache 의 .exe 가 corrupt 되어 Burn 이
+#   자체 uninstall 불가. 이후 install 도 phantom "이미 설치됨" 판단으로 silent fail.
+# 처방 (PR #133):
+#   uninstall 실패 시 registry + Package Cache + Add/Remove Programs 항목을 *직접
+#   강제 삭제* 후 install retry. 모든 정리는 ``Python 3.13`` 으로 *정확 매칭* — 다른
+#   버전 (3.10/3.11/3.12/3.14+) 영향 0, 사용자 데이터 영향 0.
+function Remove-OrphanPython313Artifacts {
+    Write-Warn2 'orphan MSI registry / Package Cache 수동 정리 중 (uninstall 1603 fallback)...'
+    $cleaned = 0
 
-    Write-Warn2 "Embeddable Python $pyVer 으로 전환 — MSI 우회 (~11 MB zip, 시스템 영향 0)"
-
-    # 이전 시도의 잔존 폴더 정리 (부분 설치 가능)
-    if (Test-Path $pyDir) {
-        try { Remove-Item -Path $pyDir -Recurse -Force -ErrorAction Stop } catch {
-            Write-Warn2 "잔존 폴더 삭제 실패 ($($_.Exception.Message)) — 계속 진행"
+    # ① registry: HKCU/HKLM 의 PythonCore\3.13 키 직접 삭제
+    $registryRoots = @(
+        'HKCU:\Software\Python\PythonCore\3.13',
+        'HKLM:\Software\Python\PythonCore\3.13',
+        'HKLM:\SOFTWARE\Wow6432Node\Python\PythonCore\3.13'
+    )
+    foreach ($k in $registryRoots) {
+        if (Test-Path $k) {
+            try {
+                Remove-Item -Path $k -Recurse -Force -ErrorAction Stop
+                Write-Ok "registry 삭제: $k"
+                $cleaned++
+            } catch {
+                Write-Warn2 "registry 삭제 실패 (권한 부족 가능): $k — $($_.Exception.Message)"
+            }
         }
     }
-    if (-not (Test-Path $INSTALL_DIR)) {
-        New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null
-    }
 
-    # ① embeddable zip 다운로드
-    $zipUrl  = "https://www.python.org/ftp/python/$pyVer/python-$pyVer-embed-amd64.zip"
-    $zipPath = Join-Path $env:TEMP "nexus-alpha-python-$pyVer-embed.zip"
-    Write-Warn2 "Embeddable zip 다운로드 중 (~11 MB) — $zipUrl"
-    try {
-        $oldProg = $ProgressPreference
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
-        $ProgressPreference = $oldProg
-    } catch {
-        Fail "Embeddable Python 다운로드 실패: $($_.Exception.Message)"
-    }
-    if (-not (Test-Path $zipPath)) {
-        Fail "Embeddable Python zip 다운로드 후 파일 미존재: $zipPath"
-    }
-    Write-Ok 'Embeddable zip 다운로드 완료'
-
-    # ② 압축 해제
-    Write-Warn2 "Embeddable zip 압축 해제 중 → $pyDir"
-    try {
-        Expand-Archive -Path $zipPath -DestinationPath $pyDir -Force -ErrorAction Stop
-    } catch {
-        Remove-Item -Path $zipPath -ErrorAction SilentlyContinue
-        Fail "Embeddable zip 압축 해제 실패: $($_.Exception.Message)"
-    }
-    Remove-Item -Path $zipPath -ErrorAction SilentlyContinue
-    if (-not (Test-Path $pyExe)) {
-        Fail "Embeddable 압축 해제 후 $pyExe 미생성"
-    }
-
-    # ③ ._pth 파일 수정 — site-packages 활성화 (pip / 패키지 import 위해)
-    # Embeddable Python 기본은 ``#import site`` (주석) → site-packages 비활성.
-    # 주석 제거 + ``Lib\site-packages`` 경로 추가 → 사용자 패키지 정상 import.
-    # !!! 중요: ._pth 파일은 *BOM 없는 UTF-8* 또는 ASCII 여야 함. PowerShell 의
-    # ``Set-Content -Encoding UTF8`` 은 BOM 을 추가 → Python 의 ._pth parser 가
-    # 첫 줄 못 읽음 → "No module named 'encodings'" 치명 오류. .NET API 로
-    # BOM-less 작성 필수.
-    $pthFile = Get-ChildItem -Path $pyDir -Filter 'python*._pth' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($pthFile) {
-        $content = [System.IO.File]::ReadAllText($pthFile.FullName, [System.Text.UTF8Encoding]::new($false))
-        $content = $content -replace '#\s*import\s+site', 'import site'
-        if ($content -notmatch 'Lib\\site-packages') {
-            $content = $content.TrimEnd() + "`r`nLib\site-packages`r`n"
+    # ② MSI Package Cache — Python 3.13.x 만 매칭
+    # Burn bundle 가 만드는 폴더는 GUID 기반. 폴더 안의 .exe 의 VersionInfo.ProductName 로 식별.
+    $pcRoot = Join-Path $env:LocalAppData 'Package Cache'
+    if (Test-Path $pcRoot) {
+        $children = Get-ChildItem -Path $pcRoot -Directory -ErrorAction SilentlyContinue
+        foreach ($d in $children) {
+            $burnExe = Get-ChildItem -Path $d.FullName -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $burnExe) { continue }
+            $prodName = ''
+            try { $prodName = $burnExe.VersionInfo.ProductName } catch {}
+            if ($prodName -match 'Python 3\.13') {
+                try {
+                    Remove-Item -Path $d.FullName -Recurse -Force -ErrorAction Stop
+                    Write-Ok "Package Cache 정리: $($d.Name) [$prodName]"
+                    $cleaned++
+                } catch {
+                    Write-Warn2 "Package Cache 삭제 실패: $($d.Name) — $($_.Exception.Message)"
+                }
+            }
         }
-        # BOM 없이 UTF-8 작성 (._pth parser 호환)
-        [System.IO.File]::WriteAllText($pthFile.FullName, $content, [System.Text.UTF8Encoding]::new($false))
-        Write-Ok "._pth site-packages 활성화 (no-BOM): $($pthFile.Name)"
+    }
+
+    # ③ Add/Remove Programs — Python 3.13.x 의 Uninstall registry entry 직접 삭제
+    $uninstallRoots = @(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($base in $uninstallRoots) {
+        if (-not (Test-Path $base)) { continue }
+        Get-ChildItem -Path $base -ErrorAction SilentlyContinue | ForEach-Object {
+            $prop = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+            if (-not $prop) { return }
+            $dn = if ($prop.DisplayName) { [string]$prop.DisplayName } else { '' }
+            if ($dn -match 'Python 3\.13') {
+                try {
+                    Remove-Item -Path $_.PSPath -Recurse -Force -ErrorAction Stop
+                    Write-Ok "Add/Remove Programs entry 정리: $dn"
+                    $cleaned++
+                } catch {
+                    Write-Warn2 "uninstall entry 삭제 실패: $dn — $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    # ④ Windows Installer per-user MSI 등록 정리 (PR #133 fixup #4 — *핵심*).
+    # 배경 (사용자 라이브 검증, 2026-05-12, MSI 로그 분석):
+    #   Burn bundle Detect 단계가 core_JustForMe / exe_JustForMe / dev_JustForMe /
+    #   lib_JustForMe / tcltk_JustForMe / pip_JustForMe 를 "state: Present, cached:
+    #   Complete" 로 인식 → Plan 단계에서 "execute: None" → 아무 파일도 설치 안 함.
+    #   원인: Windows Installer 의 per-user MSI 등록 (HKCU\Software\Microsoft\Installer\
+    #   Products\<obfuscated_code>) 가 이전 install 실패의 잔재로 남아있음. ③ 의
+    #   Add/Remove Programs 정리만으로는 MSI 자체 등록을 지우지 못함.
+    # 처방: Python 3.13.x 의 ProductName 매칭하는 Products / Features / Patches entry
+    #   모두 직접 삭제. 다음 install 시 MSI 가 "Absent" 로 detect → 정상 install.
+    $installerRoots = @(
+        'HKCU:\Software\Microsoft\Installer\Products',
+        'HKCU:\Software\Classes\Installer\Products'
+    )
+    foreach ($base in $installerRoots) {
+        if (-not (Test-Path $base)) { continue }
+        Get-ChildItem -Path $base -ErrorAction SilentlyContinue | ForEach-Object {
+            $prop = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+            if (-not $prop) { return }
+            $pn = if ($prop.ProductName) { [string]$prop.ProductName } else { '' }
+            if ($pn -match 'Python 3\.13') {
+                $code = $_.PSChildName
+                try {
+                    Remove-Item -Path $_.PSPath -Recurse -Force -ErrorAction Stop
+                    Write-Ok "Windows Installer Products 정리: $pn"
+                    $cleaned++
+                    # 같은 code 의 Features / Patches entry 도 정리 (있으면)
+                    $featuresBase = $base -replace '\\Products$', '\Features'
+                    $featuresPath = Join-Path $featuresBase $code
+                    if (Test-Path $featuresPath) {
+                        Remove-Item -Path $featuresPath -Recurse -Force -ErrorAction SilentlyContinue
+                        Write-Ok "Windows Installer Features 정리: $code"
+                    }
+                    $patchesBase = $base -replace '\\Products$', '\Patches'
+                    $patchesPath = Join-Path $patchesBase $code
+                    if (Test-Path $patchesPath) {
+                        Remove-Item -Path $patchesPath -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                } catch {
+                    Write-Warn2 "Installer Products 삭제 실패: $pn — $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    # ⑤ HKLM UserData (현재 사용자 SID 의 Python 3.13 MSI 등록) — 권한 있으면만 정리
+    # per-user install 이라도 일부 메타데이터는 HKLM 의 UserData\<SID>\Products 에 기록됨.
+    # 관리자 권한 없으면 삭제 실패할 수 있으나 graceful.
+    try {
+        $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $userDataKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\$currentSid\Products"
+        if (Test-Path $userDataKey) {
+            Get-ChildItem -Path $userDataKey -ErrorAction SilentlyContinue | ForEach-Object {
+                $installPropsKey = Join-Path $_.PSPath 'InstallProperties'
+                if (Test-Path $installPropsKey) {
+                    $prop = Get-ItemProperty -Path $installPropsKey -ErrorAction SilentlyContinue
+                    if (-not $prop) { return }
+                    $dn = if ($prop.DisplayName) { [string]$prop.DisplayName } else { '' }
+                    if ($dn -match 'Python 3\.13') {
+                        try {
+                            Remove-Item -Path $_.PSPath -Recurse -Force -ErrorAction Stop
+                            Write-Ok "HKLM UserData entry 정리: $dn"
+                            $cleaned++
+                        } catch {
+                            Write-Warn2 "HKLM UserData 삭제 실패 (권한 부족 가능): $dn"
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        # SID 조회 실패 등 — graceful
+    }
+
+    if ($cleaned -gt 0) {
+        Write-Ok "orphan 정리 완료 ($cleaned 항목 처리됨)"
     } else {
-        Write-Warn2 'python*._pth 파일 미검출 — pip 설치 후 import 문제 가능'
+        Write-Warn2 'orphan 정리 대상 없음 (이미 모두 정리됨 또는 권한 부족)'
     }
-
-    # ④ Lib\site-packages 디렉토리 사전 생성 (pip install 첫 호출이 폴더 못 찾는 경우 대비)
-    $sitePackagesDir = Join-Path $pyDir 'Lib\site-packages'
-    if (-not (Test-Path $sitePackagesDir)) {
-        New-Item -ItemType Directory -Path $sitePackagesDir -Force | Out-Null
-    }
-
-    # ⑤ pip 부트스트랩 — get-pip.py
-    # Embeddable Python 은 ensurepip 미포함 → pip 직접 부트스트랩 필요.
-    Write-Warn2 'pip 부트스트랩 중 (get-pip.py 다운로드 + 실행) ...'
-    $getPipUrl  = 'https://bootstrap.pypa.io/get-pip.py'
-    $getPipPath = Join-Path $env:TEMP 'nexus-alpha-get-pip.py'
-    try {
-        Invoke-WebRequest -Uri $getPipUrl -OutFile $getPipPath -UseBasicParsing
-    } catch {
-        Fail "get-pip.py 다운로드 실패: $($_.Exception.Message)"
-    }
-    $pipResult = Invoke-NativeSafely -Executable $pyExe -Arguments @($getPipPath, '--no-warn-script-location', '--quiet')
-    Remove-Item -Path $getPipPath -ErrorAction SilentlyContinue
-    if (-not $pipResult.Succeeded) {
-        Fail "pip 부트스트랩 실패 (exit=$($pipResult.ExitCode), output: $($pipResult.StdOut))"
-    }
-    Write-Ok 'pip 부트스트랩 완료'
-
-    # ⑥ virtualenv 패키지 설치 — embeddable Python 은 venv 모듈도 미포함!
-    # (라이브 검증: ``python -m venv`` → ``No module named venv``)
-    # virtualenv (pip 패키지) 는 자체 구현으로 .venv 생성 가능.
-    Write-Warn2 'virtualenv 패키지 설치 중 (embeddable 은 venv 모듈 미포함) ...'
-    $vEnvInstall = Invoke-NativeSafely -Executable $pyExe -Arguments @('-m', 'pip', 'install', '--quiet', '--no-warn-script-location', 'virtualenv')
-    if (-not $vEnvInstall.Succeeded) {
-        Fail "virtualenv 패키지 설치 실패 (exit=$($vEnvInstall.ExitCode))"
-    }
-    Write-Ok 'virtualenv 패키지 설치 완료'
-
-    # ⑦ 검증
-    $verResult = Invoke-NativeSafely -Executable $pyExe -Arguments @('--version')
-    if (-not $verResult.Succeeded -or $verResult.StdOut -notmatch 'Python\s+3\.13') {
-        Fail "Embeddable Python 버전 확인 실패: '$($verResult.StdOut)'"
-    }
-    Write-Ok "Embeddable Python 설치 완료: $($verResult.StdOut) ($pyExe)"
-    Write-Ok '시스템 / registry / MSI 모두 미변경 (embeddable 격리 100%)'
-
-    # Install-Venv 가 *embeddable Python + virtualenv* 로 .venv 생성하도록 설정.
-    # ``python -m virtualenv .venv`` — embeddable 은 venv 모듈 미포함이지만
-    # virtualenv 패키지는 자체 구현으로 venv 생성 가능. 결과는 full venv (pip 포함).
-    $script:PYTHON_VENV_EXE         = $pyExe
-    $script:PYTHON_VENV_ARGS        = @()
-    $script:PYTHON_VENV_EMBEDDABLE  = $true
+    return $cleaned
 }
+
+# ─── PR #133 — Embeddable Python 경로 *완전 제거* ─────────────────────────
+# 배경 (사용자 라이브 검증, 2026-05-12):
+#   PR #129 가 도입한 embeddable Python fallback 은 venv 생성까지는 통과시켰으나
+#   **embeddable distribution 은 tkinter (Tcl/Tk GUI 백엔드) 를 원천적으로 미포함**.
+#   결과: PyInstaller 가 GUI .exe (customtkinter 등) 를 빌드해도 런타임에
+#   ``ModuleNotFoundError: No module named 'tkinter'`` 발생 → GUI .exe 풀체인 실패.
+# 처방:
+#   embeddable fallback 전면 제거 → 풀 Python 3.13 (python.org Windows installer)
+#   만 사용. MSI 가 실패하면 명확한 메시지로 Fail (조용한 추락보다 명시적 실패가
+#   사용자에게 더 도움). Install-EmbeddablePython 함수 + 보조 Invoke-VirtualenvVenvCreation
+#   helper 삭제, ``$script:PYTHON_VENV_EMBEDDABLE`` 분기 삭제.
 
 # ─── PR #117/#120 — Python 3.13 자동 설치 via winget (시스템 미설치 시) ──
 # 사용 시점 (PR #123 갱신): *Python 이 시스템에 전혀 없을 때만*. 기존 Python
@@ -366,17 +408,28 @@ function Install-LocalPython313 {
     }
 
     # 기존 로컬 설치 재사용 (idempotent) — PR #125 NativeCommandError 회피
+    # PR #133 — 재사용 전 tkinter 검증 추가: embeddable Python 잔재 (PR #129~#132)
+    # 가 reuse 되는 것 차단 (Test-Prereqs 의 cleanup 이 file lock 등으로 실패한 경우 대비).
     if (Test-Path $pyExe) {
         $existingVer = (Invoke-NativeSafely -Executable $pyExe -Arguments @('--version')).StdOut
         if ($existingVer -match 'Python\s+3\.13') {
-            Write-Ok "기존 로컬 Python 검출: $existingVer ($pyExe) — 재사용"
-            $script:PYTHON_VENV_EXE  = $pyExe
-            $script:PYTHON_VENV_ARGS = @()
-            return
-        }
-        Write-Warn2 "기존 로컬 Python 손상 추정 ($existingVer) — 폴더 삭제 후 재설치"
-        try { Remove-Item -Path $pyDir -Recurse -Force -ErrorAction Stop } catch {
-            Fail "기존 로컬 Python 폴더 삭제 실패: $($_.Exception.Message) | 수동 삭제: $pyDir"
+            # PR #133 — tkinter 검증
+            $existingTk = Invoke-NativeSafely -Executable $pyExe -Arguments @('-c', 'import tkinter')
+            if ($existingTk.Succeeded) {
+                Write-Ok "기존 로컬 Python 검출: $existingVer ($pyExe) — 재사용 (tkinter OK)"
+                $script:PYTHON_VENV_EXE  = $pyExe
+                $script:PYTHON_VENV_ARGS = @()
+                return
+            }
+            Write-Warn2 "기존 로컬 Python ($existingVer) 가 tkinter 미포함 (embeddable 잔재) — 폴더 삭제 후 풀 Python 재설치"
+            try { Remove-Item -Path $pyDir -Recurse -Force -ErrorAction Stop } catch {
+                Fail "embeddable Python 폴더 삭제 실패: $($_.Exception.Message) | 수동 삭제: Remove-Item -Recurse -Force '$pyDir'"
+            }
+        } else {
+            Write-Warn2 "기존 로컬 Python 손상 추정 ($existingVer) — 폴더 삭제 후 재설치"
+            try { Remove-Item -Path $pyDir -Recurse -Force -ErrorAction Stop } catch {
+                Fail "기존 로컬 Python 폴더 삭제 실패: $($_.Exception.Message) | 수동 삭제: $pyDir"
+            }
         }
     }
 
@@ -432,6 +485,8 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
     # PR #128 — orphan MSI registry 정리: 다운로드한 인스톨러로 /uninstall /quiet 호출.
     # Burn bundle 이 "이미 설치됨" 으로 잘못 판단해 install 을 ``Modify execute: None``
     # 으로 변환하는 문제 해결. uninstall 은 실제 파일이 없어도 안전 (실패해도 무시).
+    # PR #133 — uninstall 이 1603 등으로 실패 시 (Burn cache 손상) registry + Package
+    # Cache + Add/Remove Programs entry 를 *직접 강제 삭제* 로 fallback.
     if ($orphanedRegistry) {
         Write-Warn2 "Orphan MSI registry uninstall 중 (~10초) — Burn bundle 잘못된 'Modify' 회피"
         $uninstallLog = Join-Path $env:TEMP "nexus-alpha-python-uninstall-$pyVer.log"
@@ -447,7 +502,9 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         if ($uninstallExit -eq 0) {
             Write-Ok 'Orphan MSI registry 정리 완료'
         } else {
-            Write-Warn2 "Uninstall exit=$uninstallExit (로그: $uninstallLog) — 계속 진행 (install 이 정리할 수도 있음)"
+            # PR #133 — uninstall 실패 (Burn cache 손상 추정) → 수동 강제 정리
+            Write-Warn2 "Uninstall exit=$uninstallExit (로그: $uninstallLog) — 수동 강제 정리 시도"
+            $null = Remove-OrphanPython313Artifacts
         }
     }
 
@@ -465,6 +522,9 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
     # Shortcuts=0 + AssociateFiles=0: 바로가기 / .py 파일 연결 미변경
     # SimpleInstall=1 제거 (PR #128): /quiet 와 중복 + 일부 환경에서 사용자 정의
     #   옵션을 무시하고 기본 위치로 설치하는 사례 보고됨.
+    # PR #133 — Include_tcltk=1 명시: 풀 Python 의 tkinter (Tcl/Tk GUI 백엔드) 강제 포함.
+    # python.org 인스톨러 기본값이 1 이지만 belt-and-suspenders. embeddable fallback
+    # 제거 후 GUI .exe (customtkinter 등) 빌드 시 tkinter 필수.
     $installArgs = @(
         '/quiet'
         '/log'
@@ -475,6 +535,7 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         'PrependPath=0'
         'Include_launcher=0'
         'Include_pip=1'
+        'Include_tcltk=1'
         'Include_doc=0'
         'Include_test=0'
         'Shortcuts=0'
@@ -482,14 +543,15 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         'CompileAll=0'
     )
 
+    # PR #133 — installer .exe 는 retry 가능성 때문에 *함수 끝* 에서만 삭제.
+    # 과거: finally { Remove-Item $installerPath } 이 1차 install 직후 인스톨러를
+    # 삭제 → orphan cleanup 후 retry 시 "지정된 파일을 찾을 수 없습니다" 예외 발생.
     try {
         $proc = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
         $exitCode = $proc.ExitCode
     } catch {
         Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
         Fail "Python 인스톨러 실행 예외: $($_.Exception.Message)"
-    } finally {
-        Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
     }
 
     if ($exitCode -ne 0) {
@@ -510,6 +572,7 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
     }
 
     # PR #128 — 검증: TargetDir 위치 확인 + 일부 환경에서 무시될 경우 기본 위치 fallback
+    # PR #133 — MSI 실패 시 orphan 강제 정리 + 재시도 (1회) 후 Fail
     if (-not (Test-Path $pyExe)) {
         # 기본 user 위치 (per-user install) 확인 — TargetDir 가 무시된 경우
         $userDefaultDir = Join-Path $env:LocalAppData 'Programs\Python\Python313'
@@ -520,15 +583,88 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
             $pyExe = $userDefaultExe
             $pyDir = $userDefaultDir
         } else {
-            # PR #129 — 최종 안전망: MSI 인스톨러 phantom install 상태 (orphan registry +
-            # corrupt MSI cache) 회피를 위해 *Embeddable Python* 으로 전환.
-            # MSI / registry 0 — zip 압축 풀기만으로 작동.
-            $logHint = if (Test-Path $installLog) { "`n  인스톨러 로그: $installLog" } else { '' }
-            Write-Warn2 "MSI 인스톨러로 python.exe 미생성 (TargetDir + LocalAppData 모두 없음).$logHint"
-            Write-Warn2 'Embeddable Python (MSI 우회) 으로 자동 전환 — 격리 100% 보장'
-            Install-EmbeddablePython
-            # Install-EmbeddablePython 이 $script:PYTHON_VENV_EXE 등 모두 설정 후 return.
-            return
+            # PR #133 — MSI phantom install 발견 → orphan 수동 강제 정리 후 재시도 (1회).
+            Write-Warn2 'MSI install 후 python.exe 미생성 — orphan 잔재 의심, 수동 강제 정리 + 재시도 1회'
+            $extraCleaned = Remove-OrphanPython313Artifacts
+
+            # PR #133 fixup #3 — retry 직전 *항상* 재다운로드 (방어 최대화).
+            # 배경 (사용자 라이브 검증, 2026-05-12):
+            #   "재설치 예외: 지정된 파일을 찾을 수 없습니다" 가 fixup #2 후에도 발생.
+            #   원인 추정: AntiVirus quarantine, NTFS reparse point, 파일 잠금 등 다양.
+            #   Test-Path 가 true 여도 Start-Process 가 실패하는 edge case 존재.
+            # 처방: 조건 없이 기존 installer 삭제 + 재다운로드 → 매번 fresh 보장.
+            if (Test-Path $installerPath) {
+                Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
+            }
+            Write-Warn2 'retry 직전 installer 재다운로드 (fresh copy 보장, ~25 MB)...'
+            try {
+                $oldProg = $ProgressPreference
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+                $ProgressPreference = $oldProg
+            } catch {
+                Fail "재시도용 Python 인스톨러 다운로드 실패: $($_.Exception.Message)"
+            }
+            if (-not (Test-Path $installerPath)) {
+                Fail "재다운로드 후에도 installer 파일 부재: $installerPath (디스크 공간 / 권한 확인)"
+            }
+
+            Write-Warn2 "Python $pyVer MSI 재설치 중 (cleanup 후, ~30초)..."
+            $retryLog = Join-Path $env:TEMP "nexus-alpha-python-install-$pyVer-retry.log"
+            # $installArgs 중 /log 만 새 경로로 교체. 나머지 인자는 동일.
+            $retryArgs = @()
+            $i = 0
+            while ($i -lt $installArgs.Count) {
+                if ($installArgs[$i] -eq '/log') {
+                    $retryArgs += '/log'
+                    $retryArgs += $retryLog
+                    $i += 2
+                } else {
+                    $retryArgs += $installArgs[$i]
+                    $i += 1
+                }
+            }
+            $retryExit = -1
+            try {
+                $procRetry = Start-Process -FilePath $installerPath -ArgumentList $retryArgs -Wait -PassThru -NoNewWindow
+                $retryExit = $procRetry.ExitCode
+            } catch {
+                Write-Warn2 "재설치 예외: $($_.Exception.Message)"
+            }
+            if ($retryExit -eq 0 -and (Test-Path $pyExe)) {
+                Write-Ok "Python $pyVer 재설치 성공 (orphan 정리 후)"
+            } elseif ($retryExit -eq 0 -and (Test-Path $userDefaultExe)) {
+                Write-Warn2 "재설치도 TargetDir 무시 — 기본 위치 사용: $userDefaultExe"
+                $pyExe = $userDefaultExe
+                $pyDir = $userDefaultDir
+            } else {
+                # PR #133 — 재시도도 실패 → 명시적 Fail (사용자에게 actionable guidance).
+                $logHint = ''
+                if (Test-Path $retryLog) {
+                    $logHint = "`n  재시도 로그: $retryLog"
+                } elseif (Test-Path $installLog) {
+                    $logHint = "`n  최초 로그: $installLog"
+                }
+                Fail @"
+Python $pyVer MSI 인스톨러 실행 후 python.exe 미생성 [TargetDir + LocalAppData 모두 없음].
+원인 추정: MSI Burn bundle phantom install — registry 잔재 + MSI cache 손상 동시 발생.$logHint
+
+수동 조치 [관리자 권한 불필요]:
+  1. https://www.python.org/downloads/release/python-3137/ 에서 'Windows installer 64-bit' 다운로드
+  2. 실행 후 'Install Now' 선택 [per-user 설치]
+     - 'Add python.exe to PATH' 체크 권장
+  3. 설치 완료 확인: 새 PowerShell 창에서 'py -3.13 --version' 정상 출력 확인
+  4. install.ps1 재실행 [irm | iex]
+
+깊은 진단 [MSI Burn bundle 손상 시]:
+  - %LocalAppData%\Package Cache\ 의 Python 관련 폴더 검사 + 손상 항목 수동 삭제
+  - Windows '앱 및 기능' 에서 'Python 3.13' 항목 모두 제거 [있다면]
+  - install.ps1 재실행
+
+PR #129~#132 의 embeddable Python fallback 은 tkinter 미포함 문제로 PR #133 에서 제거됨.
+GUI 앱 [.exe] 빌드에는 풀 Python 인스톨러 필수.
+"@
+            }
         }
     }
     # PR #125 — Invoke-NativeSafely 로 NativeCommandError 회피
@@ -536,8 +672,26 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
     if (-not $installedVer -or $installedVer -notmatch 'Python\s+3\.13') {
         Fail "로컬 Python 설치는 했으나 버전 확인 실패: '$installedVer'"
     }
+    # PR #133 — tkinter 포함 검증 (Include_tcltk=1 이 실제 작동했는지 확인).
+    # 풀 Python 의 표준 라이브러리이므로 import 가능해야 함.
+    $tkResult = Invoke-NativeSafely -Executable $pyExe -Arguments @('-c', 'import tkinter; print("tk OK")')
+    if (-not $tkResult.Succeeded -or $tkResult.StdOut -notmatch 'tk OK') {
+        Fail @"
+로컬 Python 설치 완료했으나 tkinter import 실패:
+  python.exe = $pyExe
+  output = $($tkResult.StdOut)
+  exit = $($tkResult.ExitCode)
+
+원인: 인스톨러가 Tcl/Tk 컴포넌트 미포함 (Include_tcltk=1 무시됨).
+조치: 인스톨러로 직접 ``Customize installation`` → 'tcl/tk and IDLE' 체크박스 켜고 재설치.
+"@
+    }
     Write-Ok "Python 로컬 설치 완료: $installedVer ($pyExe)"
+    Write-Ok 'tkinter 검증 통과 (GUI 백엔드 작동)'
     Write-Ok '시스템 Python / PATH / registry / py launcher 모두 미변경 (격리 보장)'
+
+    # PR #133 — 성공 시 installer .exe 정리 (TEMP 청소). Fail 시는 OS 가 자동 cleanup.
+    Remove-Item -Path $installerPath -ErrorAction SilentlyContinue
 
     # Install-Venv 가 *로컬 Python* 으로 venv 생성하도록 설정
     $script:PYTHON_VENV_EXE  = $pyExe
@@ -572,20 +726,54 @@ git 이 PATH 에 없습니다.
     # 사용자가 ``py -3.13 -m venv $HOME\nexus-alpha\.venv`` 로 *수동* 으로 venv 만든
     # 경우 (시스템 python 이 3.14+ 여도) 설치 흐름 진행 가능. PR #110 안내 §2 워크플로
     # 직접 지원.
+    # PR #133 — 기존 .venv 의 tkinter import 검증. embeddable Python 으로 만들어진
+    # .venv (PR #129~#132 이력) 라면 tkinter 미포함 → 자동 정리 후 fresh install.
     $existingVenvPython = Join-Path $INSTALL_DIR '.venv\Scripts\python.exe'
     if (Test-Path $existingVenvPython) {
-        $venvVersion = (Invoke-NativeSafely -Executable $existingVenvPython -Arguments @('--version')).StdOut
-        Write-Ok "python (기존 .venv): $venvVersion"
-        Write-Warn2 '시스템 python 버전 체크 skip — .venv 가 이미 검증된 환경으로 간주'
-        # gh CLI 만 마저 검증 후 함수 종료
-        $gh = Get-Command gh -ErrorAction SilentlyContinue
-        if ($gh) {
-            Write-Ok "gh CLI: $((gh --version | Select-Object -First 1))"
+        $tkCheck = Invoke-NativeSafely -Executable $existingVenvPython -Arguments @('-c', 'import tkinter')
+        if (-not $tkCheck.Succeeded) {
+            Write-Warn2 "기존 .venv 의 Python 이 tkinter 미포함 (embeddable Python 잔재 추정: $existingVenvPython)"
+            Write-Warn2 '자동 정리 후 풀 Python 인스톨러로 재설치 진행 (PR #133)'
+            # .venv + 로컬 embeddable python313/ 정리. 사용자 데이터 (.env, src/, outputs/) 무관.
+            try {
+                Remove-Item -Path (Join-Path $INSTALL_DIR '.venv') -Recurse -Force -ErrorAction Stop
+                Write-Ok '기존 .venv 삭제 완료'
+            } catch {
+                Fail "기존 .venv 삭제 실패: $($_.Exception.Message) | 수동 조치: Remove-Item -Recurse -Force '$INSTALL_DIR\.venv'"
+            }
+            $embedPyDir = Join-Path $INSTALL_DIR 'python313'
+            if (Test-Path $embedPyDir) {
+                # python313/ 가 embeddable 인지 확인 (Lib\site-packages\virtualenv 존재 = embeddable 잔재)
+                $embedExe = Join-Path $embedPyDir 'python.exe'
+                $embedTkCheck = if (Test-Path $embedExe) {
+                    Invoke-NativeSafely -Executable $embedExe -Arguments @('-c', 'import tkinter')
+                } else {
+                    @{ Succeeded = $false }
+                }
+                if (-not $embedTkCheck.Succeeded) {
+                    try {
+                        Remove-Item -Path $embedPyDir -Recurse -Force -ErrorAction Stop
+                        Write-Ok "기존 embeddable python313/ 삭제: $embedPyDir"
+                    } catch {
+                        Write-Warn2 "python313/ 삭제 실패 ($($_.Exception.Message)) — 계속 진행, 풀 Python 별도 위치 설치"
+                    }
+                }
+            }
+            # 정리 후 일반 flow 로 진입 (Python 검출 → Install-LocalPython313)
         } else {
-            Write-Warn2 'gh CLI 미설치 — Draft Release 발행 단계는 skip 됩니다.'
-            Write-Warn2 '  설치: winget install --id GitHub.cli -e  (선택)'
+            $venvVersion = (Invoke-NativeSafely -Executable $existingVenvPython -Arguments @('--version')).StdOut
+            Write-Ok "python (기존 .venv): $venvVersion (tkinter OK)"
+            Write-Warn2 '시스템 python 버전 체크 skip — .venv 가 이미 검증된 환경으로 간주'
+            # gh CLI 만 마저 검증 후 함수 종료
+            $gh = Get-Command gh -ErrorAction SilentlyContinue
+            if ($gh) {
+                Write-Ok "gh CLI: $((gh --version | Select-Object -First 1))"
+            } else {
+                Write-Warn2 'gh CLI 미설치 — Draft Release 발행 단계는 skip 됩니다.'
+                Write-Warn2 '  설치: winget install --id GitHub.cli -e  (선택)'
+            }
+            return
         }
-        return
     }
 
     # Python 3.13
@@ -658,8 +846,16 @@ git 이 PATH 에 없습니다.
             if ($pyLauncher) {
                 $r1 = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '--version')
                 if ($r1.Succeeded -and $r1.StdOut -match 'Python\s+3\.13') {
-                    $pyOk = $true
-                    Write-Ok "py -3.13 검출: $($r1.StdOut) (venv 생성에 사용)"
+                    # PR #133 fixup #5 — py -3.13 의 tkinter 검증 (embeddable 잔재 회피).
+                    # 배경: 이전 fixup #1~#3 era 의 embeddable python 이 py launcher 에 등록된 채로
+                    # 남아있는 경우, py -3.13 가 그걸 가리키면 venv 생성은 되지만 tkinter 없음.
+                    $tkCheck = Invoke-NativeSafely -Executable 'py' -Arguments @('-3.13', '-c', 'import tkinter')
+                    if ($tkCheck.Succeeded) {
+                        $pyOk = $true
+                        Write-Ok "py -3.13 검출: $($r1.StdOut) (tkinter OK)"
+                    } else {
+                        Write-Warn2 "py -3.13 검출 ($($r1.StdOut)) — tkinter 미포함 (embeddable 잔재 추정), 풀 Python 로컬 설치 진행"
+                    }
                 }
             }
             if ($pyOk) {
@@ -667,15 +863,24 @@ git 이 PATH 에 없습니다.
                 $script:PYTHON_VENV_ARGS = @('-3.13')
             } else {
                 # PR #128 — registry 기반 기존 Python 3.13 검출 (py launcher 가 못 찾는 경우 대응)
+                # PR #133 fixup #5 — registry Python 도 tkinter 검증
                 $regHit = Get-ExistingPython313
+                $regOk = $false
                 if ($regHit.Found) {
-                    Write-Ok "Python 3.13 registry 검출: $($regHit.Path) (venv 생성에 사용)"
-                    $script:PYTHON_VENV_EXE  = $regHit.Path
-                    $script:PYTHON_VENV_ARGS = @()
-                } else {
+                    $regTk = Invoke-NativeSafely -Executable $regHit.Path -Arguments @('-c', 'import tkinter')
+                    if ($regTk.Succeeded) {
+                        $regOk = $true
+                        Write-Ok "Python 3.13 registry 검출: $($regHit.Path) (tkinter OK)"
+                        $script:PYTHON_VENV_EXE  = $regHit.Path
+                        $script:PYTHON_VENV_ARGS = @()
+                    } else {
+                        Write-Warn2 "registry Python ($($regHit.Path)) tkinter 미포함 (embeddable 추정) — 풀 Python 로컬 설치 진행"
+                    }
+                }
+                if (-not $regOk) {
                     # 최후의 안전망: 로컬 격리 설치 (시스템 미터치, deterministic)
-                    # Install-LocalPython313 가 내부에서 orphan registry 도 정리.
-                    Write-Warn2 'py -3.13 / registry 모두 미가용 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
+                    # Install-LocalPython313 가 내부에서 orphan registry 도 정리 + tkinter 검증.
+                    Write-Warn2 'tkinter 보장된 Python 3.13 미가용 → 로컬 격리 Python 설치 (기존 시스템 Python 보존)'
                     Install-LocalPython313
                 }
             }
@@ -856,16 +1061,28 @@ $INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다.
         $tempBackup = Join-Path $env:TEMP "nexus-alpha-recovery-$timestamp"
         New-Item -ItemType Directory -Path $tempBackup -Force | Out-Null
 
-        # python313/ 백업 (있으면)
+        # python313/ 백업 — PR #133 fixup #5: embeddable Python 잔재 검출 후 *삭제*
+        # (백업 X). embeddable 은 tkinter 미포함 → 재사용 시 venv 가 tkinter 없는 상태
+        # 로 생성됨. 풀 Python 으로 재설치 강제.
         $pythonDir = Join-Path $INSTALL_DIR 'python313'
         $pythonBackedUp = $false
         if (Test-Path $pythonDir) {
-            try {
-                Move-Item -Path $pythonDir -Destination (Join-Path $tempBackup 'python313') -ErrorAction Stop
-                $pythonBackedUp = $true
-                Write-Ok "python313/ 임시 백업 → $tempBackup\python313 (로컬 격리 Python 보존)"
-            } catch {
-                Write-Warn2 "python313/ 백업 실패 ($($_.Exception.Message)) — fresh install 진행"
+            $pyExeCheck = Join-Path $pythonDir 'python.exe'
+            $isFullPython = $false
+            if (Test-Path $pyExeCheck) {
+                $tkProbe = Invoke-NativeSafely -Executable $pyExeCheck -Arguments @('-c', 'import tkinter')
+                $isFullPython = $tkProbe.Succeeded
+            }
+            if ($isFullPython) {
+                try {
+                    Move-Item -Path $pythonDir -Destination (Join-Path $tempBackup 'python313') -ErrorAction Stop
+                    $pythonBackedUp = $true
+                    Write-Ok "python313/ 임시 백업 → $tempBackup\python313 (풀 Python — tkinter OK, 재사용)"
+                } catch {
+                    Write-Warn2 "python313/ 백업 실패 ($($_.Exception.Message)) — fresh install 진행"
+                }
+            } else {
+                Write-Warn2 "기존 python313/ 가 embeddable (tkinter 미포함) — 백업 X, 폐기 후 풀 Python 재설치"
             }
         }
         # .env 백업 (있으면)
@@ -915,71 +1132,9 @@ $INSTALL_DIR 가 이미 존재하지만 git 저장소가 아닙니다.
 }
 
 # ─── 3. 가상환경 + 의존성 ──────────────────────────────────────────────────
-# PR #131 — embeddable Python 자동 우회 helper: pip 부트스트랩 → virtualenv 설치 →
-# ``python -m virtualenv .venv`` 실행. 호출 시점:
-#   ① Install-EmbeddablePython 경유 (EMBEDDABLE flag 사전 set)
-#   ② Install-Venv 의 ``-m venv`` 가 ``No module named venv`` 으로 실패 시 자동 감지
-# 각 단계 idempotent — 이미 설치된 경우 skip.
-function Invoke-VirtualenvVenvCreation {
-    # PR #132 — helper 도 EAP=Continue 격리 (defense-in-depth, Install-Venv 외부에서 호출
-    # 시에도 안전). Invoke-NativeSafely 는 자체 격리 있지만 ``& $pyExe $args | Out-Null``
-    # 직접 호출은 외부 EAP 영향 받음.
-    $savedEAPHelper = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-
-    Write-Warn2 'virtualenv 으로 .venv 생성 중 (embeddable Python 우회 경로) ...'
-
-    # ① pip 검출 + 부트스트랩 (필요 시)
-    $pipCheck = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE `
-        -Arguments ($script:PYTHON_VENV_ARGS + @('-m', 'pip', '--version'))
-    if (-not $pipCheck.Succeeded) {
-        Write-Warn2 'pip 미설치 — get-pip.py 부트스트랩 중 (~2 MB) ...'
-        $getPipPath = Join-Path $env:TEMP 'nexus-alpha-venv-get-pip.py'
-        try {
-            $oldProg = $ProgressPreference
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile $getPipPath -UseBasicParsing
-            $ProgressPreference = $oldProg
-        } catch {
-            Fail "get-pip.py 다운로드 실패: $($_.Exception.Message)"
-        }
-        $bootArgs = $script:PYTHON_VENV_ARGS + @($getPipPath, '--no-warn-script-location', '--quiet')
-        $bootResult = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE -Arguments $bootArgs
-        Remove-Item -Path $getPipPath -ErrorAction SilentlyContinue
-        if (-not $bootResult.Succeeded) {
-            Fail "pip 부트스트랩 실패 (exit=$($bootResult.ExitCode))"
-        }
-        Write-Ok 'pip 부트스트랩 완료'
-    }
-
-    # ② virtualenv 패키지 검출 + 설치 (필요 시)
-    $venvPkgCheck = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE `
-        -Arguments ($script:PYTHON_VENV_ARGS + @('-m', 'virtualenv', '--version'))
-    if (-not $venvPkgCheck.Succeeded) {
-        Write-Warn2 'virtualenv 패키지 설치 (1회) ...'
-        $installArgs = $script:PYTHON_VENV_ARGS + @('-m', 'pip', 'install', '--quiet', '--no-warn-script-location', 'virtualenv')
-        $installResult = Invoke-NativeSafely -Executable $script:PYTHON_VENV_EXE -Arguments $installArgs
-        if (-not $installResult.Succeeded) {
-            Fail "virtualenv 패키지 설치 실패 (exit=$($installResult.ExitCode), output: $($installResult.StdOut))"
-        }
-        Write-Ok 'virtualenv 패키지 설치 완료'
-    }
-
-    # ③ virtualenv 으로 .venv 생성
-    $venvArgs = $script:PYTHON_VENV_ARGS + @('-m', 'virtualenv', '.venv')
-    & $script:PYTHON_VENV_EXE $venvArgs | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        $cmdStr = ("$($script:PYTHON_VENV_EXE) " + ($venvArgs -join ' ')).Trim()
-        Fail "가상환경 생성 실패 ($cmdStr)"
-    }
-    Write-Ok '가상환경 생성: .venv (via virtualenv, embeddable Python 우회)'
-
-    } finally {
-        # PR #132 — EAP 복원
-        $ErrorActionPreference = $savedEAPHelper
-    }
-}
+# PR #133 — Invoke-VirtualenvVenvCreation helper 삭제. embeddable Python 경로 제거로
+# 더 이상 ``python -m virtualenv`` fallback 이 필요 없음 (풀 Python 3.13 은 venv
+# 모듈을 표준 포함). PR #131/#132 의 helper 및 EAP 격리 로직은 이력으로 git 에 보존.
 
 function Install-Venv {
     Write-Step 'Step 3/6 — 가상환경 + 의존성 설치'
@@ -1001,53 +1156,70 @@ function Install-Venv {
     if (Test-Path $venvPython) {
         Write-Ok '.venv 이미 존재 — 의존성만 재설치'
     } else {
-        # PR #114/#123/#129 — $script:PYTHON_VENV_EXE / $script:PYTHON_VENV_ARGS 는 Test-Prereqs 에서 설정.
+        # PR #114/#123 — $script:PYTHON_VENV_EXE / $script:PYTHON_VENV_ARGS 는 Test-Prereqs 에서 설정.
         # 가능 값:
         #   - 'python' (3.10~3.13 정상) — venv 모듈 사용
         #   - 'py' + @('-3.13') (3.14+ py launcher fallback) — venv 모듈 사용
         #   - '<INSTALL_DIR>\python313\python.exe' (PR #123 로컬 격리 설치 시 절대 경로) — venv 모듈 사용
-        #   - PR #129: embeddable Python (EMBEDDABLE=$true) — venv 모듈 미포함 → virtualenv 패키지 사용
+        # PR #133 — embeddable Python 경로 제거. 풀 Python 만 사용.
         # 미설정 (.venv 이미 존재해서 Test-Prereqs 가 early return 한 경우) → 'python' 기본.
         if (-not $script:PYTHON_VENV_EXE) { $script:PYTHON_VENV_EXE = 'python' }
         if ($null -eq $script:PYTHON_VENV_ARGS) { $script:PYTHON_VENV_ARGS = @() }
 
         Push-Location $INSTALL_DIR
         try {
-            if ($script:PYTHON_VENV_EMBEDDABLE) {
-                # PR #129 — embeddable Python (Install-EmbeddablePython 경유) 은 virtualenv 가
-                # pre-install 됐으므로 바로 사용 가능.
-                Invoke-VirtualenvVenvCreation
-            } else {
-                # 표준 경로 시도: ``python -m venv .venv`` 또는 ``py -3.13 -m venv .venv``
-                # PR #131 — 실패 시 stderr 분석 → ``No module named venv`` 시 자동 복구.
-                # PR #132 — 위 EAP=Continue 격리 하에서 stderr 리디렉션이 안전하게 작동.
-                $stderrFile = Join-Path $env:TEMP "nexus-alpha-venv-create-$([System.Guid]::NewGuid().ToString('N')).log"
-                $venvCmdArgs = $script:PYTHON_VENV_ARGS + @('-m', 'venv', '.venv')
-                & $script:PYTHON_VENV_EXE $venvCmdArgs 2>$stderrFile | Out-Null
-                $venvExit = $LASTEXITCODE
-                $venvErr = ''
-                if (Test-Path $stderrFile) {
-                    $venvErr = Get-Content -Path $stderrFile -Raw -ErrorAction SilentlyContinue
-                    if (-not $venvErr) { $venvErr = '' }
-                }
-                Remove-Item -Path $stderrFile -ErrorAction SilentlyContinue
-
-                if ($venvExit -eq 0) {
-                    $cmdSummary = ("$($script:PYTHON_VENV_EXE) " + (($script:PYTHON_VENV_ARGS + @('-m','venv')) -join ' ')).Trim()
-                    Write-Ok "가상환경 생성: .venv (via $cmdSummary)"
-                } elseif ($venvErr -match 'No module named venv') {
-                    # PR #131 — embeddable-style Python 자동 감지: venv 모듈 부재.
-                    # ``py -3.13`` 등이 embeddable Python 으로 resolve 된 경우 cover.
-                    Write-Warn2 "검출된 Python 에 venv 모듈 미포함 (embeddable 추정 — $($script:PYTHON_VENV_EXE) $($script:PYTHON_VENV_ARGS -join ' '))"
-                    Write-Warn2 'virtualenv 패키지로 자동 전환 (pip / virtualenv 미설치 시 자동 설치)'
-                    $script:PYTHON_VENV_EMBEDDABLE = $true
-                    Invoke-VirtualenvVenvCreation
-                } else {
-                    $cmdStr = ("$($script:PYTHON_VENV_EXE) " + ($venvCmdArgs -join ' ')).Trim()
-                    $errHint = if ($venvErr) { "`nstderr: $($venvErr.TrimEnd())" } else { '' }
-                    Fail "가상환경 생성 실패 ($cmdStr)$errHint"
-                }
+            # PR #133 — 풀 Python 만 사용. ``python -m venv .venv`` 또는 ``py -3.13 -m venv .venv``.
+            # ``No module named venv`` 발생 시 embeddable Python 의심 → 명시적 Fail (embeddable
+            # fallback 제거됨). PR #131 의 stderr file 캡처 패턴은 진단 정보를 위해 유지.
+            $stderrFile = Join-Path $env:TEMP "nexus-alpha-venv-create-$([System.Guid]::NewGuid().ToString('N')).log"
+            $venvCmdArgs = $script:PYTHON_VENV_ARGS + @('-m', 'venv', '.venv')
+            & $script:PYTHON_VENV_EXE $venvCmdArgs 2>$stderrFile | Out-Null
+            $venvExit = $LASTEXITCODE
+            $venvErr = ''
+            if (Test-Path $stderrFile) {
+                $venvErr = Get-Content -Path $stderrFile -Raw -ErrorAction SilentlyContinue
+                if (-not $venvErr) { $venvErr = '' }
             }
+            Remove-Item -Path $stderrFile -ErrorAction SilentlyContinue
+
+            if ($venvExit -eq 0) {
+                $cmdSummary = ("$($script:PYTHON_VENV_EXE) " + (($script:PYTHON_VENV_ARGS + @('-m','venv')) -join ' ')).Trim()
+                Write-Ok "가상환경 생성: .venv (via $cmdSummary)"
+            } elseif ($venvErr -match 'No module named venv') {
+                $missingVenvCmd = ($script:PYTHON_VENV_EXE + ' ' + ($script:PYTHON_VENV_ARGS -join ' ')).Trim()
+                Fail @"
+검출된 Python 이 venv 모듈을 포함하지 않습니다: $missingVenvCmd
+이는 embeddable Python (zip 배포본) 의 특징입니다.
+
+PR #133 부터 embeddable Python 경로는 지원하지 않습니다 (tkinter 미포함 문제).
+풀 Python 3.13 인스톨러 사용이 필요합니다.
+
+수동 조치 [관리자 권한 불필요]:
+  1. https://www.python.org/downloads/release/python-3137/ 에서 'Windows installer 64-bit' 다운로드
+  2. 실행 후 'Install Now' 선택 [per-user 설치]
+  3. install.ps1 재실행 [irm | iex]
+"@
+            } else {
+                $cmdStr = ("$($script:PYTHON_VENV_EXE) " + ($venvCmdArgs -join ' ')).Trim()
+                $errHint = if ($venvErr) { "`nstderr: $($venvErr.TrimEnd())" } else { '' }
+                Fail "가상환경 생성 실패 ($cmdStr)$errHint"
+            }
+
+            # PR #133 — 생성된 venv 의 tkinter 검증: 풀 Python 인스톨러는 tkinter 표준 포함.
+            # 실패 시 embeddable Python 잔재 의심 — 명시적 Fail.
+            $venvTkResult = Invoke-NativeSafely -Executable $venvPython -Arguments @('-c', 'import tkinter; print("tk OK")')
+            if (-not $venvTkResult.Succeeded -or $venvTkResult.StdOut -notmatch 'tk OK') {
+                Fail @"
+가상환경 생성은 성공했으나 tkinter import 실패:
+  python.exe = $venvPython
+  output     = $($venvTkResult.StdOut)
+  exit       = $($venvTkResult.ExitCode)
+
+원인: 베이스 Python 이 Tcl/Tk 미포함 (embeddable distribution 또는 손상된 인스톨).
+조치: 풀 Python 3.13 (https://python.org/downloads/release/python-3137/) 재설치 후 다시 시도.
+"@
+            }
+            Write-Ok 'tkinter 검증 통과 (Tcl/Tk GUI 백엔드 작동)'
         } finally {
             Pop-Location
         }

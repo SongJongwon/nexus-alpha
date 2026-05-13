@@ -136,7 +136,7 @@ def run_python_in_sandbox(
     if timeout_sec <= 0:
         raise ValueError(f"timeout_sec must be positive, got {timeout_sec}")
 
-    with tempfile.TemporaryDirectory(prefix="nexus_sandbox_") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="nexus_sandbox_", ignore_cleanup_errors=True) as tmpdir:
         workdir = Path(tmpdir)
         script_path = workdir / "_sandbox_main.py"
         script_path.write_text(code, encoding="utf-8")
@@ -153,27 +153,50 @@ def run_python_in_sandbox(
         stderr_text = ""
         exit_code = -1
 
+        # PR #133 fixup #13 — Popen + 명시적 cleanup (단일 파일 버전도 동일 fix 적용)
+        proc = None
         try:
-            completed = subprocess.run(  # noqa: S603 (의도적 subprocess 호출)
+            proc = subprocess.Popen(  # noqa: S603 (의도적 subprocess 호출)
                 [sys.executable, str(script_path)],
                 cwd=str(workdir),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout_sec,
                 env=env,
             )
-            exit_code = completed.returncode
-            stdout_text = completed.stdout or ""
-            stderr_text = completed.stderr or ""
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
+            try:
+                stdout_text, stderr_text = proc.communicate(timeout=timeout_sec)
+                exit_code = proc.returncode if proc.returncode is not None else -1
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                exit_code = -1
+                try:
+                    proc.kill()
+                    stdout_text, stderr_text = proc.communicate(timeout=5)
+                except Exception:  # noqa: BLE001
+                    stdout_text = ""
+                    stderr_text = ""
+        except Exception as e:  # noqa: BLE001
+            timed_out = False
             exit_code = -1
-            stdout_text = exc.stdout.decode("utf-8", errors="replace") if exc.stdout else ""
-            stderr_text = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+            stderr_text = f"sandbox Popen failed: {type(e).__name__}: {e}"
         finally:
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=3)
+                except Exception:  # noqa: BLE001
+                    pass
             elapsed = time.monotonic() - start
+
+        if isinstance(stdout_text, bytes):
+            stdout_text = stdout_text.decode("utf-8", errors="replace")
+        if isinstance(stderr_text, bytes):
+            stderr_text = stderr_text.decode("utf-8", errors="replace")
+        stdout_text = stdout_text or ""
+        stderr_text = stderr_text or ""
 
         return SandboxResult(
             exit_code=exit_code,
@@ -461,7 +484,12 @@ def run_python_package_in_sandbox(
     if not code_files:
         return None
 
-    with tempfile.TemporaryDirectory(prefix="nexus_sandbox_pkg_") as tmpdir:
+    # PR #133 fixup #13 — TemporaryDirectory cleanup 실패 시도(WinError 32: 파일 잠금)
+    # 가 빌드 전체를 죽이지 않도록 ignore_cleanup_errors=True. 좀비 폴더는 OS 가
+    # 추후 정리.
+    with tempfile.TemporaryDirectory(
+        prefix="nexus_sandbox_pkg_", ignore_cleanup_errors=True
+    ) as tmpdir:
         workdir = Path(tmpdir)
         written = _reconstruct_package_tree(code_files, workdir)
         if not written:
@@ -483,27 +511,61 @@ def run_python_package_in_sandbox(
         stderr_text = ""
         exit_code = -1
 
+        # PR #133 fixup #13 — subprocess.run 대신 Popen 사용:
+        # ① TimeoutExpired 시 명시적 kill + wait 로 자식 + grandchild 정리
+        # ② str/bytes 동시 처리 (fixup #13 핵심 버그 fix: decode-on-str 회피)
+        proc = None
         try:
-            completed = subprocess.run(  # noqa: S603 (의도적 subprocess 호출)
+            proc = subprocess.Popen(  # noqa: S603 (의도적 subprocess 호출)
                 [sys.executable, *target.cmd_args],
                 cwd=str(target.cwd),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout_sec,
                 env=env,
             )
-            exit_code = completed.returncode
-            stdout_text = completed.stdout or ""
-            stderr_text = completed.stderr or ""
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
+            try:
+                stdout_text, stderr_text = proc.communicate(timeout=timeout_sec)
+                exit_code = proc.returncode if proc.returncode is not None else -1
+            except subprocess.TimeoutExpired:
+                # PR #133 fixup #13 — 명시적 cleanup:
+                # ① kill() 로 SIGTERM (Windows: TerminateProcess)
+                # ② communicate(timeout=5) 로 출력 수집 + 좀비 회피
+                # ③ 그래도 안 죽으면 출력 포기, 좀비는 다음 GC 까지 잔존 가능
+                timed_out = True
+                exit_code = -1
+                try:
+                    proc.kill()
+                    stdout_text, stderr_text = proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    stdout_text = ""
+                    stderr_text = ""
+                except Exception:  # noqa: BLE001 — kill 실패해도 graceful
+                    stdout_text = ""
+                    stderr_text = ""
+        except Exception as e:  # noqa: BLE001 — Popen 자체 실패도 graceful
+            timed_out = False
             exit_code = -1
-            stdout_text = exc.stdout.decode("utf-8", errors="replace") if exc.stdout else ""
-            stderr_text = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+            stderr_text = f"sandbox Popen failed: {type(e).__name__}: {e}"
         finally:
+            # PR #133 fixup #13 — proc 가 살아있으면 강제 종료 (자원 누수 방지)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=3)
+                except Exception:  # noqa: BLE001
+                    pass
             elapsed = time.monotonic() - start
+
+        # 안전망: stdout/stderr 가 bytes 라도 str 로 변환 (fixup #13 방어망)
+        if isinstance(stdout_text, bytes):
+            stdout_text = stdout_text.decode("utf-8", errors="replace")
+        if isinstance(stderr_text, bytes):
+            stderr_text = stderr_text.decode("utf-8", errors="replace")
+        stdout_text = stdout_text or ""
+        stderr_text = stderr_text or ""
 
         return SandboxResult(
             exit_code=exit_code,

@@ -37,7 +37,9 @@ Nexus Alpha 자동화 워크플로우 (Phase 6 Track B 통합 — 옵션 6.B / P
 
 from __future__ import annotations
 
+import ast
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -1226,6 +1228,14 @@ def _format_track_b_executor_result_md(result: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# PR #133 — Track B 도 entry .py 의 import 자동 스캔 → pip install (B안 Track B 적용)
+# PR #133 fixup #6 — _scan_imports_from_py 는 build_workflow.py 로 이동 (Track A 도 사용).
+# 본 파일은 build_workflow.py 에서 re-export.
+# ---------------------------------------------------------------------------
+from src.workflows.build_workflow import _scan_imports_from_py  # noqa: F401, E402
+
+
 def _run_track_b_build(
     domain: AutomationDomain,
     saved_dir: Path,
@@ -1233,10 +1243,14 @@ def _run_track_b_build(
     *,
     timeout_sec: int = 300,
 ) -> Any:
-    """Track B 산출 .py 를 PyInstaller 로 빌드 (PR #82).
+    """Track B 산출 .py 를 PyInstaller 로 빌드 (PR #82, PR #133 deps 자동 설치 추가).
 
     Track A 의 5단 LLM 사양 사슬 (run_build_workflow) 은 생략 — Track B 는
     *단일 .py CLI 스크립트* 가정 → 직접 ``execute_pyinstaller()`` 호출이 충분.
+
+    PR #133 — entry .py 의 import 문 AST 스캔 → 외부 패키지 자동 ``pip install``
+    → PyInstaller 호출. dependency_report 가 없는 Track B 환경에서도 자연어 →
+    동작하는 .exe 풀체인 보장.
 
     Args:
         domain: 결정된 도메인 (DEVOPS 제외 — 호출자가 미리 차단).
@@ -1248,11 +1262,63 @@ def _run_track_b_build(
         ``ExecuteResult`` (graceful failure 모델 — 예외 propagate 안 함).
         entry 미탐지 시 None.
     """
-    from src.agents.build_release.build_executor import execute_pyinstaller
+    from src.agents.build_release.build_executor import ExecuteResult, execute_pyinstaller
+    from src.workflows.build_workflow import (
+        _install_dependencies_for_build,
+        _pre_pyinstaller_validation,
+        _resolve_build_deps,
+        _validate_module_attributes,
+    )
 
     entry_path = _resolve_track_b_entry_path(domain, saved_code_files)
     if entry_path is None:
         return None
+
+    # PR #133 fixup #8 — Track B 도 AST primary + Mutex + Whitelist (Track A 와 동일 로직)
+    # dependency_report 가 없으므로 빈 문자열 전달 (AST 스캔만 작동)
+    build_deps = _resolve_build_deps("", entry_path, saved_code_files)
+    if build_deps.direct_deps_to_install:
+        pip_ok, pip_log = _install_dependencies_for_build(build_deps.direct_deps_to_install)
+        if not pip_ok:
+            # PyInstaller 호출 중단 — 누락된 의존성이 있으면 .exe 가 런타임 실패할 것
+            return ExecuteResult(
+                success=False,
+                exit_code=-4,
+                elapsed_sec=0.0,
+                error_message=(
+                    f"Track B: 필수 의존성 pip install 실패 — PyInstaller 호출 중단. "
+                    f"실패 로그: {pip_log}"
+                ),
+            )
+
+    # PR #133 fixup #11 — Track B 도 pre-PyInstaller validation
+    # 코드 자체 결함 (AttributeError 등) 사전 검출 → 빈 껍데기 .exe 양산 차단
+    pre_ok, pre_log = _pre_pyinstaller_validation(entry_path)
+    if not pre_ok:
+        return ExecuteResult(
+            success=False,
+            exit_code=-5,
+            elapsed_sec=0.0,
+            error_message=(
+                f"Track B: Pre-PyInstaller validation 실패 — 코드 자체 결함이 있어 "
+                f"PyInstaller 호출해도 .exe 가 런타임 실패할 것. build 중단.\n\n{pre_log}"
+            ),
+        )
+
+    # PR #133 fixup #14 — Track B 도 정적 attribute 검증
+    attr_ok, attr_broken = _validate_module_attributes(entry_path, saved_code_files)
+    if not attr_ok:
+        return ExecuteResult(
+            success=False,
+            exit_code=-6,
+            elapsed_sec=0.0,
+            error_message=(
+                f"Track B: 정적 attribute 검증 실패 — LLM 코드가 설치된 모듈의 존재하지 "
+                f"않는 attribute 를 사용. build 중단.\n"
+                f"누락 attribute 체인 ({len(attr_broken)}개):\n  "
+                + "\n  ".join(attr_broken[:10])
+            ),
+        )
 
     # Track B 4 python 도메인 모두 CLI 스크립트 — windowed=False
     app_name = entry_path.stem.title() or "App"
@@ -1262,6 +1328,10 @@ def _run_track_b_build(
         app_name=app_name,
         windowed=False,
         onefile=True,
+        # fixup #8 — 화이트리스트의 패키지만 --collect-all
+        collect_all=build_deps.collect_all_packages or None,
+        # fixup #8 — mutex group 비채택 패키지 차단
+        exclude_modules=build_deps.excluded_modules or None,
         timeout_sec=timeout_sec,
     )
 
