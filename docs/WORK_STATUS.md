@@ -1,5 +1,45 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
+> **마지막 업데이트**: 2026-05-14 (PR #133 머지 완료 — 자연어 → 동작 .exe 풀체인 베타 배포 준비 ⭐⭐⭐)
+>
+> ## 🎯 PR #133 — GUI .exe 풀체인 완성 (2026-05-12 ~ 2026-05-14)
+>
+> **머지 commit**: `0060bd9` (squash, pr-133-full-python-tkinter 브랜치 삭제됨)
+> **누적 fixup**: **16개** (PR #133 본체 + fixup #1~#15) — 5회 라이브 검증 완료
+> **테스트**: pytest **937 passed** (784 → +153, 회귀 0)
+> **베이스 가치**: 사용자 명시 "이 도구를 다른 사람에게 배포해서 테스트시킬 예정. LLM 의 잘못된 API 호출이 일반 사용자에게 노출되면 안 됨" → fixup #14 의 정적 attribute 검증으로 *사전 차단* 달성
+>
+> ### 라이브 5회 검증 결과
+> | 회차 | 결과 | .exe 크기 | 의미 |
+> |------|------|----------|------|
+> | 1차 | ✅ Calculator | 29.71 MB | 회귀 X (heavy GUI lib) |
+> | 2차 | ✅ Todo_App | 29.71 MB | 회귀 X (다른 앱 동일 lib) |
+> | 3차 | 🔥 **Flet BLOCKED** | — | **fixup #14 정확 차단** (`flet.colors`, `flet.padding.symmetric`, `flet.alignment.center` 등 4개 거짓 API) |
+> | 4차 | ✅ Notepad | 10.70 MB | **GUI 라이브러리 다양성 충족** (light Tkinter) |
+> | 5차 | ⚠️ useless .exe | 32.74 MB | LLM test 파일만 생성 → **fixup #15 추가로 향후 차단** |
+>
+> ### 핵심 변경 (16 fixup 누적)
+> - **install.ps1**: embeddable Python 경로 *완전 제거*, MSI orphan registry 자동 cleanup (Windows Installer Products + Features + HKLM UserData 직접 삭제), `Include_tcltk=1` 명시 + post-install tkinter 검증, retry 직전 installer 항상 재다운로드
+> - **build_workflow.py**: LLM dependency_report + AST scan UNION → **AST primary** (LLM 거짓 양성 차단), pip name 정규화 (PIL→pillow 등), mutex group 해소 (PyQt5/6 + PySide2/6 + OpenCV + tensorflow), `--collect-all` 화이트리스트 (flet/customtkinter/dearpygui 등), multi-package runtime extras (flet → flet-desktop)
+> - **entry 선택**: `__main__` block **PRIORITY 1**, test 파일 자동 배제 (`test_*` / `*_test` / `conftest`), FALLBACK 제거 (test 파일만 있을 때 build 거부)
+> - **2단계 pre-PyInstaller validation**:
+>   - fixup #11 — subprocess 5s timeout + 8 에러 패턴 (AttributeError/ImportError/SyntaxError 등) 검출
+>   - **fixup #14** — *정적 module attribute 검증* (AST chain + importlib.getattr 실제 검증) ⭐ Flet 의 internal error handler 가 popup 으로만 표시하는 경우도 차단
+> - **sandbox_runner**: `subprocess.run` → `Popen` 전환 + 명시적 cleanup, decode-on-str 버그 fix, `ignore_cleanup_errors=True`, graceful exception catching
+>
+> ### 식별된 후속 PR (분리)
+> - **PR #134**: LLM intent 매칭 강화 (Senior GUI Code Generator 프롬프트 — 시계 요청 시 GUI 만들도록, test 파일 단독 생성 금지)
+> - **PR #135**: 좀비 프로세스 cleanup (Flet 의 Flutter daemon 등 Windows subprocess 잔존) + LangFuse traces 401 graceful fallback + langgraph cache deprecation warning 명시 처리
+> - **PR #136**: README 알려진 한계 명시 + 베타 배포 가이드 (사용자 매뉴얼)
+>
+> ### 다음 단계 (사용자 결정)
+> - main 브랜치 smoke test 1회 (`$env:NEXUS_ALPHA_BRANCH = 'main'` + irm | iex) → 통과 시 베타 1-2명 배포 시작
+> - 베타 실 데이터 수집 후 PR #134~#136 우선순위 결정
+>
+> ---
+>
+> ## 이전 세션 (2026-05-11)
+>
 > **마지막 업데이트**: 2026-05-11 (세션 마무리 PR #119 — **PR #98~#118 머지 누계 +21 PR** + 🌐 **repo PUBLIC 전환 완료** + 다른 PC Alpha 테스트 성공 + 후보 V (Runtime Verification) 비전 설계)
 > **현재 브랜치**: `docs/session-close-pr119` (세션 마무리 — 모든 docs 일괄 갱신)
 > **테스트**: pytest **784 passed** (750 → +34 in PR #102~#117, 회귀 0)
