@@ -944,6 +944,153 @@ def test_resolve_build_deps_collect_all_whitelist(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# PR #133 fixup #11 — Pre-PyInstaller validation + LLM hidden_imports 필터
+# ---------------------------------------------------------------------------
+
+
+def test_pre_pyinstaller_validation_passes_clean_script(tmp_path: Path) -> None:
+    """fixup #11 — 결함 없는 CLI 스크립트는 정상 통과."""
+    from src.workflows.build_workflow import _pre_pyinstaller_validation
+
+    p = tmp_path / "good.py"
+    p.write_text("print('hello')\n", encoding="utf-8")
+    ok, log = _pre_pyinstaller_validation(p)
+    assert ok is True
+    assert "passed" in log.lower() or "OK" in log
+
+
+def test_pre_pyinstaller_validation_catches_attribute_error(tmp_path: Path) -> None:
+    """fixup #11 핵심 — 사용자 시나리오 재현 (AttributeError 사전 검출).
+
+    사용자 라이브 검증 5회차: LLM 이 flet.controls.padding.symmetric(...) 호출했으나
+    실제 flet 버전에는 해당 attribute 없음 → .exe 빌드는 성공해도 런타임 실패.
+    fixup #11 가 PyInstaller 호출 *전에* 코드 실행해 사전 검출.
+    """
+    from src.workflows.build_workflow import _pre_pyinstaller_validation
+
+    p = tmp_path / "bad.py"
+    p.write_text(
+        "import json\n"
+        "# json 에 없는 attribute 호출 → AttributeError\n"
+        "json.does_not_exist_method()\n",
+        encoding="utf-8",
+    )
+    ok, log = _pre_pyinstaller_validation(p)
+    assert ok is False
+    assert "AttributeError" in log
+
+
+def test_pre_pyinstaller_validation_catches_import_error(tmp_path: Path) -> None:
+    """fixup #11 — ImportError / ModuleNotFoundError 사전 검출."""
+    from src.workflows.build_workflow import _pre_pyinstaller_validation
+
+    p = tmp_path / "noimport.py"
+    p.write_text("import absolutely_nonexistent_module_xyz_abc\n", encoding="utf-8")
+    ok, log = _pre_pyinstaller_validation(p)
+    assert ok is False
+    assert "ImportError" in log or "ModuleNotFoundError" in log
+
+
+def test_pre_pyinstaller_validation_catches_syntax_error(tmp_path: Path) -> None:
+    """fixup #11 — SyntaxError 사전 검출."""
+    from src.workflows.build_workflow import _pre_pyinstaller_validation
+
+    p = tmp_path / "syntax.py"
+    p.write_text("def broken(\n", encoding="utf-8")
+    ok, log = _pre_pyinstaller_validation(p)
+    assert ok is False
+    assert "SyntaxError" in log
+
+
+def test_pre_pyinstaller_validation_timeout_means_gui_running(tmp_path: Path) -> None:
+    """fixup #11 — timeout 도달 = GUI mainloop 살아있음 = OK."""
+    from src.workflows.build_workflow import _pre_pyinstaller_validation
+
+    p = tmp_path / "gui.py"
+    p.write_text(
+        "import time\n"
+        "while True:\n    time.sleep(0.1)\n",
+        encoding="utf-8",
+    )
+    # timeout 짧게 (실 동작 빠르게)
+    ok, log = _pre_pyinstaller_validation(p, timeout_sec=2)
+    assert ok is True
+    assert "mainloop running" in log or "timeout" in log
+
+
+def test_pre_pyinstaller_validation_skips_missing_entry(tmp_path: Path) -> None:
+    """fixup #11 — 존재하지 않는 entry 는 skip (graceful)."""
+    from src.workflows.build_workflow import _pre_pyinstaller_validation
+
+    ok, log = _pre_pyinstaller_validation(tmp_path / "nonexistent.py")
+    assert ok is True
+    assert "skipped" in log.lower() or "missing" in log.lower()
+
+
+def test_filter_llm_hidden_imports_removes_stdlib(tmp_path: Path) -> None:
+    """fixup #11 — LLM hidden_imports 의 stdlib 자동 제거."""
+    from src.workflows.build_workflow import _filter_llm_hidden_imports
+
+    p = tmp_path / "app.py"
+    p.write_text("import requests\n", encoding="utf-8")
+    filtered = _filter_llm_hidden_imports(
+        ["decimal", "json", "requests.adapters"],
+        p,
+        [p],
+    )
+    # decimal, json (stdlib) 제거. requests.adapters 만 (실제 import 있음) 유지.
+    assert "decimal" not in filtered
+    assert "json" not in filtered
+    assert "requests.adapters" in filtered
+
+
+def test_filter_llm_hidden_imports_removes_unrelated_framework(tmp_path: Path) -> None:
+    """fixup #11 핵심 — 사용자 시나리오 재현: flet 앱에 PySide6 추천은 노이즈.
+
+    LLM 이 hidden_imports 에 ['PySide6.QtSvg', 'PySide6.QtPrintSupport', 'decimal']
+    을 추천했지만 사용자 코드는 flet 만 사용. 모두 노이즈 → 제거.
+    """
+    from src.workflows.build_workflow import _filter_llm_hidden_imports
+
+    p = tmp_path / "flet_app.py"
+    p.write_text("import flet\n", encoding="utf-8")
+    filtered = _filter_llm_hidden_imports(
+        ["PySide6.QtSvg", "PySide6.QtPrintSupport", "decimal"],
+        p,
+        [p],
+    )
+    # 사용자 라이브 시나리오 정확 재현: 3개 모두 제거되어야 함
+    assert filtered == [], (
+        f"LLM 노이즈 (PySide6.*/decimal) 가 flet 앱에 잔존: {filtered}"
+    )
+
+
+def test_filter_llm_hidden_imports_keeps_relevant(tmp_path: Path) -> None:
+    """fixup #11 — 실제 사용 중인 패키지의 submodule 은 유지."""
+    from src.workflows.build_workflow import _filter_llm_hidden_imports
+
+    p = tmp_path / "qt_app.py"
+    p.write_text("from PySide6.QtWidgets import QApplication\n", encoding="utf-8")
+    filtered = _filter_llm_hidden_imports(
+        ["PySide6.QtSvg", "PySide6.QtPrintSupport", "decimal"],
+        p,
+        [p],
+    )
+    # PySide6 가 실제 사용 중이므로 PySide6.* submodule 유지
+    assert "PySide6.QtSvg" in filtered
+    assert "PySide6.QtPrintSupport" in filtered
+    # decimal (stdlib) 만 제거
+    assert "decimal" not in filtered
+
+
+def test_filter_llm_hidden_imports_empty_input() -> None:
+    """fixup #11 — 빈 입력 → 빈 결과."""
+    from src.workflows.build_workflow import _filter_llm_hidden_imports
+
+    assert _filter_llm_hidden_imports([], None, None) == []
+
+
 def test_flet_triggers_flet_desktop_install(tmp_path: Path) -> None:
     """fixup #10 — flet 검출 시 flet-desktop 자동 pip install + collect_all.
 

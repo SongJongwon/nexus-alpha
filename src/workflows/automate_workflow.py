@@ -1265,6 +1265,7 @@ def _run_track_b_build(
     from src.agents.build_release.build_executor import ExecuteResult, execute_pyinstaller
     from src.workflows.build_workflow import (
         _install_dependencies_for_build,
+        _pre_pyinstaller_validation,
         _resolve_build_deps,
     )
 
@@ -1288,6 +1289,20 @@ def _run_track_b_build(
                     f"실패 로그: {pip_log}"
                 ),
             )
+
+    # PR #133 fixup #11 — Track B 도 pre-PyInstaller validation
+    # 코드 자체 결함 (AttributeError 등) 사전 검출 → 빈 껍데기 .exe 양산 차단
+    pre_ok, pre_log = _pre_pyinstaller_validation(entry_path)
+    if not pre_ok:
+        return ExecuteResult(
+            success=False,
+            exit_code=-5,
+            elapsed_sec=0.0,
+            error_message=(
+                f"Track B: Pre-PyInstaller validation 실패 — 코드 자체 결함이 있어 "
+                f"PyInstaller 호출해도 .exe 가 런타임 실패할 것. build 중단.\n\n{pre_log}"
+            ),
+        )
 
     # Track B 4 python 도메인 모두 CLI 스크립트 — windowed=False
     app_name = entry_path.stem.title() or "App"

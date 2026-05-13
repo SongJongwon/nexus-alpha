@@ -851,6 +851,57 @@ def _collect_local_modules(
     return local_modules
 
 
+def _filter_llm_hidden_imports(
+    hidden_imports: list[str],
+    entry_path: Optional[Path],
+    code_files: Optional[list[Path]] = None,
+) -> list[str]:
+    """LLM advisory hidden_imports 노이즈 필터 (PR #133 fixup #11).
+
+    배경 (사용자 라이브 검증 5회차, 2026-05-13):
+        flet 앱 빌드에 LLM 이 PySide6.QtSvg, PySide6.QtPrintSupport, decimal 추천.
+        - PySide6.* — flet 앱과 무관 (다른 GUI framework)
+        - decimal — stdlib, PyInstaller 가 자동 처리
+        무차별 ``--hidden-import`` 전달 시 .exe 비대화 + 가끔 충돌 위험.
+
+    필터 정책:
+        ① stdlib top-level 제외 (PyInstaller 가 자동 처리)
+        ② 사용자 코드 AST 스캔으로 *실제 import 된* top-level 패키지 set 수집
+        ③ LLM 추천 hidden_import 의 top-level 이 set 에 있는 경우만 통과
+           (예: PySide6 가 코드에 없으면 PySide6.QtSvg 도 제외)
+
+    Returns:
+        검증된 hidden_imports (LLM 노이즈 제거됨).
+    """
+    if not hidden_imports:
+        return []
+
+    stdlib = set(getattr(sys, 'stdlib_module_names', ()))
+    stdlib_lower = {s.lower() for s in stdlib}
+
+    actual_imports: set[str] = set()
+    if entry_path:
+        for p in _scan_imports_from_py(entry_path):
+            actual_imports.add(p.lower())
+    if code_files:
+        for f in code_files:
+            if f.exists():
+                for p in _scan_imports_from_py(f):
+                    actual_imports.add(p.lower())
+
+    filtered: list[str] = []
+    for hi in hidden_imports:
+        top = hi.split('.')[0].lower()
+        if not top:
+            continue
+        if top in stdlib_lower:
+            continue
+        if top not in actual_imports:
+            continue
+        filtered.append(hi)
+    return filtered
+
+
 def _resolve_build_deps(
     dependency_report: str,
     entry_path: Optional[Path],
@@ -877,7 +928,9 @@ def _resolve_build_deps(
         BuildDepsResolution — direct_deps / hidden_imports / collect_all / excluded.
     """
     # 1) LLM 보고서에서 hidden_imports 만 추출 (direct_deps 는 버림)
-    _llm_direct_discarded, hidden_imports = _parse_deps_from_report(dependency_report)
+    _llm_direct_discarded, hidden_imports_raw = _parse_deps_from_report(dependency_report)
+    # PR #133 fixup #11 — LLM hidden_imports 노이즈 필터 (stdlib + unrelated framework)
+    hidden_imports = _filter_llm_hidden_imports(hidden_imports_raw, entry_path, code_files)
 
     # 2) AST 스캔 — entry + code_files 의 모든 .py 의 top-level import
     scanned: list[str] = []
@@ -947,6 +1000,78 @@ def _resolve_build_deps(
         collect_all_packages=collect_all,
         excluded_modules=excluded,
     )
+
+
+def _pre_pyinstaller_validation(
+    entry_path: Path,
+    timeout_sec: int = 5,
+) -> tuple[bool, str]:
+    """Pre-PyInstaller validation — venv python 으로 entry .py 실행 → 코드 결함 사전 검출.
+
+    배경 (사용자 라이브 검증 5회차, 2026-05-13):
+        LLM 이 생성한 flet 앱 코드가 ``flet.controls.padding.symmetric(...)`` 호출.
+        설치된 flet 버전에 해당 attribute 없음 → .exe 빌드는 성공하지만 런타임에
+        AttributeError 다이얼로그. 빈 껍데기 .exe 양산. 패키징 레이어는 정상이나
+        LLM 코드 자체가 결함.
+
+    동작:
+        - venv python (sys.executable) 으로 entry .py 실행
+        - GUI 앱은 mainloop 가 timeout 까지 살아있음 (정상)
+        - 코드 결함 시 timeout 전 exit + stderr 에 에러 메시지
+        - 에러 패턴 (AttributeError / ImportError / SyntaxError / NameError 등) 검출
+
+    Returns:
+        (ok, log). ok=False → build 중단해야 함.
+    """
+    if not entry_path.exists():
+        return True, "skipped: entry_path missing"
+    if not Path(sys.executable).exists():
+        return True, "skipped: sys.executable missing"
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(entry_path)],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=timeout_sec,
+            cwd=str(entry_path.parent),
+        )
+    except subprocess.TimeoutExpired:
+        # Timeout = GUI mainloop 정상 실행 중 → OK
+        return True, f"pre-build validation passed (mainloop running, timeout {timeout_sec}s)"
+    except Exception as e:  # noqa: BLE001 — defensive
+        return True, f"pre-build validation skipped (exception: {type(e).__name__}: {e})"
+
+    stderr_tail = (proc.stderr or '')[-3000:]
+    stdout_tail = (proc.stdout or '')[-500:]
+
+    # 코드 결함 패턴 검출
+    error_patterns = [
+        'AttributeError', 'ImportError', 'ModuleNotFoundError',
+        'NameError', 'SyntaxError', 'TypeError',
+        'IndentationError', 'TabError',
+        'Traceback (most recent call last)',
+    ]
+    for pattern in error_patterns:
+        if pattern in stderr_tail:
+            return False, (
+                f"pre-build validation: 코드 자체 결함 감지 ({pattern}). "
+                f"PyInstaller 호출해도 .exe 가 런타임 실패할 것이므로 build 중단.\n"
+                f"stderr (마지막 3000자):\n{stderr_tail}"
+            )
+
+    # exit code 검사 — non-zero AND 명시적 error 없으면 일반 실패
+    if proc.returncode != 0:
+        return False, (
+            f"pre-build validation: exit code {proc.returncode} (>0). "
+            f"명시적 에러 패턴은 없으나 비정상 종료.\n"
+            f"stderr:\n{stderr_tail}\nstdout:\n{stdout_tail}"
+        )
+
+    # exit code 0 — CLI 스크립트가 정상 완료 (예: Track B 의 데이터 처리 후 종료)
+    return True, "pre-build validation passed (script completed cleanly, exit=0)"
 
 
 def _install_dependencies_for_build(
@@ -1266,6 +1391,7 @@ def run_build_workflow(
                 )
                 pip_log = "deps=0 (no install needed)"
                 pip_ok = True
+                pre_log = "not run (pip 단계 차단)"
                 if build_deps.direct_deps_to_install:
                     pip_ok, pip_log = _install_dependencies_for_build(
                         build_deps.direct_deps_to_install
@@ -1284,30 +1410,46 @@ def run_build_workflow(
                         ),
                     )
                 else:
-                    executor_result = execute_pyinstaller(
-                        entry_path=entry_path,
-                        output_dir=workflow_dir / "build_output",
-                        app_name=app_name,
-                        windowed=windowed,
-                        onefile=True,
-                        hidden_imports=build_deps.hidden_imports or None,
-                        # fixup #8 — 화이트리스트의 패키지만 --collect-all
-                        collect_all=build_deps.collect_all_packages or None,
-                        # fixup #8 — mutex group 비채택 패키지 차단
-                        exclude_modules=build_deps.excluded_modules or None,
-                        timeout_sec=executor_timeout_sec,
-                    )
+                    # PR #133 fixup #11 — pre-PyInstaller validation
+                    # 코드 자체 결함 (AttributeError 등) 사전 검출 → 빈 껍데기 .exe 양산 차단
+                    pre_ok, pre_log = _pre_pyinstaller_validation(entry_path)
+                    if not pre_ok:
+                        executor_result = ExecuteResult(
+                            success=False,
+                            exit_code=-5,
+                            elapsed_sec=0.0,
+                            error_message=(
+                                f"Pre-PyInstaller validation 실패 — 코드 자체 결함이 "
+                                f"있어 PyInstaller 호출해도 .exe 가 런타임 실패할 것. "
+                                f"build 중단.\n\n{pre_log}"
+                            ),
+                        )
+                    else:
+                        executor_result = execute_pyinstaller(
+                            entry_path=entry_path,
+                            output_dir=workflow_dir / "build_output",
+                            app_name=app_name,
+                            windowed=windowed,
+                            onefile=True,
+                            hidden_imports=build_deps.hidden_imports or None,
+                            # fixup #8 — 화이트리스트의 패키지만 --collect-all
+                            collect_all=build_deps.collect_all_packages or None,
+                            # fixup #8 — mutex group 비채택 패키지 차단
+                            exclude_modules=build_deps.excluded_modules or None,
+                            timeout_sec=executor_timeout_sec,
+                        )
                 # 25_executor_result.md 저장 — 사용자 가시 산출물
                 executor_md = workflow_dir / "25_executor_result.md"
                 executor_md_body = _format_executor_result_md(executor_result)
                 pr133_header = (
-                    "## PR #133 — 의존성 자동 설치 결과 (fixup #9: __main__ block 우선 entry 선택)\n\n"
+                    "## PR #133 — 의존성 자동 설치 결과 (fixup #11: pre-validation + LLM hidden_imports 필터 + multi-package extras)\n\n"
                     f"- Selected entry: `{entry_path.name}` (reason: {entry_selection_reason})\n"
-                    f"- direct_dependencies (AST scan): {len(build_deps.direct_deps_to_install)}개 "
+                    f"- direct_dependencies (AST + extras): {len(build_deps.direct_deps_to_install)}개 "
                     f"({', '.join(build_deps.direct_deps_to_install) if build_deps.direct_deps_to_install else '없음'})\n"
-                    f"- hidden_imports (LLM): {len(build_deps.hidden_imports)}개 "
+                    f"- hidden_imports (LLM, filtered): {len(build_deps.hidden_imports)}개 "
                     f"({', '.join(build_deps.hidden_imports) if build_deps.hidden_imports else '없음'})\n"
                     f"- pip install: {pip_log}\n"
+                    f"- pre-PyInstaller validation: {pre_log}\n"
                     f"- PyInstaller --collect-all: {len(build_deps.collect_all_packages)}개 "
                     f"({', '.join(build_deps.collect_all_packages) if build_deps.collect_all_packages else '없음'})\n"
                     f"- PyInstaller --exclude-module (mutex): {len(build_deps.excluded_modules)}개 "
