@@ -645,6 +645,187 @@ def test_execute_pyinstaller_accepts_collect_all_arg(monkeypatch, tmp_path: Path
     assert cmd[flet_idx - 1] == "--collect-all"
 
 
+# ---------------------------------------------------------------------------
+# PR #133 fixup #7 — 로컬 프로젝트 모듈을 외부 패키지로 오인하는 false positive fix
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_build_deps_excludes_local_project_modules(tmp_path: Path) -> None:
+    """fixup #7 핵심 — 사용자 라이브 시나리오 (theme.py/views.py/storage.py) 재현.
+
+    LLM 이 calculator.py 에서 ``from theme import COLORS`` 같은 로컬 import 를
+    사용하면 AST 스캔이 theme 을 외부 pip 패키지로 오인 → pip install 실패.
+    fixup #7 가 같은 디렉토리의 .py 파일을 local module 로 인식해 제외.
+    """
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "build_output" / "src"
+    project.mkdir(parents=True)
+    (project / "calculator.py").write_text(
+        "import flet\n"
+        "from theme import COLORS\n"
+        "from views import MainView\n"
+        "from storage import save_state\n",
+        encoding="utf-8",
+    )
+    (project / "theme.py").write_text("COLORS = {}", encoding="utf-8")
+    (project / "views.py").write_text("class MainView: pass", encoding="utf-8")
+    (project / "storage.py").write_text("def save_state(): pass", encoding="utf-8")
+
+    code_files = [
+        project / "calculator.py",
+        project / "theme.py",
+        project / "views.py",
+        project / "storage.py",
+    ]
+    direct, _ = _resolve_build_deps("", project / "calculator.py", code_files)
+    # 외부 패키지 flet 만 남고, theme/views/storage 는 모두 로컬로 인식
+    assert direct == ["flet"], f"fixup #7: 로컬 모듈이 외부로 분류됨: {direct}"
+
+
+def test_collect_local_modules_finds_sibling_py_files(tmp_path: Path) -> None:
+    """_collect_local_modules — 같은 디렉토리의 .py 파일을 local module 로 수집."""
+    from src.workflows.build_workflow import _collect_local_modules
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "main.py").touch()
+    (project / "helpers.py").touch()
+    (project / "config.py").touch()
+    (project / "_private.py").touch()  # dunder 제외 대상
+
+    locals_set = _collect_local_modules(project / "main.py", [project / "main.py"])
+    assert "main" in locals_set
+    assert "helpers" in locals_set
+    assert "config" in locals_set
+    # underscore prefix 는 제외
+    assert "_private" not in locals_set
+
+
+def test_collect_local_modules_finds_package_dirs(tmp_path: Path) -> None:
+    """_collect_local_modules — __init__.py 있는 패키지 디렉토리 + namespace 패키지 모두 수집."""
+    from src.workflows.build_workflow import _collect_local_modules
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "main.py").touch()
+    # 패키지 (__init__.py)
+    pkg = project / "utils"
+    pkg.mkdir()
+    (pkg / "__init__.py").touch()
+    (pkg / "helpers.py").touch()
+    # namespace 패키지 (__init__.py 없음, .py 있음)
+    nspkg = project / "views"
+    nspkg.mkdir()
+    (nspkg / "main_view.py").touch()
+    # 무관 디렉토리 (.py 없음)
+    empty = project / "assets"
+    empty.mkdir()
+    (empty / "icon.png").touch()
+
+    locals_set = _collect_local_modules(project / "main.py", [project / "main.py"])
+    assert "utils" in locals_set, f"패키지 (__init__.py) 미검출: {locals_set}"
+    assert "views" in locals_set, f"namespace 패키지 미검출: {locals_set}"
+    # 비-Python 디렉토리는 제외
+    assert "assets" not in locals_set
+
+
+def test_resolve_build_deps_relative_imports_excluded(tmp_path: Path) -> None:
+    """상대 import (from .x import y) 는 AST 가 무조건 제외 — 외부 패키지 후보 X."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "main.py").write_text(
+        "from . import sibling\n"
+        "from .submod import func\n"
+        "from .. import parent_thing\n"
+        "import requests\n",  # 진짜 외부
+        encoding="utf-8",
+    )
+    direct, _ = _resolve_build_deps("", project / "main.py", [project / "main.py"])
+    assert "requests" in direct
+    # relative imports 의 어떤 이름도 외부로 분류되면 안 됨
+    assert "sibling" not in direct
+    assert "submod" not in direct
+    assert "parent_thing" not in direct
+
+
+def test_resolve_build_deps_mixed_stdlib_local_external(tmp_path: Path) -> None:
+    """혼합 시나리오 — stdlib + local + external 가 정확히 분리되는지."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "import json\n"  # stdlib
+        "from pathlib import Path\n"  # stdlib
+        "import requests\n"  # external
+        "import flet\n"  # external
+        "from myproject_local import helper\n"  # local
+        "from theme import COLORS\n",  # local sibling .py
+        encoding="utf-8",
+    )
+    # 로컬 sibling 파일
+    (project / "theme.py").touch()
+    # 로컬 패키지
+    local_pkg = project / "myproject_local"
+    local_pkg.mkdir()
+    (local_pkg / "__init__.py").touch()
+
+    code_files = [project / "app.py", project / "theme.py"]
+    direct, _ = _resolve_build_deps("", project / "app.py", code_files)
+    # External 만 남아야 함
+    assert sorted(direct) == sorted(["requests", "flet"]), f"deps mismatch: {direct}"
+    assert "json" not in direct
+    assert "pathlib" not in direct
+    assert "theme" not in direct
+    assert "myproject_local" not in direct
+
+
+def test_resolve_build_deps_excludes_dunder_names(tmp_path: Path) -> None:
+    """__main__ / __init__ 같은 dunder 이름은 외부 패키지로 분류되면 안 됨."""
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "app.py").write_text(
+        "import __future__\n"  # stdlib pseudo
+        "import flet\n",
+        encoding="utf-8",
+    )
+    direct, _ = _resolve_build_deps("", project / "app.py", [project / "app.py"])
+    assert "flet" in direct
+    # __future__ 는 어떤 식으로든 제외
+    assert "__future__" not in direct
+    assert "future" not in direct
+
+
+def test_resolve_build_deps_llm_says_local_module_still_excludes(tmp_path: Path) -> None:
+    """LLM 이 dependency_report 에 로컬 모듈명을 넣어도 fixup #7 가 차단.
+
+    안전망 — LLM 산출이 잘못돼도 false positive 방지.
+    """
+    from src.workflows.build_workflow import _resolve_build_deps
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "main.py").write_text("import flet\n", encoding="utf-8")
+    (project / "theme.py").touch()  # 로컬
+
+    # LLM 이 theme 을 외부 deps 로 (잘못) 보고
+    bad_report = """```yaml
+direct_dependencies:
+  - name: flet
+  - name: theme
+hidden_imports: []
+```
+"""
+    direct, _ = _resolve_build_deps(bad_report, project / "main.py", [project / "main.py", project / "theme.py"])
+    assert "flet" in direct
+    assert "theme" not in direct, "fixup #7 가 LLM 의 잘못된 로컬 모듈 보고를 차단해야 함"
+
+
 def test_build_workflow_halts_on_pip_install_failure(monkeypatch, tmp_path: Path) -> None:
     """PR #133 fixup #6 — pip install 실패 시 PyInstaller 호출 *중단*.
 

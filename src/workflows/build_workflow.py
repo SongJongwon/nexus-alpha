@@ -523,6 +523,74 @@ def _normalize_pip_names(deps: list[str]) -> list[str]:
     return [_IMPORT_TO_PIP_NAME.get(d, d) for d in deps]
 
 
+def _collect_local_modules(
+    entry_path: Optional[Path],
+    code_files: Optional[list[Path]],
+) -> set[str]:
+    """code_files / entry 디렉토리에서 로컬 모듈명 수집 (PR #133 fixup #7).
+
+    배경 (사용자 라이브 검증, 2026-05-13):
+        LLM 이 calculator.py 안에서 ``from theme import COLORS`` 같은 로컬 import
+        를 사용하면 AST 스캔이 ``theme`` 을 외부 pip 패키지로 오인 → pip install
+        실패 → fail-fast 정상 작동하지만 진짜 외부 deps (flet 등) 까지 함께 차단.
+
+    처방:
+        같은 디렉토리의 ``.py`` 파일 + 하위 패키지 디렉토리 (``__init__.py`` 있거나
+        ``.py`` 가 들어있는 디렉토리) 를 모두 local module 로 수집. 후속 필터에서
+        외부 패키지 후보에서 제외.
+
+    Returns:
+        local module names (lowercase) 집합.
+    """
+    local_modules: set[str] = set()
+
+    candidates: list[Path] = []
+    if code_files:
+        candidates.extend(code_files)
+    if entry_path and entry_path not in candidates:
+        candidates.append(entry_path)
+
+    dirs_to_scan: set[Path] = set()
+    for f in candidates:
+        if not f.exists():
+            continue
+        dirs_to_scan.add(f.parent)
+        # 파일명 자체 (확장자 제외) — __main__ / __init__ 등 dunder 제외
+        stem = f.stem
+        if stem and not stem.startswith('_'):
+            local_modules.add(stem.lower())
+
+    # 각 디렉토리 안의 .py 파일 + 하위 폴더 (패키지) 스캔
+    for d in dirs_to_scan:
+        try:
+            for item in d.iterdir():
+                if item.is_file() and item.suffix == '.py':
+                    stem = item.stem
+                    if stem and not stem.startswith('_'):
+                        local_modules.add(stem.lower())
+                elif item.is_dir():
+                    name = item.name
+                    if not name or name.startswith('.') or name.startswith('_'):
+                        continue
+                    # 패키지 (__init__.py 있음) → 명확히 local
+                    if (item / '__init__.py').exists():
+                        local_modules.add(name.lower())
+                        continue
+                    # __init__.py 없어도 .py 파일이 있으면 namespace 패키지로 취급
+                    try:
+                        has_py = any(
+                            p.suffix == '.py' for p in item.iterdir() if p.is_file()
+                        )
+                        if has_py:
+                            local_modules.add(name.lower())
+                    except (OSError, PermissionError):
+                        pass
+        except (OSError, PermissionError):
+            continue
+
+    return local_modules
+
+
 def _resolve_build_deps(
     dependency_report: str,
     entry_path: Optional[Path],
@@ -561,16 +629,26 @@ def _resolve_build_deps(
     # UNION (LLM report 우선 — 그 뒤로 AST scan 추가)
     merged = list(dict.fromkeys(direct_deps + scanned))
 
-    # build 도구 / stdlib / blocklist 한 번 더 필터 (안전망)
+    # PR #133 fixup #7 — 로컬 프로젝트 모듈 수집 (theme.py / views.py / storage.py 등)
+    local_modules = _collect_local_modules(entry_path, code_files)
+
+    # build 도구 / stdlib / blocklist / 로컬 모듈 필터 (안전망)
     stdlib = set(getattr(sys, 'stdlib_module_names', ()))
+    stdlib_lower = {s.lower() for s in stdlib}
     filtered: list[str] = []
     for pkg in merged:
         top = pkg.split('.')[0].split('[')[0].lower()
         if not top:
             continue
+        # dunder / 점 prefix 제외 (__main__, __init__, .relative 등)
+        if top.startswith('_') or top.startswith('.'):
+            continue
         if top in _BUILD_DEP_BLOCKLIST:
             continue
-        if top in {s.lower() for s in stdlib}:
+        if top in stdlib_lower:
+            continue
+        # PR #133 fixup #7 — 로컬 프로젝트 모듈은 pip install 대상 X
+        if top in local_modules:
             continue
         filtered.append(pkg)
 
