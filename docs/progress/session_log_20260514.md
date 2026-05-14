@@ -194,3 +194,41 @@ PR #137 은 자동화만, BFG 실 실행은 별도 시점. LOW risk (public key 
 - (b) 친구 베타 1주일 후 — 안전
 - (c) PR #134-B 와 묶음
 - (d) 무기한 보류 — gitleaks 가 신규 leak 만 차단
+
+## Phase 9 — 컨텍스트 보존 산출물 (1주일 후 복원용)
+
+PM 의 직관 "채팅 기록만으로는 부족, MD 파일 보존 필요" 에 따라 6 영역 핸드오프
+산출물 작성. 1주일 후 본인이 컨텍스트 100% 복원 가능하도록 설계.
+
+### 신규 생성 산출물
+
+| # | 파일 | 역할 |
+|---|------|------|
+| ⭐ F | [docs/insights/agent_collaboration_paradigm_shift.md](../insights/agent_collaboration_paradigm_shift.md) | **본질적 통찰 5가지** (1주일 후 첫 읽을 것) — 위장된 협업 / 소통 부재 / 가상 기업 비전 갭 / 분업+공유+피드백 부재 / Observability 부재. 환율 사례 + 통찰 → PR 매핑 + Sprint 2 권장 우선순위 |
+| A | [docs/health_check/project_health_check_20260514.md](../health_check/project_health_check_20260514.md) | 11 영역 (A~K) evidence + 본인 발견 결함 6개 매핑 + PR 후보 매트릭스 + 결정 보류 5가지 |
+| E | [docs/next_session_context.md](../next_session_context.md) | 1주일 후 본인 첫 행동 알고리즘 (Phase 1~4) + 친구 결과 시나리오별 다음 행동 + 1주일 후 본인용 메시지 |
+| D | [docs/templates/friend_beta_request.md](../templates/friend_beta_request.md) | 친구 베타 메시지 템플릿 (PowerShell Quick Edit 끄기 안내 + 4 추천 요청 + 결과 보고 양식) |
+
+### 기존 산출물 보강
+
+- B (본 파일 session_log): Phase 8 (종합 점검) + Phase 9 (컨텍스트 보존) 추가
+- C (WORK_STATUS): 본질적 통찰 5가지 + 1주일 후 첫 행동 알고리즘 상단 prepend
+
+### 1주일 후 본인이 이 6 산출물로 복원할 수 있는 것
+
+- 이번 세션 PR 머지 사항 (#134-A, #135, #137)
+- 친구 PC 첫 외부 .exe 빌드 입증 (Message_App.exe 9.86 MB / 33.11 min)
+- 본인 발견 결함 6개 (1개 완료, 5개 미해결 → Sprint 2/3 PR 매핑)
+- 종합 점검 11 영역 evidence (3 에이전트 병렬 분석)
+- 본질적 통찰 5가지 (환율 사례 evidence 포함)
+- Sprint 2 PR 비전 (#141 Vision QA / #140 RAG / #138-pool Shared Context)
+- 결정 보류 5가지 (자기 진화형 마케팅 / BFG / outputs rotation / delegation / cohort)
+- 친구 베타 발송 상태 + 결과 시나리오별 다음 행동
+- PR 번호 충돌 정리 필요 (#138 의 두 의미)
+
+### 본질적 메시지 (1주일 후 본인에게)
+
+> PR #134-A 까지의 16 fixup + 132 PR 은 모두 *증상 패치*.
+> 진짜 결함은 **에이전트 간 소통 부재**.
+> 환율 변환기 사례가 명확한 증거 (1 USD = 1365.5 stale, 4 에이전트가 다른 가정).
+> **PR #141 (Vision QA + CrewAI delegation)** 이 v4 → v5 진화의 핵심.

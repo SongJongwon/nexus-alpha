@@ -1,6 +1,23 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-14 (PR #135 + #137 머지 완료 + 종합 점검 보고서 ⭐⭐⭐⭐⭐)
+> **마지막 업데이트**: 2026-05-14 (PR #135 + #137 머지 + 종합 점검 + 본질적 통찰 5가지 보존 ⭐⭐⭐⭐⭐)
+>
+> ## ⭐ 1주일 후 컨텍스트 복원 시 첫 행동
+>
+> 1. **[docs/insights/agent_collaboration_paradigm_shift.md](insights/agent_collaboration_paradigm_shift.md)** — 본질적 통찰 5가지 (가장 중요)
+> 2. **[docs/next_session_context.md](next_session_context.md)** — 다음 세션 첫 행동
+> 3. **[docs/health_check/project_health_check_20260514.md](health_check/project_health_check_20260514.md)** — evidence + PR 매트릭스
+> 4. PM 에게 친구 베타 결과 받았는지 확인
+>
+> ## 🎯 본질적 통찰 5가지 (이번 세션 발견)
+>
+> 1. **위장된 협업** — 표면적 분업 ≠ 실제 협업. "AI 가상 기업" → "같은 건물의 프리랜서들"
+> 2. **에이전트 간 소통 부재** — 환율 변환기 사례 (4 에이전트가 다른 가정으로 일했지만 누구도 인지 못함, 1 USD = 1365.5 stale, 9% 오차)
+> 3. **AI 가상 기업 비전 갭** — 회의/멘토링/회고/학습/ADR/갈등해결/우선순위협의 모두 0
+> 4. **분업 + 작업 공유 + 피드백 메커니즘 부재** — D-1~D-5 (gui_test_executor 호출 X, qa_feedback_loop 호출 X 등)
+> 5. **사용자 관점 Observability 부재** — 22-33min 빌드 중 progress 0, 친구 PC PowerShell Quick Edit 사고 = 정확한 재현
+>
+> → **PR #141 (Vision QA + CrewAI delegation 부분 ON)** 이 가장 high-leverage paradigm-shift. Sprint 2 1순위.
 >
 > ## 🩺 종합 점검 (Project Health Check) — 2026-05-14
 >
