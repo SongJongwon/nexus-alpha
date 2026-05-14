@@ -1,6 +1,44 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-14 (PR #133 머지 완료 — 자연어 → 동작 .exe 풀체인 베타 배포 준비 ⭐⭐⭐)
+> **마지막 업데이트**: 2026-05-14 (PR #134-A 머지 완료 + 친구 PC 첫 .exe 빌드 라이브 검증 성공 ⭐⭐⭐⭐)
+>
+> ## 🔍 PR #134-A — install.ps1 진단 보강 + 친구 PC 라이브 검증 성공 (2026-05-14)
+>
+> **머지 commit**: `76f96db` (squash, pr-134-a-tkinter-diagnostic-boost 브랜치 삭제됨)
+> **테스트**: pytest **972 passed** (937 → +35, 회귀 0)
+> **트리거**: 친구 PC (회사 PC, Windows, 사용자명 work) 첫 베타 시도에서 install.ps1 의 tkinter import 검증 단계에서 `output= / exit=1 / 원인 불명` Fail 발생.
+>
+> ### 원인 즉석 발견
+> [install.ps1:83](../install.ps1#L83) 의 PR #126 EAP 격리가 *stderr 폐기* (`2>$null`) 로 잘못 구현 → `import tkinter` 의 `ModuleNotFoundError` 가 stderr 로 갔지만 미수집 → 빈 `output=` 으로 사용자 노출. 진단 데이터 0 상태에서 추측 처방 회피 위해 PR #134-A 는 *진단 보강만* (자동 복구 0).
+>
+> ### 변경 (2 커밋)
+> 1. **stderr 캡처** — `Invoke-NativeSafely` 가 `2>$stderrFile` (file-handle 레벨) 로 redirect → NativeCommandError 미발생 보장 유지하면서 stderr 보존. `StdErr` 필드 추가, 기존 200+ caller 영향 0.
+> 2. **진단 helper 4종 신규** —
+>    - `Get-EnvironmentContext` (Python 4 source 전수 + Tcl/Tk 충돌 + PC ctx + AV + 인스톨러 SHA256, 모든 query try/catch 격리)
+>    - `Get-TkinterErrorIds` (TKINTER-001~005 + TKINTER-000 fallthrough, 복합 신호 매칭으로 false positive 회피)
+>    - `ConvertTo-DiagnosticJson` (schema-versioned, BEGIN/END 마커, 다중 PC 누적용)
+>    - `Get-TkinterDiagnostics` 13 섹션 dump (사람-가독 + JSON)
+> 3. **silent install 명령 echo** (1차 + retry) — 어떤 옵션이 실제로 들어갔는지 사용자/IT 부서 확인 가능.
+>
+> ### 친구 PC 라이브 검증 (PR #134-A 머지 직후)
+> | 단계 | 결과 |
+> |------|------|
+> | install.ps1 | ✅ 정상 완료 (이전 tkinter 결함 *재현 안 됨* — PR #133 의 orphan cleanup + retry 로직이 이전 시도의 부분 설치 잔재 정리) |
+> | scripts/run.py | ✅ 자연어 요청 입력 단계 도달 |
+> | 요청 | "입력한 메세지에 따라 선택한 유형으로 시스템메세지 뜨게 하는 프로그램" → Track A 자동 라우팅 |
+> | 빌드 | ✅ 33.11 min (LLM retry 포함) |
+> | `.exe` | ✅ `Message_App.exe` / **9.86 MB** |
+> | GUI 동작 | ✅ 메시지 본문 입력 + info/warning/error/question 라디오 + 시스템 MessageBox 정상 동작 |
+> | PR #134-A 진단 dump | (트리거 안 됨 — install 성공으로) — 미래 보험으로 retain |
+>
+> **결과**: Nexus Alpha 베타 배포 첫 라이브 사용자 .exe 풀체인 검증 ✅. 자연어 → 동작 .exe 가 *작성자 PC 외부* 환경에서도 작동 입증.
+>
+> ### 식별된 후속 PR (갱신)
+> - **PR #134-B (보류)**: 친구 PC + 추가 베타 PC 의 진단 dump 누적 후 환경 분기 처방 설계. 현재는 1대 성공으로 보류, TKINTER-001~005 중 실제 분류된 ID 가 나오면 그때 진행.
+> - **PR #135**: 좀비 프로세스 cleanup (Flet Flutter daemon 등) + LangFuse traces 401 graceful fallback + langgraph cache deprecation 명시.
+> - **PR #136**: README 알려진 한계 명시 + 베타 배포 가이드 (사용자 매뉴얼) — 친구 PC 첫 빌드 데이터 (33min, Message_App.exe 9.86MB) 를 가이드에 포함.
+>
+> ---
 >
 > ## 🎯 PR #133 — GUI .exe 풀체인 완성 (2026-05-12 ~ 2026-05-14)
 >
