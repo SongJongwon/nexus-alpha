@@ -575,16 +575,33 @@ def _build_theme_task(theme, uiux_task: Task, designer_task: Task) -> Task:
 def _build_gui_code_gen_task(
     coder, uiux_task: Task, designer_task: Task, theme_task: Task
 ) -> Task:
-    """GUI Code Generator Task — 셋 모두 컨텍스트로."""
+    """GUI Code Generator Task — 셋 모두 컨텍스트로.
+
+    PR #138 Phase 1 minimal slice (2026-05-14, 본인 비전 통찰 6):
+        ``format_consistency_directive`` 를 description 끝에 append.
+        UI/UX Analyst + GUI Designer + Theme Designer 의 결정과 일치하는 코드
+        작성을 *명시적으로* 강제. 환율 변환기 사례 (cross-agent inconsistency)
+        재발 차단의 첫 시범 적용.
+
+        이번 slice 는 *1 task 만* (GUI Code Generator). 다음 PR (Phase 1 full)
+        에서 Pytest Author / Code Reviewer / Build chain 으로 확대.
+    """
     import sys
 
+    from ._common import format_consistency_directive
+
+    base_description = (
+        "이전 컨텍스트의 ui_spec + GUI 설계 + 디자인 토큰을 모두 만족하는 "
+        "**바로 실행 가능한 Python GUI 코드** 를 백스토리에 명시된 4단 구조"
+        "(프레임워크 선택 + 코드 + 실행 방법 + 작성자 노트)로 작성하세요. "
+        "각 파일은 ```python 블록 + `# file:` 헤더 포함."
+    )
+    consistency_directive = format_consistency_directive(
+        prior_agent_roles=["UI/UX Analyst", "GUI Designer", "Theme Designer"]
+    )
+
     kwargs: dict = dict(
-        description=(
-            "이전 컨텍스트의 ui_spec + GUI 설계 + 디자인 토큰을 모두 만족하는 "
-            "**바로 실행 가능한 Python GUI 코드** 를 백스토리에 명시된 4단 구조"
-            "(프레임워크 선택 + 코드 + 실행 방법 + 작성자 노트)로 작성하세요. "
-            "각 파일은 ```python 블록 + `# file:` 헤더 포함."
-        ),
+        description=base_description + consistency_directive,
         expected_output=(
             "프레임워크 선택 근거 + Python GUI 코드(파일 여러 개) + 실행 방법 + "
             "작성자 노트. 마지막 줄 `Final Answer: framework=..., files=N개, entry=...`."
