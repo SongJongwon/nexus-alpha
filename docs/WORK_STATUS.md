@@ -1,6 +1,53 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-14 (PR #134-A 머지 완료 + 친구 PC 첫 .exe 빌드 라이브 검증 성공 ⭐⭐⭐⭐)
+> **마지막 업데이트**: 2026-05-14 (PR #135 + #137 머지 완료 + 종합 점검 보고서 ⭐⭐⭐⭐⭐)
+>
+> ## 🩺 종합 점검 (Project Health Check) — 2026-05-14
+>
+> 3 에이전트 병렬 점검 (Product/Engineering/Ops) 11 영역 evidence-based 평가.
+>
+> ### 핵심 발견 (3 에이전트 독립 발견 = 시스템적 결함)
+> 1. **Build-but-Forget anti-pattern**: `iterative_loop` (704 LOC), `qa_feedback_loop`, `gui_test_executor` (Vision QA), Knowledge Curator + RAG Searcher — 모두 *구현 완료 + 테스트 통과 + production path 호출 X*. PR #133 의 16 fixup = `qa_feedback_loop` 가 안 돌아서 PM 이 손으로 패치.
+> 2. **"자기 진화형" 비전 vs 실제**: 자기 진화 코드 다 있으나 호출 0 → 실제는 *PM 진화형* (PM 이 패턴 학습해서 백스토리에 freeze).
+> 3. **CrewAI 협업 기능 모두 OFF**: `allow_delegation=False` (24/24 에이전트), `Process.sequential` 만 사용, `memory=False`. "AI 가상 기업" org chart 50명 / 실제 협업 메커니즘 0개.
+> 4. **Telemetry 0**: 친구 PC 실패가 maintainer 에게 invisible. 다음 N명 베타 디버깅이 다시 blind 로 반복될 결정적 위험.
+> 5. **Build cost 즉시 ROI**: `max_tokens=1024` → `retry_task_if_short` 매 빌드 트리거 → 33min 의 ~25%, ~30% 비용 낭비. **30초 fix 가능** (PR #135 로 처리됨).
+>
+> ### Sprint 1 진행 (이번 세션 완료)
+> | PR | 작업 | commit | 효과 |
+> |----|------|--------|------|
+> | **#135** | `max_tokens 1024 → 4096` (+ test) | `b645bb1` | 33min → ~25min 추정, 비용 ~30%↓ |
+> | **#137** (GH #136) | gitleaks + dependabot + CodeQL + BFG 문서화 | `6aa07ca` | PUBLIC repo 보안 baseline 0 → 활성, history scan SUCCESS |
+>
+> ### Sprint 1 보류 (친구 베타 1주일 데이터 수집 후)
+> - **PR #136 (README truth pass)** — 친구 베타 데이터 합쳐서 더 정확하게
+> - **PR #138 (input hardening)** — prompt injection 1차 방어
+> - **PR #139 (token/cost meter)** — 베타 cohort 5명 결정 시점에 필요
+>
+> ### Sprint 2 후보 (다음 2주, paradigm shift)
+> | PR | 영역 | 효과 |
+> |----|------|------|
+> | **#140 Knowledge Curator + RAG Searcher 와이어링** ⭐⭐⭐ | A/I/B 동시 | 비전 + self-evolution + UX 동시 해결 |
+> | **#141 Vision QA wiring** ⭐⭐⭐ | D 워크플로우 | 친구 PC 첫 *시각* 검증 시작 |
+> | **#142 CI Windows runner + install.ps1 lint** | E 운영 | PR #134-A 같은 Windows 결함 사전 차단 |
+> | **#143 v0.x.x 태그 + release.yml + `NEXUS_ALPHA_REF`** | E 운영 | rollback 가능 |
+> | **#144 Telemetry fallback** (LangFuse silent → local jsonl) | E 운영 | 친구 PC 실패 → maintainer 가시화 |
+>
+> ### Sprint 3+ 백로그 (1-2개월)
+> - 좀비 프로세스 cleanup (기존 #135 후보) / `iterative_loop` production wire / `build_workflow` LangGraph 병렬 / install.ps1 SHA256 + Authenticode / `outputs/` rotation / kickoff_with_converter_rescue instance-level patch / 4 entry-picker 통합 / docs/INDEX.md / LICENSE / CONTRIBUTING.md
+>
+> ### 의도적 보류 (5명 베타 cohort 데이터 이전)
+> Tauri/Streamlit/RV 본부 / install.sh (macOS/Linux) / 진짜 sandbox / PR #134-B 환경 분기 처방
+>
+> ### 결정 요청 (PM 판단)
+> - "자기 진화형" 마케팅: `iterative_loop` wire vs "패턴 누적형" honest rename
+> - `outputs/` rotation 정책 (env var? 명령?)
+> - CrewAI `allow_delegation=True` 부분 ON 시도 여부
+> - 베타 cohort 5명 ($50 API budget × 5 = $250) 자비/후원/무료
+>
+> ---
+>
+> ## 🔍 PR #134-A — install.ps1 진단 보강 + 친구 PC 라이브 검증 성공 (2026-05-14)
 >
 > ## 🔍 PR #134-A — install.ps1 진단 보강 + 친구 PC 라이브 검증 성공 (2026-05-14)
 >

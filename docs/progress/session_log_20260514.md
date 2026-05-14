@@ -132,10 +132,65 @@ irm https://raw.githubusercontent.com/SongJongwon/nexus-alpha/pr-134-a-tkinter-d
 
 | 지표 | 값 |
 |------|-----|
-| 머지된 PR | 133 → **134** (+1, squash) |
-| pytest 통과 | 937 → **972** (+35, 회귀 0) |
+| 머지된 PR | 133 → **136** (+3 squash: #134-A `76f96db`, #135 `b645bb1`, #137/GH#136 `6aa07ca`) |
+| pytest 통과 | 937 → **992** (+55, 회귀 0) |
 | 신규 helper | 4 (`Invoke-NativeSafely` 보강 + `Get-TkinterDiagnostics` / `Get-EnvironmentContext` / `Get-TkinterErrorIds` / `ConvertTo-DiagnosticJson`) |
 | 진단 dump 섹션 | 13 |
 | 자동 분류 에러 ID | 5 + fallthrough |
 | 친구 PC 라이브 검증 | 2회 (1차 install fail → 2차 install + 빌드 성공) |
-| 외부 PC `.exe` 빌드 첫 입증 | ✅ Message_App.exe 9.86 MB |
+| 외부 PC `.exe` 빌드 첫 입증 | ✅ Message_App.exe 9.86 MB / 33.11 min |
+| 종합 점검 영역 | 11 (A~K) — 3 에이전트 병렬 |
+| 식별된 새 PR 후보 | 8개 (#136 README / #138 input / #139 cost / #140 Knowledge / #141 Vision / #142 Win CI / #143 release / #144 telemetry) |
+
+## Phase 8 — 종합 점검 (Project Health Check) + Sprint 1 일부
+
+PR #134-A 머지 후 PM 의 직관 ("내가 찾지 못한 결함도 있을 수 있다") 검증 위해 11 영역
+종합 점검 진행. 3 에이전트 병렬 (Product / Engineering / Ops) → evidence-based 평가.
+
+### 핵심 발견 (3 에이전트 *독립적으로* 같은 패턴 발견 = 시스템적 결함)
+1. **Build-but-Forget anti-pattern**: 5+ 모듈이 *구현 + 테스트 + production path 호출 X*.
+   - `iterative_loop.py` (704 LOC, 자기 진화 엔진) — `scripts/run.py` 가 호출 X
+   - `qa_feedback_loop.py` — Engineer ↔ QA 양방향 재시도, 호출 X
+   - `gui_test_executor.py` (Vision API GUI 검증) — 호출 X
+   - `knowledge/curator.py` + `rag_searcher.py` — cross-run 학습, 호출 X
+   - PR #133 의 16 fixup = `qa_feedback_loop` 가 안 돌아서 PM 이 손으로 패치한 결과
+2. **"자기 진화형" 비전 vs 실제**: 코드는 다 있으나 호출 0 → 실제는 *PM 진화형*
+3. **CrewAI 협업 기능 모두 OFF**: `allow_delegation=False` 24/24 에이전트, `Process.sequential` 만, `memory=False`
+4. **Telemetry 0**: 친구 PC 실패가 maintainer 에게 invisible — 다음 N명 베타 디버깅 blind 반복 위험
+5. **빠른 ROI**: `max_tokens=1024` → `retry_task_if_short` 매 빌드 트리거 → 33min 의 ~25%, 비용 ~30% 낭비
+
+### Sprint 1 일부 진행 (이번 세션, ~2시간)
+- **PR #135** (`b645bb1`) — `max_tokens 1024 → 4096` + 회귀 테스트 2개
+  - 효과: 33min → ~25min, 비용 ~30% 감소 추정
+  - pytest 974 (972 → +2)
+- **PR #137** (GitHub #136, `6aa07ca`) — Security baseline:
+  - `.github/workflows/gitleaks.yml` (push/PR/weekly + fetch-depth=0)
+  - `.github/dependabot.yml` (pip + github-actions weekly 월요일 09:00 KST)
+  - `.github/workflows/codeql.yml` (python security-extended)
+  - `docs/security/bfg_rotation_procedure.md` (BFG 7-step + 영향 평가 + force-push 경고)
+  - 첫 CI 결과: gitleaks SUCCESS / CodeQL alert 0 / pytest SUCCESS
+  - pytest 992 (974 → +18)
+
+### Sprint 1 보류 (친구 베타 1주일 후)
+- PR #136 README truth pass — 친구 베타 데이터 합쳐서
+- PR #138 input hardening (prompt injection 방어)
+- PR #139 token/cost meter (베타 cohort 결정 시점)
+
+### Sprint 2 후보 (다음 2주, paradigm shift)
+- **PR #140 Knowledge Curator + RAG Searcher 와이어링** ⭐⭐⭐ — Vision A + Self-Evolution I + UX B 동시 해결
+- **PR #141 Vision QA wiring** ⭐⭐⭐ — `gui_test_executor` 를 `scripts/run.py --build` 후 자동 호출
+- PR #142 CI Windows runner + install.ps1 lint
+- PR #143 v0.x.x 태그 + release.yml + `NEXUS_ALPHA_REF` 지원
+- PR #144 Telemetry fallback (LangFuse silent → local jsonl)
+
+### 친구 후속 베타 메시지 발송 (사용자, 1주일 여유)
+- 추천 요청 4개 (customtkinter / Flet / PyQt / dearpygui)
+- TKINTER-001~005 진단 dump 캡처 안내
+- 보너스: 주변 1-2명 추가 모집 (회사 PC + 다른 OS)
+
+## BFG 실 실행 시점 (PM 결정 권장)
+PR #137 은 자동화만, BFG 실 실행은 별도 시점. LOW risk (public key 라 write 권한 X).
+- (a) Sprint 1 끝 — 깔끔
+- (b) 친구 베타 1주일 후 — 안전
+- (c) PR #134-B 와 묶음
+- (d) 무기한 보류 — gitleaks 가 신규 leak 만 차단
