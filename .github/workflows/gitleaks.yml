@@ -1,0 +1,48 @@
+# Secret leak 자동 검출 (PR #137).
+#
+# 배경 (2026-05-14 종합 점검에서 발견):
+#   PR #103 이 main 의 LangFuse public key 를 placeholder 로 교체했으나 git history
+#   (commit 354ccfb / 2287c63 / 1b6ef19 / b89719a) 에는 잔존. PUBLIC repo 전환 후
+#   해당 history 가 공개 노출. public key 는 read-only 라 low-risk 지만, 정책 정합성
+#   + 재발 방지 위해 자동 검출 toolchain 필요.
+#
+# 동작:
+#   - push / PR 마다 gitleaks 가 *전체 git history* 스캔 (fetch-depth: 0)
+#   - 검출 시 GitHub Actions fail → PR 머지 차단
+#   - 주간 cron 으로 누락 스캔 보강 (수동 위험)
+#
+# 회귀 차단: 본 워크플로가 disabled 되면 다음 leak 이 main 까지 통과.
+
+name: gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 매주 일요일 00:00 UTC (한국 월요일 09:00) 누락 보강 스캔
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: scan secrets (full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout (full history for retroactive scan)
+        uses: actions/checkout@v4
+        with:
+          # depth=0 = 전체 history 스캔. 새 leak 뿐 아니라 미발견 과거 leak 도 검출.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE 가 없는 경우 organization 확장 기능 disabled 되지만
+          # 기본 secret detection 은 정상 작동 (public repo OSS 라이선스 자동 적용).
