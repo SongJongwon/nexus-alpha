@@ -994,13 +994,28 @@ def test_install_ps1_invoke_native_safely_has_eap_isolation() -> None:
     assert "finally" in body, (
         "Invoke-NativeSafely 에 finally 블록 누락 — 예외 발생 시 EAP 복원 실패"
     )
-    # EAP 복원 패턴 — finally 안에서 saved 값으로 되돌림
-    restore_pattern = _re.search(
-        r"finally\s*\{[^}]*\$ErrorActionPreference\s*=\s*\$savedEAP",
-        body, _re.DOTALL
-    )
-    assert restore_pattern is not None, (
-        "finally 블록에서 EAP 복원 (=$savedEAP) 누락 — 함수 종료 후 EAP 영구 변경 위험"
+    # EAP 복원 패턴 — finally 안에서 saved 값으로 되돌림.
+    # PR #134-A: finally 블록 안에 nested cleanup ``if`` 가 추가됨 (stderr temp
+    # 파일 cleanup). 기존 ``[^}]*`` 패턴은 nested ``}`` 못 넘어가 false negative →
+    # 균형 중괄호 매칭으로 변경. 의도 (EAP 복원이 finally 안에 존재) 는 동일.
+    finally_match = _re.search(r"finally\s*\{", body)
+    assert finally_match is not None, "finally 블록 키워드 누락"
+    start = finally_match.end()
+    depth = 1
+    i = start
+    while i < len(body) and depth > 0:
+        ch = body[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    finally_body = body[start : i - 1]
+    assert _re.search(
+        r"\$ErrorActionPreference\s*=\s*\$savedEAP", finally_body
+    ), (
+        "finally 블록 안에서 EAP 복원 ($ErrorActionPreference = $savedEAP) 누락 — "
+        "함수 종료 후 EAP 영구 변경 위험"
     )
 
 

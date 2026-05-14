@@ -75,24 +75,140 @@ function Invoke-NativeSafely {
     )
     # PR #126 — 함수 내부 EAP 격리: 외부에서 'Stop' 이어도 내부는 'Continue'.
     # native command 의 stderr / non-zero exit 가 throw 되지 않음을 100% 보장.
+    # PR #134-A — stderr 도 캡처 (file-handle 레벨 redirect → NativeCommandError
+    #   미발생 보장 유지). 친구 PC 라이브 검증에서 tkinter import 실패가 stderr 로
+    #   ModuleNotFoundError 를 뿜었지만 ``2>$null`` 폐기로 진단 정보 0 인 결함 fix.
+    #   기존 caller 영향 0 — StdErr 필드 추가만, StdOut/ExitCode/Succeeded 동일.
     $savedEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $stdout = ''
+    $stderr = ''
     $exit = -1
+    $stderrFile = $null
     try {
-        $stdout = & $Executable @Arguments 2>$null | Out-String
+        $stderrFile = [System.IO.Path]::GetTempFileName()
+        $stdout = & $Executable @Arguments 2>$stderrFile | Out-String
         $exit = $LASTEXITCODE
+        if (Test-Path $stderrFile) {
+            $stderr = Get-Content -Path $stderrFile -Raw -ErrorAction SilentlyContinue
+            if (-not $stderr) { $stderr = '' }
+        }
     } catch {
         $stdout = ''
+        $stderr = $_.Exception.Message
         $exit = -1
     } finally {
+        if ($stderrFile -and (Test-Path $stderrFile)) {
+            Remove-Item -Path $stderrFile -Force -ErrorAction SilentlyContinue
+        }
         $ErrorActionPreference = $savedEAP
     }
     [pscustomobject]@{
         StdOut    = if ($stdout) { $stdout.Trim() } else { '' }
+        StdErr    = if ($stderr) { $stderr.Trim() } else { '' }
         ExitCode  = $exit
         Succeeded = ($exit -eq 0)
     }
+}
+
+# ─── PR #134-A — tkinter import 실패 시 자동 진단 dump ─────────────────────
+# 배경 (친구 PC 라이브 검증, 2026-05-14, PR #133 머지 후):
+#   "로컬 Python 설치 완료했으나 tkinter import 실패 / output= / exit=1" 발생.
+#   안내문구는 ``Include_tcltk=1 무시됨`` 으로 추정했으나 진단 데이터 0:
+#     - stderr 폐기 (Invoke-NativeSafely 의 ``2>$null``) 로 ModuleNotFoundError 미수집
+#     - 인스톨러 로그 미참조
+#     - tkinter wrapper (Lib\tkinter\) vs _tkinter C ext (DLLs\_tkinter.pyd) 미분리
+#   결과: Include_tcltk 무시 / DLL 경로 / antivirus 격리 / Tcl 런타임 누락 등
+#   여러 원인이 모두 동일 증상으로 보여 PR #134-B 의 자동 복구 설계가 추측 기반.
+# 본 helper:
+#   tkinter 검증 실패 지점에서 호출 → 사람/LLM 이 원인 단정할 만큼 풍부한 dump 반환.
+#   자동 복구 시도 0 (PR #134-A 는 진단만, 복구는 PR #134-B 에서 데이터 본 뒤 결정).
+# 입력:
+#   $PythonExe   : 검증 대상 python.exe 절대경로
+#   $PythonDir   : python.exe 의 부모 디렉터리 (DLLs/Lib/tcl probe 기준)
+#   $InstallLog  : Python 인스톨러 /log 파일 경로 ($null 허용)
+#   $TkResult    : Invoke-NativeSafely 결과 (StdOut/StdErr/ExitCode)
+# 출력: 사람-가독 string (Fail 메시지에 그대로 포함)
+function Get-TkinterDiagnostics {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$PythonExe,
+        [Parameter(Mandatory=$true)][string]$PythonDir,
+        [string]$InstallLog,
+        $TkResult
+    )
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('═══ tkinter 진단 dump (PR #134-A) ═══')
+
+    # [1] tkinter import 결과 (stderr 가 핵심 — 친구 PC 의 missing 정보)
+    [void]$sb.AppendLine('[1] tkinter import 시도 결과:')
+    if ($TkResult) {
+        [void]$sb.AppendLine("    StdOut : $($TkResult.StdOut)")
+        [void]$sb.AppendLine("    StdErr : $($TkResult.StdErr)")
+        [void]$sb.AppendLine("    Exit   : $($TkResult.ExitCode)")
+    } else {
+        [void]$sb.AppendLine('    (TkResult 미제공)')
+    }
+
+    # [2] _tkinter (C 확장) 직접 import — wrapper vs C ext 분리 진단
+    #     Lib\tkinter\__init__.py 안에서 _tkinter 를 import 하므로,
+    #     _tkinter 만 있고 wrapper 없는 / wrapper 만 있고 _tkinter 없는 케이스 분리.
+    [void]$sb.AppendLine('[2] _tkinter (C 확장) 직접 import:')
+    $cExtResult = Invoke-NativeSafely -Executable $PythonExe -Arguments @('-c', 'import _tkinter; print("_tkinter OK")')
+    [void]$sb.AppendLine("    StdOut : $($cExtResult.StdOut)")
+    [void]$sb.AppendLine("    StdErr : $($cExtResult.StdErr)")
+    [void]$sb.AppendLine("    Exit   : $($cExtResult.ExitCode)")
+
+    # [3] sys.path 출력 — Python 자체가 어디를 보고 있는지
+    [void]$sb.AppendLine('[3] sys.path / sys.prefix:')
+    $pathResult = Invoke-NativeSafely -Executable $PythonExe -Arguments @('-c', 'import sys; print("prefix=" + sys.prefix); [print("  " + p) for p in sys.path]')
+    [void]$sb.AppendLine("    $($pathResult.StdOut -replace "`n", "`n    ")")
+    if ($pathResult.StdErr) {
+        [void]$sb.AppendLine("    StdErr : $($pathResult.StdErr)")
+    }
+
+    # [4] 파일시스템 probe — Tcl/Tk 컴포넌트가 실제로 디스크에 있나
+    [void]$sb.AppendLine('[4] 파일시스템 probe (Tcl/Tk 컴포넌트 존재 여부):')
+    $probes = @(
+        @{ Path = (Join-Path $PythonDir 'DLLs\_tkinter.pyd'); Label = 'DLLs\_tkinter.pyd (C 확장)' }
+        @{ Path = (Join-Path $PythonDir 'DLLs\tcl86t.dll');    Label = 'DLLs\tcl86t.dll (Tcl 런타임)' }
+        @{ Path = (Join-Path $PythonDir 'DLLs\tk86t.dll');     Label = 'DLLs\tk86t.dll (Tk 런타임)' }
+        @{ Path = (Join-Path $PythonDir 'Lib\tkinter\__init__.py'); Label = 'Lib\tkinter\__init__.py (Python wrapper)' }
+        @{ Path = (Join-Path $PythonDir 'tcl');                Label = 'tcl\ (Tcl/Tk 라이브러리 디렉터리)' }
+        @{ Path = (Join-Path $PythonDir 'tcl\tcl8.6\init.tcl'); Label = 'tcl\tcl8.6\init.tcl (Tcl 초기화)' }
+    )
+    foreach ($p in $probes) {
+        $mark = if (Test-Path $p.Path) { '✓' } else { '✗' }
+        [void]$sb.AppendLine("    [$mark] $($p.Label)")
+        [void]$sb.AppendLine("        $($p.Path)")
+    }
+
+    # [5] 인스톨러 호출 명령 (silent install 사용된 정확한 인자)
+    [void]$sb.AppendLine('[5] 인스톨러 silent install 명령 (실제 사용된 인자):')
+    if ($script:LAST_INSTALL_CMD) {
+        [void]$sb.AppendLine("    $($script:LAST_INSTALL_CMD)")
+    } else {
+        [void]$sb.AppendLine('    (LAST_INSTALL_CMD 미기록 — install.ps1 진입 경로 확인 필요)')
+    }
+
+    # [6] 인스톨러 로그 tail (silent fail 시 Burn bundle 의사결정 추적)
+    [void]$sb.AppendLine('[6] 인스톨러 로그 마지막 200 줄:')
+    if ($InstallLog -and (Test-Path $InstallLog)) {
+        [void]$sb.AppendLine("    경로: $InstallLog")
+        try {
+            $tail = Get-Content -Path $InstallLog -Tail 200 -ErrorAction Stop
+            foreach ($line in $tail) {
+                [void]$sb.AppendLine("    | $line")
+            }
+        } catch {
+            [void]$sb.AppendLine("    (로그 읽기 실패: $($_.Exception.Message))")
+        }
+    } else {
+        [void]$sb.AppendLine("    (로그 파일 없음: $InstallLog)")
+    }
+
+    [void]$sb.AppendLine('═══════════════════════════════════════')
+    return $sb.ToString()
 }
 
 function Fail {
@@ -543,6 +659,12 @@ Python $pyVer 다운로드 실패: $($_.Exception.Message)
         'CompileAll=0'
     )
 
+    # PR #134-A — silent install 실제 사용된 명령 echo (디버깅 가시성).
+    #   친구 PC 라이브 검증에서 "어떤 옵션이 실제로 들어갔는가" 가 진단 핵심이었음.
+    #   $script:LAST_INSTALL_CMD 에 보관 → Get-TkinterDiagnostics 가 dump 시 포함.
+    $script:LAST_INSTALL_CMD = "$installerPath $($installArgs -join ' ')"
+    Write-Host "  > silent install: $($script:LAST_INSTALL_CMD)" -ForegroundColor DarkGray
+
     # PR #133 — installer .exe 는 retry 가능성 때문에 *함수 끝* 에서만 삭제.
     # 과거: finally { Remove-Item $installerPath } 이 1차 install 직후 인스톨러를
     # 삭제 → orphan cleanup 후 retry 시 "지정된 파일을 찾을 수 없습니다" 예외 발생.
@@ -624,6 +746,9 @@ Python $pyVer 로컬 인스톨러 실행 실패 (exit=$exitCode).$logHint
                     $i += 1
                 }
             }
+            # PR #134-A — retry 명령도 echo (1차와 다른 경로일 수 있음).
+            $script:LAST_INSTALL_CMD = "$installerPath $($retryArgs -join ' ')"
+            Write-Host "  > silent install (retry): $($script:LAST_INSTALL_CMD)" -ForegroundColor DarkGray
             $retryExit = -1
             try {
                 $procRetry = Start-Process -FilePath $installerPath -ArgumentList $retryArgs -Wait -PassThru -NoNewWindow
@@ -674,16 +799,29 @@ GUI 앱 [.exe] 빌드에는 풀 Python 인스톨러 필수.
     }
     # PR #133 — tkinter 포함 검증 (Include_tcltk=1 이 실제 작동했는지 확인).
     # 풀 Python 의 표준 라이브러리이므로 import 가능해야 함.
+    # PR #134-A — 실패 시 Get-TkinterDiagnostics 로 자동 진단 dump.
+    #   친구 PC 라이브 검증에서 "Include_tcltk 무시됨" 안내가 추측이었음 (stderr 폐기로
+    #   진단 데이터 0). 이제 stderr / _tkinter 직접 import / 파일 probe / 인스톨러
+    #   로그 / 인스톨러 명령 모두 dump → 사람이 원인 단정 가능.
     $tkResult = Invoke-NativeSafely -Executable $pyExe -Arguments @('-c', 'import tkinter; print("tk OK")')
     if (-not $tkResult.Succeeded -or $tkResult.StdOut -notmatch 'tk OK') {
+        $diag = Get-TkinterDiagnostics -PythonExe $pyExe -PythonDir $pyDir -InstallLog $installLog -TkResult $tkResult
         Fail @"
 로컬 Python 설치 완료했으나 tkinter import 실패:
   python.exe = $pyExe
-  output = $($tkResult.StdOut)
   exit = $($tkResult.ExitCode)
 
-원인: 인스톨러가 Tcl/Tk 컴포넌트 미포함 (Include_tcltk=1 무시됨).
-조치: 인스톨러로 직접 ``Customize installation`` → 'tcl/tk and IDLE' 체크박스 켜고 재설치.
+$diag
+
+조치 (수동, PR #134-B 자동 복구 도입 전):
+  1. 위 진단 [4] 의 ✗ 표시된 파일이 무엇인지 확인:
+     - DLLs\_tkinter.pyd 가 ✗ 면 → 인스톨러가 Tcl/Tk 컴포넌트 미포함
+     - tcl\ 디렉터리가 ✗ 면 → Tcl 런타임 누락
+     - 모두 ✓ 인데 import 실패면 → DLL 의존성 / antivirus 격리 / MSVC 런타임 의심
+  2. 진단 [1] StdErr 의 정확한 ModuleNotFoundError / ImportError 메시지 확인
+  3. python.org 에서 'Windows installer 64-bit' 직접 다운로드 → ``Customize installation``
+     → 'tcl/tk and IDLE' 체크 → TargetDir = $pyDir 로 재설치 → install.ps1 재실행
+  4. 위 dump 전체를 issue 로 보고: https://github.com/SongJongwon/nexus-alpha/issues
 "@
     }
     Write-Ok "Python 로컬 설치 완료: $installedVer ($pyExe)"
