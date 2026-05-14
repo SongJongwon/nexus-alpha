@@ -337,3 +337,76 @@ def kickoff_with_converter_rescue(
             )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# PR #138 Phase 1 minimal slice — Cross-agent consistency directive
+# ---------------------------------------------------------------------------
+# 배경 (2026-05-14 종합 점검 통찰 6 — 본인 비전):
+#   환율 변환기 사례 — CTO/Analyst/UI Designer 가 "frankfurter API 실시간 환율"
+#   결정했으나 GUI Code Generator 가 정적 dict 내장 → 1 USD = 1365.5 stale (실제
+#   ~1490, 9% 오차). 4 에이전트가 다른 가정으로 일했지만 누구도 인지 못함.
+#
+#   CrewAI 의 ``Task.context=[task1, task2, ...]`` 는 prior output 을 자동 주입
+#   하지만 *결정 사항 강조* 가 없음 — LLM 이 prior output 을 "그냥 참고"하고
+#   자기 가정으로 일관성 깨뜨릴 위험.
+#
+# PR #138 minimal slice (Phase 1):
+#   1. ``format_consistency_directive`` helper — task description 에 append 할
+#      "다른 부서 결정 사항 일치 유지" 강조 섹션 생성
+#   2. 1 task (GUI Code Generator) 에 시범 적용 — 효과 라이브 검증 후 확대
+#
+# 다음 세션 (PR #138 full):
+#   - Meeting Facilitator 에이전트 신설 (본부 10 첫 멤버) — 킥오프 회의 진행
+#   - shared_kickoff_decisions.yaml 산출 → 모든 task description 자동 주입
+#   - 모든 워크플로 (analyze_and_implement / build / release) 에 확대
+
+
+def format_consistency_directive(prior_agent_roles: Sequence[str]) -> str:
+    """Cross-agent consistency directive 를 task description 에 append 할 형태로 반환.
+
+    PR #138 Phase 1 (Shared Context Pool minimal slice — 본인 비전 통찰 6).
+
+    배경:
+        환율 변환기 사례 (1 USD = 1365.5 stale) — CrewAI ``Task.context=[...]`` 가
+        prior output 자동 주입하지만 *강조 부재* 로 LLM 이 무시. 본 directive 는
+        명시적으로 "다른 부서 결정과 일치 유지 의무" 를 LLM 에게 인식시킴.
+
+    사용법:
+        ::
+
+            description = base_description + format_consistency_directive(
+                prior_agent_roles=["CTO", "Analyst", "UI Designer"],
+            )
+
+    Args:
+        prior_agent_roles: 이전 task 의 에이전트 역할 리스트 (순서 유지).
+            빈 리스트면 빈 string 반환 (no-op).
+
+    Returns:
+        task description 끝에 append 할 markdown 문자열. 빈 입력이면 ``""``.
+
+    설계 결정:
+        - **prior output 은 주입 안 함** — CrewAI Task.context 가 이미 raw 로 주입.
+          본 directive 는 *지시* 만 추가 (LLM 의 attention 환기).
+        - **agent_role 만 받음** — 실제 output 은 CrewAI 가 자동 처리.
+        - **markdown 헤더 강조** — LLM 이 markdown 구조를 attention weight 로 우선시.
+    """
+    if not prior_agent_roles:
+        return ""
+
+    roles_list = "\n".join(f"  - **{role}**" for role in prior_agent_roles)
+    return f"""
+
+## ⚠️ Cross-agent consistency directive (PR #138 Phase 1)
+
+위 컨텍스트의 다음 부서들이 *이미 결정한 사항* 이 있습니다:
+{roles_list}
+
+**반드시 그 결정과 일치하는 산출물을 작성하세요.** 충돌 시:
+1. 본문에 충돌 사실을 *명시적으로* 표기 ("CTO 사양은 X 였으나 ...")
+2. 이유와 처리 방식 (수용 / 대안 제시 / 재논의 요청) 기록
+3. *암묵적 무시* 금지 — 환율 변환기 사례 (정적 dict vs 실시간 API 가정 충돌) 재발 차단
+
+→ 이 directive 는 "AI 가상 기업" 의 *진짜 협업* 첫 단계 (본부 10 Coordination/Communication).
+"""
