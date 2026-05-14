@@ -24,7 +24,11 @@ class APIKeyProvider(BaseLLMProvider):
     Args:
         model: 사용할 Claude 모델 ID. 기본값은 Sonnet 4.6.
         temperature: 샘플링 온도(0.0~1.0).
-        max_tokens: 응답 최대 토큰 수.
+        max_tokens: 응답 최대 토큰 수. 기본값 4096 (PR #135).
+            과거 1024 는 Pytest Author 백스토리 ``≥1200 chars / ≥10 def test_*`` 요구와
+            구조적 충돌 → ``retry_task_if_short`` 트리거 → 빌드 시간 + 비용 2배.
+            Sonnet 4.6 출력 4096 토큰 ≈ ~3000자 → Pytest Author / GUI Code Generator
+            요구 안전 충족.
 
     Raises:
         RuntimeError: 환경변수 `ANTHROPIC_API_KEY`가 비어 있을 때.
@@ -34,7 +38,7 @@ class APIKeyProvider(BaseLLMProvider):
         self,
         model: str = "claude-sonnet-4-6",
         temperature: float = 0.7,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
     ) -> None:
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
