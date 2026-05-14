@@ -2,6 +2,8 @@
 
 자기 진화형 소프트웨어 공장 — *"한 마디 요청 → .exe 완성품"*
 
+> **상태 (2026-05-14)**: v4 비전 (자연어 → .exe) ✅ 외부 PC 2대 검증 완료 (Calculator.exe + Message_App.exe). v5 비전 (진짜 multi-agent collaboration) 진행 중 — [docs/insights/agent_collaboration_paradigm_shift.md](docs/insights/agent_collaboration_paradigm_shift.md) 참조.
+
 ## 🚀 빠른 시작 (Windows)
 
 > ⚠️ **Python 3.13 필수** — CrewAI 1.14.x 가 Python 3.14 미지원 (의존성 빌드 실패).
@@ -63,22 +65,43 @@ Python 3.14 가 설치된 환경에서도 `py -3.13` launcher 로 3.13 전용 ve
 배포 로드맵: **Alpha (install.ps1)** → Beta (Streamlit) → Release (Electron/Tauri).
 자세한 비전: [docs/context/next_session_context.md §10](docs/context/next_session_context.md).
 
-## 🎯 최종 비전
+## 🎯 비전 — v4 (완료) → v5 (진행 중)
 
+### v4 — 산출물 자동화 ✅
 > 사용자가 **"계산기 만들어줘"** 라고 말하면, Nexus Alpha가 알아서
 > GUI를 디자인하고, 코드를 작성하고, `.exe`로 빌드하고, 설치 관리자로 패키징하고,
 > 다운로드 가능한 형태로 **배포까지 자동 완료**한다.
 
+→ **2026-05-14 외부 PC 2대 검증 완료** (Calculator.exe / Message_App.exe).
 자세한 v4 설계: [docs/architecture/nexus_alpha_v4.md](docs/architecture/nexus_alpha_v4.md)
+
+### v5 ⭐ — 협업 자동화 (진행 중)
+> v4 = "자연어 → .exe" (산출물 자동화)
+> **v5 = "AI 가상 기업이 *진짜로 협업해서* 산출물 자동화" (협업 자동화)**
+
+PR #133 의 환율 변환기 사례에서 발견 — 4 에이전트가 다른 가정으로 일했지만 누구도 인지 못함 (1 USD = 1365.5 stale). 진짜 회사 같은 회의/회고/학습 메커니즘이 필요.
+
+**v5 의 4 Phase 진화 경로** (Sprint 2 부터):
+- Phase 1: Shared Context Pool + Meeting Facilitator 신설 (PR #138)
+- Phase 2: Vision QA + CrewAI delegation 부분 ON (PR #141)
+- Phase 3: Knowledge Curator + RAG + Retrospective Lead (PR #140)
+- Phase 4: 실시간 대시보드 + Vision QA 확장 (PR #145)
+
+자세한 v5 설계: [docs/architecture/Nexus_Alpha_구성안_v7.md](docs/architecture/Nexus_Alpha_구성안_v7.md) + [조직도 v11](docs/architecture/Nexus_Alpha_조직도_v11.md) + [insights](docs/insights/agent_collaboration_paradigm_shift.md)
 
 ## 📖 프로젝트 개요
 
 Nexus Alpha는 사용자의 반복 업무 또는 소프트웨어 요구를 분석하여 자동화 스크립트·앱·
 배포 가능한 실행 파일을 생성하는 **AI 가상 기업 시스템**입니다.
 
-### 조직 구조 (v4 확정안)
+### 조직 구조 (v11 — 본부 10 신설 비전, 2026-05-14)
 
-**C-Level 3명 + 8개 본부 = 9개 조직 단위, 총 46명 에이전트**
+**C-Level 3명 + 10개 본부 = 11개 조직 단위, 총 54명 에이전트** (39 구현 / 15 비전)
+
+> v4 의 46명 → v10 의 50명 (RV 본부 +4) → **v11 의 54명** (Coordination/Communication 본부 +4)
+> 자세한 v11: [docs/architecture/Nexus_Alpha_조직도_v11.md](docs/architecture/Nexus_Alpha_조직도_v11.md)
+
+**v4 확정안 (legacy reference)**: C-Level 3명 + 8개 본부 = 9개 조직 단위, 총 46명 에이전트
 
 | 본부 | 인원 | 역할 |
 |---|---:|---|

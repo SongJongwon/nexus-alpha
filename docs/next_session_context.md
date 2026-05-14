@@ -147,24 +147,67 @@ PR #134-B 환경 분기 처방 시작
 
 ---
 
-## 본인 발견 결함 6개 처리 상태
+## 본인 발견 결함 6개 처리 상태 (v11/v7 반영, Phase 우선순위 적용)
 
-| # | 결함 | 처리 PR | 상태 | 다음 행동 |
-|---|------|--------|------|---------|
-| 1 | tkinter 환경 결함 | PR #134-A | ✅ 완료 | — |
-| 2 | 환율 stale (cross-agent inconsistency) | PR #138-B (재배정) 또는 PR #141 | ❌ 미해결 | Sprint 2 |
-| 3 | Observability 부재 | PR #145 (제안 — 미배정) | ❌ 미해결 | Sprint 3 |
-| 4 | 에이전트 협의 부재 | PR #141 ⭐⭐⭐ | ❌ 미해결 | **Sprint 2 1순위** |
-| 5 | 시각적 QA 부재 | PR #141 ⭐⭐⭐ | ❌ 미해결 | **Sprint 2 1순위** |
-| 6 | AI 가상 기업 비전 갭 | PR #140 + #141 | ❌ 미해결 | Sprint 2 |
+| # | 결함 | 처리 PR | Phase | 상태 | 다음 행동 |
+|---|------|--------|------|------|---------|
+| 1 | tkinter 환경 결함 | PR #134-A | — | ✅ 완료 | — |
+| 2 | 환율 stale (cross-agent inconsistency) | **PR #138 (Shared Context Pool + Meeting Facilitator)** + LLM prompt | **Phase 1** | ❌ 미해결 | **Sprint 2 1순위** |
+| 3 | Observability 부재 | PR #145 (실시간 대시보드) | Phase 4 | ❌ 미해결 | Sprint 3 |
+| 4 | 에이전트 협의 부재 | PR #138 (Phase 1) + PR #141 (Phase 2) ⭐⭐⭐ | Phase 1, 2 | ❌ 미해결 | **Sprint 2** |
+| 5 | 시각적 QA 부재 | PR #141 (Vision QA wiring) ⭐⭐⭐ | Phase 2 | ❌ 미해결 | Sprint 2 2순위 |
+| 6 | AI 가상 기업 비전 갭 | PR #140 + #141 + 협의 에이전트 신설 (본부 10) | Phase 1, 2, 3 | ❌ 미해결 | multi-PR sequence |
 
-→ 5/6 미해결. 5개 모두 통찰 1~5 와 직접 매핑 — [insights 문서](insights/agent_collaboration_paradigm_shift.md) 참조.
+→ 5/6 미해결. **본인 비전 (통찰 6) = north star** — 6개 결함 중 5개가 통찰 6 의 Phase 1~3 으로 처방됨.
 
 ---
 
-## Sprint 2 PR 비전 요약 (다음 세션 작업 후보)
+## ⭐⭐⭐ 본인 비전 (통찰 6) = 모든 PR 의 north star — Phase 1~4
 
-### PR #141 (Vision QA + CrewAI delegation 부분 ON) ⭐⭐⭐ — 최우선
+> **2026-05-14 새로 추가** — [docs/architecture/Nexus_Alpha_조직도_v11.md](architecture/Nexus_Alpha_조직도_v11.md) + [Nexus_Alpha_구성안_v7.md](architecture/Nexus_Alpha_구성안_v7.md) 반영.
+>
+> **본부 10 (Coordination/Communication) 신설 비전** — 4 명 신규 에이전트:
+> - Meeting Facilitator (킥오프 회의)
+> - Cross-Agent Consultant (양방향 소통)
+> - Knowledge Curator (학습)
+> - Retrospective Lead (회고)
+>
+> 50명 → **54명 정원** 확대.
+
+### Phase 1 → 4 진화 경로 (우선순위 갱신)
+
+| Phase | PR | 처리 통찰 | 작업 규모 | Sprint |
+|-------|----|---------|--------|--------|
+| **Phase 1** ⭐ | **PR #138 (Shared Context Pool + Meeting Facilitator 신설)** | 1, 2 | M (~300줄) | **Sprint 2 1순위** |
+| Phase 2 | PR #141 (Vision QA + CrewAI delegation 부분 ON) | 1, 2, 4 | L (~500줄+) | Sprint 2 2순위 |
+| Phase 3 | PR #140 (Knowledge Curator + RAG wiring) + Retrospective Lead PR | 3, 4 | L (multi-PR) | Sprint 2 3순위 / Sprint 3 |
+| Phase 4 | PR #145 (실시간 대시보드) + Vision QA 확장 | 5, 4 | M~L | Sprint 3+ |
+
+### 모든 PR 결정 기준 (Sprint 2 부터)
+
+> "이 PR 이 통찰 6 의 4 단계 (킥오프/병렬+소통/중간점검/회고+학습) 중 어느 단계에 기여하나?"
+> - 답할 수 있으면 → 진행
+> - "직접 기여 X, 인프라" → 우선순위 낮춤 (Sprint 3+)
+> - "기여 0" → 보류 또는 reject
+
+---
+
+## Sprint 2 PR 비전 요약 (다음 세션 작업 후보, Phase 우선순위 적용)
+
+### PR #138 (Phase 1 — Shared Context Pool + Meeting Facilitator 신설) ⭐⭐⭐ — Sprint 2 1순위
+
+**처리 통찰**: 1 (위장된 협업), 2 (소통 부재) — 작은 변화부터
+
+**작업 내용**:
+1. LangGraph state 에 `shared_context: dict[str, dict]` 추가 → 모든 에이전트 산출물 누적
+2. 각 에이전트 task description 에 "다른 에이전트들이 이미 결정한 내용" 섹션 자동 주입
+3. **Meeting Facilitator 에이전트 신설** (본부 10 첫 구현) — 워크플로 시작 시 킥오프 회의 자동 진행 → `shared_kickoff_decisions.yaml` 산출
+4. 환율 사례 재현 시: GUI Code Generator 가 CTO 의 "frankfurter API" 결정을 *볼 수 있게*
+
+**예상 effort**: M (~300줄)
+**예상 가치**: HIGH — Phase 1 인프라, PR #141 의 prerequisite
+
+### PR #141 (Phase 2 — Vision QA + CrewAI delegation 부분 ON) ⭐⭐⭐ — Sprint 2 2순위
 
 **처리 통찰**: 1 (위장된 협업), 2 (소통 부재), 4 (분업 + 피드백)
 

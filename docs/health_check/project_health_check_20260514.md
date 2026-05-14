@@ -117,18 +117,20 @@
 
 ---
 
-## 본인 발견 결함 6개 → PR 매핑 (PM 정리)
+## 본인 발견 결함 6개 → PR 매핑 (PM 정리, v11 조직도 + v7 구성안 반영)
 
-| # | 결함 | 처리 PR | 상태 |
-|---|------|--------|------|
-| **1** | tkinter 환경 결함 (친구 PC stderr 폐기) | PR #134-A | ✅ **완료** (`76f96db`) |
-| **2** | 환율 stale (1 USD = 1365.5, 실제 ~1490, 9% 오차) | **미식별 → PR #138 (Shared Context Pool) 후보** ⚠️ 점검 보고서의 #138 (input hardening) 와 충돌 — 다음 세션 번호 재배정 | ❌ 미해결 |
-| **3** | Observability 부재 (33min 빌드 중 progress 0) | **미식별 → PR #145 (실시간 대시보드) 후보** | ❌ 미해결 |
-| **4** | 에이전트 협의 부재 | **PR #141 (Vision QA + CrewAI delegation 부분 ON)** ⭐⭐⭐ | ❌ 미해결 (Sprint 2 1순위) |
-| **5** | 시각적 QA 부재 (gui_test_executor 호출 X) | **PR #141 (Vision QA wiring)** ⭐⭐⭐ | ❌ 미해결 (Sprint 2 1순위) |
-| **6** | AI 가상 기업 비전 갭 | **PR #140 (Knowledge Curator + RAG) + PR #141 통합** ⭐⭐⭐ | ❌ 미해결 (Sprint 2) |
+| # | 결함 | 처리 PR | Phase | 상태 |
+|---|------|--------|------|------|
+| **1** | tkinter 환경 결함 (친구 PC stderr 폐기) | PR #134-A | — | ✅ **완료** (`76f96db`) |
+| **2** | 환율 stale (1 USD = 1365.5, 실제 ~1490, 9% 오차) | **PR #138 (Shared Context Pool + Meeting Facilitator)** + LLM prompt 보강 | **Phase 1** | ❌ 미해결 (Sprint 2 1순위) |
+| **3** | Observability 부재 (33min 빌드 중 progress 0) | **PR #145 (실시간 대시보드)** | Phase 4 | ❌ 미해결 (Sprint 3) |
+| **4** | 에이전트 협의 부재 | **PR #138 (Phase 1 인프라) + PR #141 (Phase 2 양방향)** ⭐⭐⭐ | Phase 1, 2 | ❌ 미해결 (Sprint 2) |
+| **5** | 시각적 QA 부재 (gui_test_executor 호출 X) | **PR #141 (Vision QA wiring)** ⭐⭐⭐ | Phase 2 | ❌ 미해결 (Sprint 2 2순위) |
+| **6** | AI 가상 기업 비전 갭 | **PR #140 (Knowledge Curator + RAG) + 협의 에이전트 신설 (본부 10)** | Phase 1, 2, 3 | ❌ 미해결 (multi-PR sequence) |
 
-→ **본인 발견 결함 6개 중 5개 미해결**. 5개 모두 통찰 1~5 와 직접 매핑 — [insights 문서](../insights/agent_collaboration_paradigm_shift.md) 참조.
+→ **본인 발견 결함 6개 중 5개 미해결**. 5개 모두 통찰 1~5 와 직접 매핑 + **통찰 6 (본인 비전 = 본부 10 신설) 이 모든 PR 의 north star** — [insights 문서](../insights/agent_collaboration_paradigm_shift.md) + [조직도 v11](../architecture/Nexus_Alpha_조직도_v11.md) + [구성안 v7](../architecture/Nexus_Alpha_구성안_v7.md) 참조.
+
+⚠️ **Phase 우선순위 변경 (v11/v7 반영)**: 점검 보고서 작성 시점엔 PR #141 이 Sprint 2 1순위였으나, 본인 비전 (통찰 6) 의 Phase 1~4 진화 경로가 우선시됨 → **PR #138 (Phase 1 인프라) 이 1순위, PR #141 (Phase 2) 이 2순위**.
 
 ---
 

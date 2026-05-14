@@ -12,7 +12,11 @@
 
 ## TL;DR (30초)
 
-PR #134-A 까지의 모든 fixup 은 *증상 패치*. **진짜 결함은 에이전트 간 소통 부재** — `qa_feedback_loop`, `gui_test_executor`, Knowledge Curator + RAG Searcher 모두 *구현 완료 + 테스트 통과* 인데 production path 에서 호출 X. 결과: **"AI 가상 기업"이 사실은 "같은 건물의 프리랜서들"**. 환율 변환기 사례 (1 USD = 1365.5 stale, 실제 ~1490, 9% 오차) 가 정확한 증거. PR #141 (Vision QA + CrewAI delegation) 이 가장 high-leverage paradigm-shift.
+PR #134-A 까지의 모든 fixup 은 *증상 패치*. **진짜 결함은 에이전트 간 소통 부재** — `qa_feedback_loop`, `gui_test_executor`, Knowledge Curator + RAG Searcher 모두 *구현 완료 + 테스트 통과* 인데 production path 에서 호출 X. 결과: **"AI 가상 기업"이 사실은 "같은 건물의 프리랜서들"**. 환율 변환기 사례 (1 USD = 1365.5 stale, 실제 ~1490, 9% 오차) 가 정확한 증거.
+
+**본인 본질 비전 (통찰 6, 모든 PR 의 north star)**: 진짜 multi-agent collaboration = 킥오프 회의 → 병렬 + 실시간 소통 → 중간 점검 → 최종 검토 + 회고. **"자기 진화형 소프트웨어"** = 자기(알아서 협의) + 진화(회고+학습) + 형(회사같은 체계).
+
+→ **Phase 1 (PR #138 + 협의 에이전트 신설)** 이 첫 단계. **PR #141 (Vision QA + delegation)** 은 Phase 2.
 
 ---
 
@@ -119,40 +123,128 @@ PR #133 의 5번째 라이브 검증 (Currency_Converter.exe / 10.70 MB / GUI �
 
 ---
 
-## 본질적 처방 — 통찰 → PR 매핑
+## ⭐⭐⭐ 통찰 6 — 본인의 본질적 비전 (북극성 / North Star)
 
-| 통찰 | 처방 PR | 작업 규모 | 우선순위 |
-|------|--------|---------|---------|
-| 1, 2 (협업 부재) | **PR #138 (Shared Context Pool)** ⚠️ 점검 보고서의 "input hardening" 과 다른 의미 — 사용자 통찰 매핑이 우선 | 중간 ~300줄 | Sprint 2 |
-| 1, 2 (협업 부재) | **PR #141 (Vision QA + CrewAI allow_delegation 부분 ON)** ⭐⭐⭐ | 큰 변화 ~500줄+ | **Sprint 2 1순위** |
-| 3 (가상 기업 메커니즘) | 미식별 (학습 메커니즘 신규 PR) — 회의/멘토링/회고/학습 모두 | 매우 큼 (multi-PR sequence) | Sprint 3+ |
-| 4 (D-1/D-4: 분업 + 공유) | **PR #140 (Knowledge Curator + RAG wiring)** ⭐⭐⭐ | 큰 변화 | Sprint 2 |
-| 4 (D-3: QA 시각 검증) | **PR #141** (Vision QA wiring) — 통찰 1/2 와 통합 | 큰 변화 | Sprint 2 1순위 |
-| 5 (Observability) | **별도 PR (실시간 대시보드)** — PR 번호 미정 (제안: PR #145) | 중간 ~400줄 | Sprint 3 |
+**통찰 1~5 가 "결함 발견" 이라면, 통찰 6 은 *해결한 후의 목적지*.** 모든 PR 결정의 기준.
 
-⚠️ **PR #138 번호 충돌 정리 필요**:
-- 점검 보고서 (자동 spawn 된 3 에이전트 결과) 의 PR #138 = "input hardening (prompt injection 방어)"
-- 본인 통찰의 PR #138 = "Shared Context Pool (협업 부재 fix)"
-- → **다음 세션 시작 시 PR 번호 재배정 결정** (예: input hardening → #138-A, Shared Context Pool → #138-B 또는 #145)
+### 진짜 multi-agent collaboration 의 4 단계
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ [1] 킥오프 회의 — 협의 에이전트 (Meeting Facilitator) 주관     │
+│     • 모든 부서 참여 (CTO, Analyst, Designer, Engineer, QA, ...)│
+│     • 사용자 요청에 대해 협의 + 합의                            │
+│     • 분담 결정 + 가정 명시 (환율 사례의 "frankfurter API" 같은) │
+│     • 결과: shared_kickoff_decisions.yaml 산출               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ [2] 병렬 작업 + 실시간 소통                                    │
+│     • 각 부서 (에이전트) 작업 진행                              │
+│     • 모르는 거 다른 부서에게 질문 (cross-agent consultation)    │
+│     • 진행 상황 broadcast (Shared Context Pool 갱신)           │
+│     • Engineer 가 CTO 결정 의심 → 다시 회의 요청 가능 (escalate)│
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ [3] 중간 점검 — QA 양방향 피드백                               │
+│     • Code Reviewer ↔ Engineer 양방향 (CrewAI delegation ON)│
+│     • Vision QA: GUI mockup vs 실제 빌드된 .exe 일치 검증       │
+│     • Cross-agent inconsistency 검출 (환율 사례 같은)           │
+│     • 수정 요청 → Engineer revision → 재검증 (반복)              │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ [4] 최종 검토 + 회고 + 학습                                   │
+│     • 모두 합의 후 배포 (.exe 산출 + Draft Release)             │
+│     • 회고 (Retrospective Lead): "뭘 배웠나" 정리               │
+│     • 학습 (Knowledge Curator + RAG): 다음 빌드에 반영           │
+│     • 진짜 자기 진화 — 시스템이 스스로 점점 좋아짐                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### "자기 진화형 소프트웨어" 의 진짜 의미 (마케팅 ↔ 실제 일치)
+
+| 단어 | 진짜 의미 |
+|------|--------|
+| **자기** | 알아서 협의 + 결정 (PM 이 매번 fixup 으로 패치하지 않음) |
+| **진화** | 회고 + 학습으로 매 빌드마다 점점 좋아짐 (현재: PM 머릿속만 진화) |
+| **형 (型)** | 진짜 회사 같은 협업 체계 (현재: 같은 건물의 프리랜서들) |
+
+→ 현재는 "자기 진화형" 마케팅 vs 실제 갭 큼. 통찰 6 비전이 이 갭을 닫는 길.
+
+### Phase 1 → 4 진화 경로 (PR 매핑)
+
+| Phase | 목표 | 주요 PR | 처리 통찰 | 작업 규모 |
+|-------|------|--------|---------|--------|
+| **Phase 1** ⭐ | **인프라** — 에이전트가 *서로의 산출물을 볼 수 있게* | **PR #138 (Shared Context Pool) + 협의 에이전트 1명 신설** | 1, 2 (작은 변화부터) | M (~300줄) |
+| **Phase 2** | **양방향 소통** — 에이전트끼리 *대화 + 위임* | **PR #141 (Vision QA + CrewAI allow_delegation 부분 ON)** | 1, 2, 4 (D-2/D-3) | L (~500줄+) |
+| **Phase 3** | **회의/회고/학습** — 진짜 회사 메커니즘 | PR #140 (Knowledge Curator + RAG wiring) + Meeting Facilitator 활용 PR + Retrospective Lead PR | 3, 4 (D-1/D-5) | L (multi-PR sequence) |
+| **Phase 4** | **시각적 협업** — 사용자도 회의 참관 가능 | PR #145 (실시간 대시보드) + Vision QA 확장 | 5 + 4 (D-4) | M~L |
+
+### 본인 비전이 모든 PR 의 north star
+
+> **모든 PR 결정 기준** (Sprint 2 부터):
+> "이 PR 이 통찰 6 의 4 단계 (킥오프/병렬+소통/중간점검/회고+학습) 중 어느 단계에 기여하나?"
+>
+> - 답할 수 있으면 → 진행
+> - "직접 기여 X, 인프라" → 우선순위 낮춤 (Sprint 3+)
+> - "기여 0" → 보류 또는 reject
+
+→ 1주일 후 본인이 PR 결정 시 본 표를 펼쳐놓고 진행할 것.
 
 ---
 
-## 권장 우선순위 (본인 직관 + 점검 결과 통합)
+## 본질적 처방 — 통찰 → PR 매핑 (Phase 우선순위 적용)
 
-### Sprint 2 (친구 베타 1주일 후, 다음 세션부터)
+> **본인 비전 (통찰 6) 의 Phase 1~4 가 모든 PR 의 north star.**
+> 점검 보고서의 PR 우선순위 (#141 → #140) 보다 본인 비전 phasing 이 우선:
+> **Phase 1 (PR #138 + 협의 에이전트) → Phase 2 (PR #141) → Phase 3 (PR #140 + 회의/회고) → Phase 4 (PR #145)**
 
-| 순서 | PR | 처리 통찰 | 이유 |
-|------|----|---------|------|
-| **1** | **PR #141** (Vision QA + CrewAI delegation 부분 ON) | 1, 2, 4 동시 | ⭐ 가장 high-leverage paradigm-shift. 친구 PC 의 첫 *시각 검증* 시작. 환율 사례 같은 cross-agent inconsistency 검출 가능 |
-| 2 | **PR #140** (Knowledge Curator + RAG wiring) | 4 (D-1) | 지식 공유 — 첫 cross-run 학습 메커니즘 |
-| 3 | **PR #138** (Shared Context Pool — 본인 통찰 매핑) | 1, 2 | 작은 변화부터 시작 — 모든 에이전트가 다른 에이전트 산출물 *읽을 수* 있게 |
+| 통찰 | 처방 PR | Phase | 작업 규모 | 우선순위 |
+|------|--------|-------|---------|---------|
+| 1, 2 (협업 부재 — 인프라부터) | **PR #138 (Shared Context Pool) + 협의 에이전트 신설** ⭐⭐⭐ | **Phase 1** | M (~300줄) | **Sprint 2 1순위** (작은 변화부터) |
+| 1, 2, 4 (양방향 소통) | **PR #141 (Vision QA + CrewAI allow_delegation)** ⭐⭐⭐ | Phase 2 | L (~500줄+) | Sprint 2 2순위 |
+| 4 (D-1: 학습 → 다음 빌드) | **PR #140 (Knowledge Curator + RAG wiring)** | Phase 3 | M+M (~400줄) | Sprint 2 3순위 또는 Sprint 3 |
+| 3 (회의/회고/학습) | 신규 PR sequence (Meeting Facilitator 활용 + Retrospective Lead) | Phase 3 | L (multi-PR) | Sprint 3 |
+| 5 (Observability) | **PR #145 (실시간 대시보드)** | Phase 4 | M~L (~400줄) | Sprint 3 |
+| 4 (D-3: 시각 검증 확장) | PR #141 의 Vision QA 확장 | Phase 4 | (PR #141 의 follow-up) | Sprint 3 |
 
-### Sprint 3 (Sprint 2 결과 후, 1-2개월)
+⚠️ **PR #138 번호 충돌 정리** (다음 세션 시작 시 결정):
+- 점검 보고서의 PR #138 = "input hardening (prompt injection 방어)"
+- **본인 통찰의 PR #138 = "Shared Context Pool + 협의 에이전트 신설" (북극성, 우선)**
+- → input hardening 은 #138-input 또는 #146 으로 재배정
 
-| 순서 | PR | 처리 통찰 | 이유 |
-|------|----|---------|------|
-| 4 | 별도 PR (Observability 대시보드) | 5 | 친구 베타 사고 재발 방지. tqdm + Quick Edit 끄기 + 에이전트 활동 로그 |
-| 5 | 별도 PR (회의/회고/학습 메커니즘) | 3 | "AI 가상 기업" 비전 충족 — multi-PR sequence 가능 |
+---
+
+## 권장 우선순위 (본인 비전 phasing 적용)
+
+### Phase 1 — Sprint 2 1순위 (친구 베타 1주일 후 즉시 시작)
+
+| 순서 | PR | Phase | 처리 통찰 | 이유 |
+|------|----|------|---------|------|
+| **1** | **PR #138 (Shared Context Pool + 협의 에이전트 신설)** ⭐⭐⭐ | Phase 1 | 1, 2 | 작은 변화부터 — 인프라 먼저 깔아야 PR #141 이 의미 있음. 협의 에이전트 1명 신설로 킥오프 회의 메커니즘 시작 |
+
+### Phase 2 — Sprint 2 2순위
+
+| 순서 | PR | Phase | 처리 통찰 | 이유 |
+|------|----|------|---------|------|
+| 2 | **PR #141 (Vision QA + CrewAI allow_delegation)** ⭐⭐⭐ | Phase 2 | 1, 2, 4 | Phase 1 인프라 위에서 양방향 소통 구현. 환율 사례 같은 cross-agent inconsistency 자동 검출 |
+
+### Phase 3 — Sprint 2 3순위 또는 Sprint 3
+
+| 순서 | PR | Phase | 처리 통찰 | 이유 |
+|------|----|------|---------|------|
+| 3 | **PR #140 (Knowledge Curator + RAG wiring)** | Phase 3 | 4 (D-1) | 학습 → 다음 빌드 반영, 진짜 자기 진화 시작 |
+| 4 | Meeting Facilitator 활용 PR | Phase 3 | 3 (회의) | 협의 에이전트가 실제 워크플로 시작 시 킥오프 회의 자동 진행 |
+| 5 | Retrospective Lead PR | Phase 3 | 3 (회고) | 매 빌드 후 회고 자동 작성 |
+
+### Phase 4 — Sprint 3+
+
+| 순서 | PR | Phase | 처리 통찰 | 이유 |
+|------|----|------|---------|------|
+| 6 | **PR #145 (실시간 대시보드)** | Phase 4 | 5 | Quick Edit 사고 재발 방지 + 사용자도 회의 참관 |
+| 7 | PR #141 Vision QA 확장 | Phase 4 | 4 (D-4) | 사용자가 GUI 검증 결과를 화면에서 직접 봄 |
 
 ### 의도적 보류 (5명 베타 cohort 데이터 누적 후)
 
