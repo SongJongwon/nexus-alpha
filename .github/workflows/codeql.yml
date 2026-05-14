@@ -1,0 +1,61 @@
+# CodeQL 정적 보안 분석 (PR #137).
+#
+# 배경 (2026-05-14 종합 점검):
+#   PUBLIC repo 인데 정적 보안 분석 0. Python 코드의 SQL injection / hardcoded
+#   credentials / unsafe deserialization / command injection / path traversal
+#   자동 검출 toolchain 부재.
+#
+#   특히 prompt injection 이후 LLM 이 생성한 코드를 sandbox_runner 가 실행하는
+#   경로 (analyze_and_implement.py:312 → engineer task → sandbox) 가 정적 분석
+#   대상이 되어야 함.
+#
+# 동작:
+#   - push / PR 마다 CodeQL 이 Python 보안 query 실행
+#   - 발견 시 GitHub Security tab 에 Alert + PR comment
+#   - 주간 cron 으로 누락 스캔 보강
+#
+# 비용: GitHub Actions minutes (Public repo 무료 무제한)
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 매주 월요일 00:00 UTC (한국 09:00) 누락 보강 스캔
+    - cron: '0 0 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: analyze (python, security-extended)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['python']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended 쿼리 세트 — default 보다 더 많은 잠재 취약점 검출
+          # (path traversal, unsafe yaml, weak crypto 등). FP 가능하나 PR 검토 시 OK.
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

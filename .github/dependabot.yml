@@ -1,0 +1,51 @@
+# Dependabot 자동 업데이트 (PR #137).
+#
+# 배경 (2026-05-14 종합 점검):
+#   134 PR / 1327 deprecation warnings / public repo 전환 후 보안 자동화 0.
+#   pip 의존성 (requirements.txt) + GitHub Actions (.github/workflows/) 모두
+#   취약점 알림 / 자동 PR 부재.
+#
+# 동작:
+#   - 주 1회 (월요일) requirements.txt 의 outdated/vulnerable 패키지 자동 PR
+#   - 주 1회 GitHub Actions 의 outdated action 자동 PR
+#   - PR 라벨 자동 부여 → 머지 흐름 분리 가능
+#
+# Note: 라이브러리 ceiling 충돌 (CrewAI <3.14 등) 은 PR 단위 수동 검토 필수.
+#   Dependabot 이 자동으로 메이저 업데이트 시도 시 충돌 가능 — review 필수.
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "🔄 deps"
+      include: "scope"
+    # 메이저 업데이트는 별도 PR 로 분리 (수동 검토 강제)
+    groups:
+      patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "🔄 actions"
