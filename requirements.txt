@@ -57,7 +57,7 @@ pyautogui>=0.9.54
 # 단위·통합 테스트 러너
 pytest>=8.0.0
 # monkeypatch 확장 및 MockerFixture 제공
-pytest-mock>=3.12.0
+pytest-mock>=3.15.1
 # 네트워크 차단 플러그인.
 # NOTE: Windows ProactorEventLoop의 내부 socketpair 호출까지 막아버려 autouse로는
 #       사용 불가. Linux CI에서 `pytest --disable-socket` 플래그로 opt-in 적용 전제.
