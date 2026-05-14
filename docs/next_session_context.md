@@ -20,9 +20,12 @@
 
 | PR | 제목 | commit | 효과 |
 |----|------|--------|------|
-| **#134-A** | install.ps1 진단 보강 (stderr 캡처 + Get-EnvironmentContext + Get-TkinterErrorIds + ConvertTo-DiagnosticJson + 13 섹션 dump) | `76f96db` | 친구 PC tkinter 결함 진단 데이터 0 → 13 섹션 풍부 |
-| **#135** | APIKeyProvider max_tokens 1024 → 4096 | `b645bb1` | 33min → ~25min, 비용 ~30%↓ 추정 |
-| **#137** (GH#136) | Security baseline (gitleaks + dependabot + CodeQL + BFG 절차 문서화) | `6aa07ca` | PUBLIC repo 보안 자동화 0 → 활성. 첫 스캔 SUCCESS |
+| **#134-A** | install.ps1 진단 보강 | `76f96db` | 진단 데이터 0 → 13 섹션 |
+| **#135** | max_tokens 1024 → 4096 | `b645bb1` | 33min → ~25min, 비용 ~30%↓ |
+| **#137** (GH#136) | Security baseline (gitleaks + dependabot + CodeQL + BFG 문서화) | `6aa07ca` | 보안 자동화 활성, 1시간 내 dependabot 8 PR 자동 생성 |
+| ⭐ **#138 minimal** (GH#145) | **Cross-agent consistency directive (본인 비전 통찰 6 Phase 1 첫 단계)** | `eb5787a` | 환율 변환기 사례 직접 처방, GUI Code Generator 시범 적용, pytest 1003 |
+
+**v5 비전 신설** — `Nexus_Alpha_구성안_v7.md` + `Nexus_Alpha_조직도_v11.md` 신규. 본부 10 (Coordination/Communication) 신설 비전.
 
 **누적**: 134 PR 머지, pytest **992 passed** (+55 vs 세션 시작 937, 회귀 0).
 

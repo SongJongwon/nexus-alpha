@@ -188,6 +188,34 @@ PR #134-A 머지 후 PM 의 직관 ("내가 찾지 못한 결함도 있을 수 �
 - TKINTER-001~005 진단 dump 캡처 안내
 - 보너스: 주변 1-2명 추가 모집 (회사 PC + 다른 OS)
 
+## Phase 10 — PR #138 Phase 1 minimal slice 머지 + dependabot 즉시 ROI
+
+### PR #138 (GitHub #145, commit `eb5787a`) 머지 완료
+- **본인 비전 통찰 6 의 Phase 1 첫 단계** — 환율 변환기 사례 직접 처방
+- `format_consistency_directive` helper 신규 + `_build_gui_code_gen_task` 시범 적용
+- 신규 11 tests, 전체 **1003 passed** (992 → +11, 회귀 0)
+- CI 모두 SUCCESS (pytest + gitleaks + CodeQL)
+
+### 다음 PR (Phase 1 full) 예정
+- Meeting Facilitator 에이전트 신설 (본부 10 첫 멤버)
+- shared_kickoff_decisions.yaml 산출
+- 모든 워크플로 (analyze_and_implement / build / release) 확대
+- Pytest Author / Code Reviewer / Build chain 에 directive 적용
+
+### 🤖 PR #137 즉시 ROI — dependabot 8 PR 자동 생성
+
+PR #137 머지 후 ~1시간 내 dependabot 이 자동 발견:
+- `actions/checkout` → v6
+- `actions/setup-python` → v6
+- `github/codeql-action` → v4
+- `pip/langchain` >= 1.3.0
+- `pip/langgraph` >= 1.2.0
+- `pip/pandas` >= 3.0.3
+- `pip/pytest-mock` >= 3.15.1
+- `pip/rich` >= 15.0.0
+
+→ Sprint 1 보안 baseline 의 즉시 효과 입증. **다음 세션에서 PR 검토 + 머지 우선순위 결정**.
+
 ## BFG 실 실행 시점 (PM 결정 권장)
 PR #137 은 자동화만, BFG 실 실행은 별도 시점. LOW risk (public key 라 write 권한 X).
 - (a) Sprint 1 끝 — 깔끔
