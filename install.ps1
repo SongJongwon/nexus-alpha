@@ -111,6 +111,268 @@ function Invoke-NativeSafely {
     }
 }
 
+# ─── PR #134-A — 환경 비종속 진단 helper (다중 사용자 환경 대응) ───────────
+# 친구 PC 1명 케이스 (회사 PC + Python 3.14 + 관리자) 에 맞춘 처방은 다른 9명에서
+# 또 다른 결함 발견 → fixup 무한 루프. 본 helper 는 PC 환경을 *환경 변수별로 분류*
+# 한 hashtable 을 반환 → Get-TkinterErrorIds 가 분기 처리 + ConvertTo-DiagnosticJson
+# 이 다중 PC 누적용 JSON 으로 직렬화.
+# 모든 system query 는 try/catch 로 격리 — 단일 query 실패가 진단 전체를 깨뜨리지 않음.
+function Get-EnvironmentContext {
+    [CmdletBinding()] param()
+    $ctx = [ordered]@{
+        Pc = [ordered]@{
+            OsCaption    = ''
+            OsVersion    = ''
+            PsVersion    = ''
+            IsAdmin      = $false
+            DomainJoined = $false
+            DomainName   = ''
+            UserName     = $env:USERNAME
+            ComputerName = $env:COMPUTERNAME
+        }
+        PythonVersions = @()
+        EnvVars = [ordered]@{
+            PYTHONPATH         = if ($env:PYTHONPATH) { $env:PYTHONPATH } else { '' }
+            PYTHONHOME         = if ($env:PYTHONHOME) { $env:PYTHONHOME } else { '' }
+            PATH_PythonEntries = @()
+        }
+        TclTkPaths = [ordered]@{
+            PathEntries           = @()
+            TkinterPydLocations   = @()
+            TclDllSystemLocations = @()
+        }
+        Antivirus = [ordered]@{
+            Defender         = ''
+            DetectedProducts = @()
+            RunningServices  = @()
+        }
+        Installer = [ordered]@{
+            Sha256 = ''
+            Path   = ''
+        }
+    }
+
+    # PC 컨텍스트
+    try {
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $ctx.Pc.DomainJoined = [bool]$cs.PartOfDomain
+        $ctx.Pc.DomainName   = "$($cs.Domain)"
+    } catch { }
+    try {
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        $ctx.Pc.OsCaption = "$($os.Caption)"
+        $ctx.Pc.OsVersion = "$($os.Version)"
+    } catch {
+        $ctx.Pc.OsVersion = [System.Environment]::OSVersion.Version.ToString()
+    }
+    try {
+        $ctx.Pc.PsVersion = $PSVersionTable.PSVersion.ToString()
+    } catch { }
+    try {
+        $identity  = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        $ctx.Pc.IsAdmin = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { }
+
+    # Python 전수 (py -0p / where / Get-Command / registry)
+    $py0 = Invoke-NativeSafely -Executable 'py' -Arguments @('-0p')
+    if ($py0.Succeeded) {
+        foreach ($line in ($py0.StdOut -split "`n")) {
+            $line = $line.Trim()
+            if (-not $line) { continue }
+            $ctx.PythonVersions += [ordered]@{ Source='py -0p'; Version=''; Path=$line }
+        }
+    }
+    $where = Invoke-NativeSafely -Executable 'where.exe' -Arguments @('python')
+    if ($where.Succeeded) {
+        foreach ($line in ($where.StdOut -split "`n")) {
+            $line = $line.Trim()
+            if (-not $line) { continue }
+            $ctx.PythonVersions += [ordered]@{ Source='where python'; Version=''; Path=$line }
+        }
+    }
+    try {
+        $cmds = Get-Command python -All -ErrorAction SilentlyContinue
+        foreach ($c in $cmds) {
+            $ctx.PythonVersions += [ordered]@{ Source='Get-Command'; Version="$($c.Version)"; Path="$($c.Source)" }
+        }
+    } catch { }
+    foreach ($hive in @(
+        'HKLM:\SOFTWARE\Python\PythonCore',
+        'HKCU:\SOFTWARE\Python\PythonCore',
+        'HKLM:\SOFTWARE\Wow6432Node\Python\PythonCore'
+    )) {
+        if (-not (Test-Path $hive)) { continue }
+        try {
+            foreach ($v in (Get-ChildItem $hive -ErrorAction SilentlyContinue)) {
+                $ipKey = Join-Path $v.PSPath 'InstallPath'
+                if (-not (Test-Path $ipKey)) { continue }
+                $ip = (Get-ItemProperty $ipKey -ErrorAction SilentlyContinue).'(default)'
+                if ($ip) {
+                    $ctx.PythonVersions += [ordered]@{
+                        Source  = "registry:$hive"
+                        Version = "$($v.PSChildName)"
+                        Path    = (Join-Path $ip 'python.exe')
+                    }
+                }
+            }
+        } catch { }
+    }
+
+    # PATH 의 python/tcl/tk 관련 항목
+    $pathSplit = if ($env:PATH) { $env:PATH -split ';' } else { @() }
+    $ctx.EnvVars.PATH_PythonEntries = @($pathSplit | Where-Object { $_ -match '(?i)python' })
+    $ctx.TclTkPaths.PathEntries     = @($pathSplit | Where-Object { $_ -match '(?i)\b(tcl|tk)\b' })
+
+    # _tkinter.pyd 위치 비교 (검출된 모든 Python 의 DLLs 폴더)
+    foreach ($pv in $ctx.PythonVersions) {
+        if (-not $pv.Path) { continue }
+        $parent = Split-Path -Path $pv.Path -Parent -ErrorAction SilentlyContinue
+        if (-not $parent) { continue }
+        $candidate = Join-Path $parent 'DLLs\_tkinter.pyd'
+        if (Test-Path $candidate) { $ctx.TclTkPaths.TkinterPydLocations += $candidate }
+    }
+    # 시스템 디렉터리의 tcl/tk DLL
+    foreach ($name in @('tcl86t.dll','tk86t.dll')) {
+        foreach ($sysDir in @($env:SystemRoot, (Join-Path $env:SystemRoot 'System32'), (Join-Path $env:SystemRoot 'SysWOW64'))) {
+            if (-not $sysDir) { continue }
+            $candidate = Join-Path $sysDir $name
+            if (Test-Path $candidate) { $ctx.TclTkPaths.TclDllSystemLocations += $candidate }
+        }
+    }
+
+    # 안티바이러스 검출
+    try {
+        $av = Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop
+        foreach ($a in $av) { $ctx.Antivirus.DetectedProducts += "$($a.displayName)" }
+    } catch { }
+    try {
+        $services = Get-Service -ErrorAction SilentlyContinue | Where-Object {
+            $_.Status -eq 'Running' -and
+            $_.Name -match '(?i)antivirus|defender|v3|ahnlab|sophos|trend|mcafee|norton|kaspersky|symantec|bitdefender|eset|crowdstrike|sentinelone|carbonblack'
+        }
+        foreach ($s in $services) { $ctx.Antivirus.RunningServices += "$($s.Name)" }
+    } catch { }
+    try {
+        $mp = Get-MpPreference -ErrorAction Stop
+        if ($mp) {
+            $exclCount = if ($mp.ExclusionPath) { $mp.ExclusionPath.Count } else { 0 }
+            $ctx.Antivirus.Defender = "DisableRealtimeMonitoring=$($mp.DisableRealtimeMonitoring); ExclusionPath=$exclCount"
+        }
+    } catch { }
+
+    # 인스톨러 SHA256 (캐시 손상 여부)
+    $installer = Join-Path $env:TEMP 'nexus-alpha-python-3.13.7-amd64.exe'
+    if (Test-Path $installer) {
+        try {
+            $h = Get-FileHash -Path $installer -Algorithm SHA256 -ErrorAction Stop
+            $ctx.Installer.Sha256 = "$($h.Hash)"
+            $ctx.Installer.Path   = $installer
+        } catch { }
+    }
+
+    return $ctx
+}
+
+# 진단 신호 → 에러 ID 분류 (TKINTER-001~005). 단일 신호 단정 X — 의심 표현.
+# 다중 PC 데이터 누적 시 ID 별 빈도 추적 가능.
+function Get-TkinterErrorIds {
+    [CmdletBinding()] param(
+        $EnvCtx,
+        $TkResult,
+        [string]$PythonDir
+    )
+    $ids = @()
+    $tkinterPyd = Test-Path (Join-Path $PythonDir 'DLLs\_tkinter.pyd')
+    $tclDir     = Test-Path (Join-Path $PythonDir 'tcl')
+    $tcl86t     = Test-Path (Join-Path $PythonDir 'DLLs\tcl86t.dll')
+    $libTkinter = Test-Path (Join-Path $PythonDir 'Lib\tkinter\__init__.py')
+
+    # TKINTER-001 — 모든 Tcl/Tk 컴포넌트 누락 (옵션 무시)
+    if (-not $tkinterPyd -and -not $tclDir -and -not $libTkinter) {
+        $ids += 'TKINTER-001 (인스톨러가 Tcl/Tk 컴포넌트 미설치 — Include_tcltk=1 옵션 무시 추정)'
+    }
+    # TKINTER-002 — _tkinter.pyd 있는데 tcl86t.dll 누락 또는 DLL load failed
+    if ($tkinterPyd -and -not $tcl86t) {
+        $ids += 'TKINTER-002 (_tkinter.pyd 존재하나 tcl86t.dll 누락 — Tcl 런타임 의존성 깨짐)'
+    } elseif ($tkinterPyd -and $libTkinter -and $TkResult -and -not $TkResult.Succeeded -and
+              $TkResult.StdErr -match '(?i)DLL load failed|cannot load|VCRUNTIME|MSVC') {
+        $ids += 'TKINTER-002 (DLL load failed — MSVC 런타임 / native dependency 누락 추정)'
+    }
+    # TKINTER-003 — 안티바이러스 격리 의심 (파일 부분 누락 + AV 검출)
+    if ($EnvCtx -and (
+            ($EnvCtx.Antivirus.DetectedProducts -and $EnvCtx.Antivirus.DetectedProducts.Count -gt 0) -or
+            ($EnvCtx.Antivirus.RunningServices -and $EnvCtx.Antivirus.RunningServices.Count -gt 0)
+        )) {
+        $partialMissing = ((-not $tkinterPyd) -and $libTkinter) -or ($tkinterPyd -and -not $tcl86t)
+        if ($partialMissing) {
+            $avList = @()
+            $avList += $EnvCtx.Antivirus.DetectedProducts
+            $avList += $EnvCtx.Antivirus.RunningServices
+            $ids += "TKINTER-003 (안티바이러스 격리 의심 — 파일 부분 누락 + AV 검출: $($avList -join ', '))"
+        }
+    }
+    # TKINTER-004 — 회사 PC + 비-관리자 (정책 제한 의심)
+    if ($EnvCtx -and $EnvCtx.Pc.DomainJoined -and -not $EnvCtx.Pc.IsAdmin) {
+        if (-not $tkinterPyd -or -not $tcl86t) {
+            $ids += 'TKINTER-004 (Domain-joined PC + 비-관리자 — Group Policy / AppLocker / SRP 제한 의심)'
+        }
+    }
+    # TKINTER-005 — 다중 Python + PYTHONHOME/PYTHONPATH 설정 (sys.path 오염)
+    if ($EnvCtx) {
+        $uniquePy = @()
+        if ($EnvCtx.PythonVersions) {
+            $uniquePy = $EnvCtx.PythonVersions | Where-Object { $_.Path } | Sort-Object -Property Path -Unique
+        }
+        $multi = $uniquePy.Count -gt 1
+        $envSet = $EnvCtx.EnvVars.PYTHONHOME -or $EnvCtx.EnvVars.PYTHONPATH
+        if ($multi -and $envSet) {
+            $ids += "TKINTER-005 (다중 Python ($($uniquePy.Count)개) + PYTHONHOME/PYTHONPATH 설정 — sys.path 오염 의심)"
+        }
+    }
+    if ($ids.Count -eq 0) {
+        $ids += 'TKINTER-000 (자동 분류 불가 — dump 전체 수동 검토 + 신규 ID 도입 후보)'
+    }
+    return $ids
+}
+
+# 진단 데이터 → JSON (다중 PC 누적 + grep / jq 분석용).
+# 사람-가독 dump 와 동일 정보를 구조화된 형태로 병행 출력.
+function ConvertTo-DiagnosticJson {
+    [CmdletBinding()] param(
+        $EnvCtx,
+        $TkResult,
+        $ProbeResults,
+        $ErrorIds,
+        [string]$PythonExe,
+        [string]$PythonDir,
+        [string]$LastInstallCmd
+    )
+    $obj = [ordered]@{
+        schema       = 'nexus-alpha-tkinter-diagnostic-v1'
+        pr           = '134-A'
+        timestamp    = (Get-Date).ToString('o')
+        python_exe   = $PythonExe
+        python_dir   = $PythonDir
+        last_install_cmd = $LastInstallCmd
+        tk_result    = if ($TkResult) {
+            [ordered]@{
+                stdout = "$($TkResult.StdOut)"
+                stderr = "$($TkResult.StdErr)"
+                exit   = $TkResult.ExitCode
+            }
+        } else { $null }
+        fs_probes    = $ProbeResults
+        env          = $EnvCtx
+        error_ids    = $ErrorIds
+    }
+    try {
+        return ($obj | ConvertTo-Json -Depth 8)
+    } catch {
+        return "{`"json_serialization_error`": `"$($_.Exception.Message -replace '"', '\"')`"}"
+    }
+}
+
 # ─── PR #134-A — tkinter import 실패 시 자동 진단 dump ─────────────────────
 # 배경 (친구 PC 라이브 검증, 2026-05-14, PR #133 머지 후):
 #   "로컬 Python 설치 완료했으나 tkinter import 실패 / output= / exit=1" 발생.
@@ -177,8 +439,11 @@ function Get-TkinterDiagnostics {
         @{ Path = (Join-Path $PythonDir 'tcl');                Label = 'tcl\ (Tcl/Tk 라이브러리 디렉터리)' }
         @{ Path = (Join-Path $PythonDir 'tcl\tcl8.6\init.tcl'); Label = 'tcl\tcl8.6\init.tcl (Tcl 초기화)' }
     )
+    $probeResults = [ordered]@{}
     foreach ($p in $probes) {
-        $mark = if (Test-Path $p.Path) { '✓' } else { '✗' }
+        $exists = Test-Path $p.Path
+        $probeResults[$p.Path] = [bool]$exists
+        $mark = if ($exists) { '✓' } else { '✗' }
         [void]$sb.AppendLine("    [$mark] $($p.Label)")
         [void]$sb.AppendLine("        $($p.Path)")
     }
@@ -206,6 +471,96 @@ function Get-TkinterDiagnostics {
     } else {
         [void]$sb.AppendLine("    (로그 파일 없음: $InstallLog)")
     }
+
+    # ── PR #134-A 범용성 보강 — 환경 비종속 진단 ([7]~[13]) ─────────────────
+    # 친구 PC 1명 케이스로 처방을 굳히지 않기 위해, PC 환경 전체를 분류해서 dump.
+    # Get-EnvironmentContext 가 모든 system query 를 try/catch 격리 → 일부 query
+    # 실패해도 진단 전체는 완주.
+    $envCtx = Get-EnvironmentContext
+
+    # [7] PC / 사용자 컨텍스트 (회사 PC vs 개인 PC, 권한, OS, PowerShell)
+    [void]$sb.AppendLine('[7] PC / 사용자 컨텍스트:')
+    [void]$sb.AppendLine("    OsCaption     : $($envCtx.Pc.OsCaption)")
+    [void]$sb.AppendLine("    OsVersion     : $($envCtx.Pc.OsVersion)")
+    [void]$sb.AppendLine("    PsVersion     : $($envCtx.Pc.PsVersion)")
+    [void]$sb.AppendLine("    UserName      : $($envCtx.Pc.UserName)")
+    [void]$sb.AppendLine("    ComputerName  : $($envCtx.Pc.ComputerName)")
+    [void]$sb.AppendLine("    IsAdmin       : $($envCtx.Pc.IsAdmin)")
+    [void]$sb.AppendLine("    DomainJoined  : $($envCtx.Pc.DomainJoined)")
+    [void]$sb.AppendLine("    DomainName    : $($envCtx.Pc.DomainName)")
+
+    # [8] Python 환경 전수 (py -0p / where / Get-Command / registry)
+    [void]$sb.AppendLine('[8] 검출된 Python (전체 — 본 격리 설치 외):')
+    if ($envCtx.PythonVersions.Count -eq 0) {
+        [void]$sb.AppendLine('    (검출된 Python 없음)')
+    } else {
+        foreach ($pv in $envCtx.PythonVersions) {
+            [void]$sb.AppendLine("    [$($pv.Source)] $($pv.Version) → $($pv.Path)")
+        }
+    }
+    [void]$sb.AppendLine("    PYTHONPATH         : $($envCtx.EnvVars.PYTHONPATH)")
+    [void]$sb.AppendLine("    PYTHONHOME         : $($envCtx.EnvVars.PYTHONHOME)")
+    if ($envCtx.EnvVars.PATH_PythonEntries.Count -gt 0) {
+        [void]$sb.AppendLine('    PATH (python 관련):')
+        foreach ($e in $envCtx.EnvVars.PATH_PythonEntries) {
+            [void]$sb.AppendLine("      $e")
+        }
+    }
+
+    # [9] Tcl/Tk 충돌 가능성 (다른 Python 의 _tkinter.pyd, 시스템 DLL)
+    [void]$sb.AppendLine('[9] Tcl/Tk 충돌 검사:')
+    if ($envCtx.TclTkPaths.PathEntries.Count -gt 0) {
+        [void]$sb.AppendLine('    PATH (tcl/tk 관련):')
+        foreach ($e in $envCtx.TclTkPaths.PathEntries) { [void]$sb.AppendLine("      $e") }
+    } else {
+        [void]$sb.AppendLine('    PATH (tcl/tk 관련): (없음)')
+    }
+    if ($envCtx.TclTkPaths.TkinterPydLocations.Count -gt 0) {
+        [void]$sb.AppendLine('    다른 Python 의 _tkinter.pyd:')
+        foreach ($e in $envCtx.TclTkPaths.TkinterPydLocations) { [void]$sb.AppendLine("      $e") }
+    }
+    if ($envCtx.TclTkPaths.TclDllSystemLocations.Count -gt 0) {
+        [void]$sb.AppendLine('    시스템 디렉터리의 tcl/tk DLL:')
+        foreach ($e in $envCtx.TclTkPaths.TclDllSystemLocations) { [void]$sb.AppendLine("      $e") }
+    }
+
+    # [10] 안티바이러스 (격리 가능성 추정)
+    [void]$sb.AppendLine('[10] 안티바이러스:')
+    [void]$sb.AppendLine("    Defender         : $($envCtx.Antivirus.Defender)")
+    if ($envCtx.Antivirus.DetectedProducts.Count -gt 0) {
+        [void]$sb.AppendLine("    DetectedProducts : $($envCtx.Antivirus.DetectedProducts -join ', ')")
+    } else {
+        [void]$sb.AppendLine('    DetectedProducts : (없음 — SecurityCenter2 query)')
+    }
+    if ($envCtx.Antivirus.RunningServices.Count -gt 0) {
+        [void]$sb.AppendLine("    RunningServices  : $($envCtx.Antivirus.RunningServices -join ', ')")
+    } else {
+        [void]$sb.AppendLine('    RunningServices  : (검출된 AV 서비스 없음)')
+    }
+
+    # [11] 인스톨러 SHA256 (캐시 손상 검증)
+    [void]$sb.AppendLine('[11] 인스톨러 SHA256:')
+    if ($envCtx.Installer.Sha256) {
+        [void]$sb.AppendLine("    $($envCtx.Installer.Sha256)")
+        [void]$sb.AppendLine("    경로: $($envCtx.Installer.Path)")
+    } else {
+        [void]$sb.AppendLine('    (인스톨러 파일 없음 또는 SHA256 계산 실패)')
+    }
+
+    # [12] 자동 분류된 에러 ID (TKINTER-001~005)
+    $errorIds = Get-TkinterErrorIds -EnvCtx $envCtx -TkResult $TkResult -PythonDir $PythonDir
+    [void]$sb.AppendLine('[12] 자동 분류 에러 ID (다중 PC 누적용 분류):')
+    foreach ($id in $errorIds) { [void]$sb.AppendLine("    $id") }
+
+    # [13] JSON 구조화 dump (다중 PC 누적 / 자동 분석용)
+    $json = ConvertTo-DiagnosticJson -EnvCtx $envCtx -TkResult $TkResult `
+        -ProbeResults $probeResults -ErrorIds $errorIds `
+        -PythonExe $PythonExe -PythonDir $PythonDir `
+        -LastInstallCmd $script:LAST_INSTALL_CMD
+    [void]$sb.AppendLine('[13] JSON 구조화 dump (다중 PC 누적 / jq 분석용):')
+    [void]$sb.AppendLine('---BEGIN_DIAGNOSTIC_JSON---')
+    [void]$sb.AppendLine($json)
+    [void]$sb.AppendLine('---END_DIAGNOSTIC_JSON---')
 
     [void]$sb.AppendLine('═══════════════════════════════════════')
     return $sb.ToString()

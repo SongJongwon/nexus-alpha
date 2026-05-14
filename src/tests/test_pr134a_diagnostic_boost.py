@@ -287,3 +287,250 @@ def test_get_tkinter_diagnostics_defined_before_install_local_python() -> None:
         f"Get-TkinterDiagnostics ({diag_pos}) 가 Install-LocalPython313 "
         f"({install_pos}) 보다 뒤에 정의됨 — CommandNotFoundException 위험"
     )
+
+
+# ===========================================================================
+# 6. PR #134-A 범용성 보강 — 환경 비종속 진단 (다중 사용자 환경 대응)
+# ===========================================================================
+#
+# 친구 PC 1명 케이스 (회사 PC + Python 3.14 + 관리자) 에 맞춘 처방은 다른 9명에서
+# 또 다른 결함 발견 → fixup 무한 루프. 진단 단계에서 PC 환경 *전체* 를 분류해야
+# PR #134-B 의 처방이 환경 분기 처리 가능.
+#
+# 본 섹션의 테스트가 깨지면 진단이 다시 1명 환경에 종속 — multi-user 대응 회귀.
+
+
+def test_environment_context_helper_exists() -> None:
+    """``Get-EnvironmentContext`` helper 함수 정의."""
+    assert "function Get-EnvironmentContext" in _read_install_ps1(), (
+        "Get-EnvironmentContext 환경 수집 helper 정의 누락"
+    )
+
+
+def test_error_id_classifier_helper_exists() -> None:
+    """``Get-TkinterErrorIds`` helper 함수 정의."""
+    assert "function Get-TkinterErrorIds" in _read_install_ps1(), (
+        "Get-TkinterErrorIds 분류 helper 정의 누락"
+    )
+
+
+def test_json_serializer_helper_exists() -> None:
+    """``ConvertTo-DiagnosticJson`` helper 함수 정의."""
+    assert "function ConvertTo-DiagnosticJson" in _read_install_ps1(), (
+        "ConvertTo-DiagnosticJson JSON 직렬화 helper 정의 누락"
+    )
+
+
+def test_environment_context_scans_all_python_sources() -> None:
+    """``Get-EnvironmentContext`` 가 Python 검출 4 source 모두 사용.
+
+    py -0p / where python / Get-Command python / Registry — 환경별 다른 source 가
+    유효하므로 *전부* 시도해야 함.
+    """
+    body = _extract_function(_read_install_ps1(), "Get-EnvironmentContext")
+    assert "py" in body and "-0p" in body, "py -0p 호출 누락"
+    assert "where.exe" in body, "where.exe python 호출 누락"
+    assert "Get-Command python" in body, "Get-Command python -All 호출 누락"
+    assert "PythonCore" in body, "Registry PythonCore 스캔 누락"
+    # 3 hive 모두 (HKLM / HKCU / Wow6432Node)
+    assert "HKLM:\\SOFTWARE\\Python\\PythonCore" in body, "HKLM Python 스캔 누락"
+    assert "HKCU:\\SOFTWARE\\Python\\PythonCore" in body, "HKCU Python 스캔 누락"
+
+
+def test_environment_context_collects_env_vars() -> None:
+    """PYTHONPATH, PYTHONHOME, PATH 의 python/tcl/tk 항목 수집."""
+    body = _extract_function(_read_install_ps1(), "Get-EnvironmentContext")
+    assert "PYTHONPATH" in body, "PYTHONPATH 환경변수 수집 누락"
+    assert "PYTHONHOME" in body, "PYTHONHOME 환경변수 수집 누락"
+    # PATH 분리 + python/tcl/tk 필터
+    assert "$env:PATH" in body, "PATH 분리 누락"
+
+
+def test_environment_context_detects_pc_context() -> None:
+    """PC 컨텍스트 — Windows / PowerShell 버전 / 권한 / DomainJoined."""
+    body = _extract_function(_read_install_ps1(), "Get-EnvironmentContext")
+    # Windows / OS
+    assert (
+        "Win32_OperatingSystem" in body or "OSVersion" in body
+    ), "Windows OS 정보 수집 누락"
+    # PowerShell 버전
+    assert "PSVersionTable" in body, "PowerShell 버전 수집 누락"
+    # 관리자 권한
+    assert "WindowsPrincipal" in body or "WindowsBuiltInRole" in body, (
+        "관리자 권한 검출 누락"
+    )
+    # Domain 가입 여부 (회사 PC 추정)
+    assert "PartOfDomain" in body, (
+        "DomainJoined (PartOfDomain) 검출 누락 — 회사 PC 분류 불가"
+    )
+    assert "Win32_ComputerSystem" in body, "Win32_ComputerSystem query 누락"
+
+
+def test_environment_context_detects_antivirus() -> None:
+    """안티바이러스 검출 — Defender + SecurityCenter2 + 서비스 패턴 매칭."""
+    body = _extract_function(_read_install_ps1(), "Get-EnvironmentContext")
+    # Windows Defender
+    assert "Get-MpPreference" in body, "Windows Defender (Get-MpPreference) 검출 누락"
+    # SecurityCenter2 (3rd-party AV products)
+    assert "SecurityCenter2" in body, "SecurityCenter2 AV products 검출 누락"
+    assert "AntiVirusProduct" in body, "AntiVirusProduct CIM class 누락"
+    # 서비스 패턴 매칭 (한국 백신 v3/ahnlab 포함)
+    assert "ahnlab" in body.lower() or "v3" in body, (
+        "한국 환경 백신 (ahnlab/v3) 패턴 누락"
+    )
+    assert (
+        "sophos" in body.lower()
+        or "mcafee" in body.lower()
+        or "kaspersky" in body.lower()
+    ), "글로벌 AV 패턴 누락"
+
+
+def test_environment_context_computes_installer_sha256() -> None:
+    """인스톨러 SHA256 계산 (캐시 손상 검증)."""
+    body = _extract_function(_read_install_ps1(), "Get-EnvironmentContext")
+    assert "Get-FileHash" in body, "Get-FileHash 인스톨러 무결성 검증 누락"
+    assert "SHA256" in body, "SHA256 알고리즘 명시 누락"
+
+
+def test_environment_context_collects_tcltk_conflict_signals() -> None:
+    """Tcl/Tk 충돌 신호 — PATH 의 tcl/tk 항목 + 시스템 DLL + 다른 Python 의 _tkinter."""
+    body = _extract_function(_read_install_ps1(), "Get-EnvironmentContext")
+    assert "TkinterPydLocations" in body, "다른 Python 의 _tkinter.pyd 수집 누락"
+    assert "TclDllSystemLocations" in body, "시스템 디렉터리 tcl/tk DLL 수집 누락"
+    assert "tcl86t.dll" in body and "tk86t.dll" in body, (
+        "Tcl86t/Tk86t DLL 검사 누락"
+    )
+
+
+def test_error_id_classifier_covers_001_to_005() -> None:
+    """5 가지 에러 ID 모두 분류 로직 존재."""
+    body = _extract_function(_read_install_ps1(), "Get-TkinterErrorIds")
+    assert "TKINTER-001" in body, "TKINTER-001 (인스톨러 옵션 무시) 분류 누락"
+    assert "TKINTER-002" in body, "TKINTER-002 (DLL 의존성) 분류 누락"
+    assert "TKINTER-003" in body, "TKINTER-003 (안티바이러스 격리) 분류 누락"
+    assert "TKINTER-004" in body, "TKINTER-004 (회사 정책) 분류 누락"
+    assert "TKINTER-005" in body, "TKINTER-005 (다중 Python 충돌) 분류 누락"
+    # 단정 회피 — 분류 불가 시 TKINTER-000 으로 fallthrough
+    assert "TKINTER-000" in body, (
+        "TKINTER-000 fallthrough 누락 — 미분류 케이스가 ids 빈 배열로 누락 위험"
+    )
+
+
+def test_error_id_classifier_uses_signals_not_single_marker() -> None:
+    """ID 분류가 *복합 신호* 사용 (단일 마커 단정 회피).
+
+    예: TKINTER-003 은 AV 검출 + 파일 부분 누락 *동시* 만족해야 분류.
+    예: TKINTER-005 는 다중 Python + PYTHONHOME/PYTHONPATH 동시 만족.
+    """
+    body = _extract_function(_read_install_ps1(), "Get-TkinterErrorIds")
+    # TKINTER-003: AV + partialMissing 동시
+    assert "partialMissing" in body, (
+        "TKINTER-003 partialMissing 복합 신호 누락 — false positive 위험"
+    )
+    # TKINTER-005: 다중 Python + envSet 동시
+    assert "envSet" in body or ("multi" in body and "PYTHONHOME" in body), (
+        "TKINTER-005 다중 Python + 환경변수 복합 신호 누락"
+    )
+
+
+def test_diagnostics_emits_structured_json_block() -> None:
+    """[13] JSON 구조화 dump — 다중 PC 누적 분석용.
+
+    BEGIN/END 마커로 grep / sed 추출 가능해야 함.
+    """
+    body = _extract_function(_read_install_ps1(), "Get-TkinterDiagnostics")
+    assert "BEGIN_DIAGNOSTIC_JSON" in body, "JSON dump 시작 마커 누락"
+    assert "END_DIAGNOSTIC_JSON" in body, "JSON dump 종료 마커 누락"
+    assert "ConvertTo-DiagnosticJson" in body, (
+        "ConvertTo-DiagnosticJson 호출 누락 — JSON 직렬화 미실행"
+    )
+
+
+def test_diagnostic_json_has_versioned_schema() -> None:
+    """JSON dump 가 schema 버전 명시 — 다중 PC 누적 시 version skew 대응."""
+    body = _extract_function(_read_install_ps1(), "ConvertTo-DiagnosticJson")
+    assert "schema" in body, "JSON schema 키 누락"
+    assert "nexus-alpha-tkinter-diagnostic-v1" in body, (
+        "schema 버전 식별자 누락 — 미래 fixup 시 누적 데이터 호환 불가"
+    )
+    assert "ConvertTo-Json" in body, "ConvertTo-Json 호출 누락"
+
+
+def test_diagnostics_includes_pc_user_context_section() -> None:
+    """[7] PC / 사용자 컨텍스트 섹션 — 회사 PC vs 개인 PC 분류 가능."""
+    body = _extract_function(_read_install_ps1(), "Get-TkinterDiagnostics")
+    # 섹션 헤더
+    assert "[7]" in body, "[7] PC 컨텍스트 섹션 헤더 누락"
+    assert "DomainJoined" in body, "DomainJoined dump 누락"
+    assert "IsAdmin" in body, "IsAdmin dump 누락"
+
+
+def test_diagnostics_includes_python_versions_section() -> None:
+    """[8] 검출된 Python 전체 + 환경변수 섹션."""
+    body = _extract_function(_read_install_ps1(), "Get-TkinterDiagnostics")
+    assert "[8]" in body, "[8] Python 전수 섹션 헤더 누락"
+    # PythonVersions 순회
+    assert "PythonVersions" in body, "PythonVersions iteration 누락"
+
+
+def test_diagnostics_includes_antivirus_section() -> None:
+    """[10] 안티바이러스 섹션."""
+    body = _extract_function(_read_install_ps1(), "Get-TkinterDiagnostics")
+    assert "[10]" in body, "[10] 안티바이러스 섹션 헤더 누락"
+    assert "Antivirus" in body, "Antivirus dump 누락"
+
+
+def test_diagnostics_includes_error_id_section() -> None:
+    """[12] 자동 분류 에러 ID 섹션."""
+    body = _extract_function(_read_install_ps1(), "Get-TkinterDiagnostics")
+    assert "[12]" in body, "[12] 에러 ID 섹션 헤더 누락"
+    assert "Get-TkinterErrorIds" in body, "Get-TkinterErrorIds 호출 누락"
+
+
+# ---------------------------------------------------------------------------
+# 회귀 차단 — Python 미설치 / 단일 Python / 다른 환경에서 진단이 *crash 하지 않음*
+# ---------------------------------------------------------------------------
+
+
+def test_environment_context_isolates_query_failures() -> None:
+    """모든 system query 가 try/catch 격리 — 단일 query 실패가 진단 전체 abort 시키지 않음.
+
+    시나리오:
+        - Python 미설치 PC: ``py -0p`` / ``where python`` / Get-Command 모두 실패
+        - 비-Windows Defender 환경: Get-MpPreference 미존재
+        - 권한 부족: SecurityCenter2 query 거부
+    위 모든 케이스에서 진단은 *완주* 해야 함.
+    """
+    body = _extract_function(_read_install_ps1(), "Get-EnvironmentContext")
+    # try/catch 블록 다수 — 각 위험 query 마다 격리
+    try_count = body.count("try {")
+    catch_count = body.count("} catch")
+    assert try_count >= 5, (
+        f"try 블록 수 부족 ({try_count}개) — system query 격리 부족"
+    )
+    assert catch_count >= 5, (
+        f"catch 블록 수 부족 ({catch_count}개) — 격리 패턴 누락"
+    )
+
+
+def test_error_id_classifier_returns_fallthrough_when_unclassified() -> None:
+    """모든 신호가 매치 안 될 때도 빈 배열 X — TKINTER-000 fallthrough.
+
+    회귀 차단: ids.Count -eq 0 분기 빠지면 caller 가 빈 배열 받아 디버깅 불가.
+    """
+    body = _extract_function(_read_install_ps1(), "Get-TkinterErrorIds")
+    assert "$ids.Count -eq 0" in body, (
+        "분류 불가 시 TKINTER-000 fallthrough 분기 누락"
+    )
+
+
+def test_json_serializer_handles_serialization_error() -> None:
+    """``ConvertTo-Json`` 실패 (예: 순환 참조) 시 fallback JSON 반환.
+
+    회귀 차단: ConvertTo-Json 예외 throw → 진단 dump 전체 crash → 사용자가
+    원인 분석 못 함.
+    """
+    body = _extract_function(_read_install_ps1(), "ConvertTo-DiagnosticJson")
+    assert "json_serialization_error" in body, (
+        "JSON 직렬화 실패 fallback 누락 — caller crash 위험"
+    )
