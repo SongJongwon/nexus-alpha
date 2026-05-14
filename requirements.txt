@@ -8,7 +8,7 @@ crewai>=1.14.1,<1.15.0
 # CrewAI 기본 제공 도구 모음 — crewai 와 페어 버전 유지
 crewai-tools>=1.14.1,<1.15.0
 # 상태 기반 에이전트 그래프 오케스트레이션
-langgraph>=0.2.0
+langgraph>=1.2.0
 # LLM 애플리케이션 체인 구성 프레임워크
 langchain>=0.3.0
 # LangChain용 Anthropic Claude 연동 어댑터
