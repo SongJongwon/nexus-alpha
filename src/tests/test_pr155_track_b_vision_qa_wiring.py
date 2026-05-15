@@ -205,6 +205,9 @@ def _make_args(**overrides) -> SimpleNamespace:
         "release": False,
         "repo": "",
         "tag": "",
+        # PR #158 — auto_iterate / max_iterations 신설 (기본 OFF)
+        "auto_iterate": False,
+        "max_iterations": 5,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
