@@ -549,11 +549,27 @@ def _node_kickoff_meeting(state: _LoopState) -> dict[str, Any]:
     iteration 재진입 시:
         ``prepare_feedback → run_chain`` 경로로 돌아오므로 본 노드는 skip.
         state 의 ``shared_kickoff_decisions`` 가 그대로 유지.
+
+    PR #152 (본인 비전 통찰 6 Phase 3 cycle wiring, 2026-05-15):
+        ``_node_recall_past_knowledge`` 가 state 에 저장한 ``recalled_entries`` 를
+        ``format_recalled_entries_for_context`` 로 markdown 변환 → decisions 의
+        ``recalled_knowledge_markdown`` 필드에 주입. 결과로 모든 task description
+        끝에 *과거 빌드 학습* 섹션이 자동 append 됨 (기존 shared_kickoff_decisions
+        주입 회로 재사용).
     """
     decisions = run_kickoff_meeting(
         user_request=state["user_request"],
         spec_markdown=state.get("spec_markdown", ""),
     )
+
+    # PR #152 — recall 산출을 kickoff 결정에 흡수 (next-build prompt 주입)
+    from src.agents.knowledge import format_recalled_entries_for_context
+
+    recalled = list(state.get("recalled_entries", []) or [])
+    if recalled:
+        decisions.recalled_knowledge_markdown = format_recalled_entries_for_context(
+            recalled
+        )
 
     # outputs_dir 루트에 yaml 산출 — 후속 iteration 들 사이 공유. 1회만 작성.
     outputs_dir = (

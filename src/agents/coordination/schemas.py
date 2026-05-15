@@ -64,6 +64,14 @@ class SharedKickoffDecisions:
     shared_assumptions: list[SharedAssumption] = field(default_factory=list)
     agent_responsibilities: dict[str, list[str]] = field(default_factory=dict)
     open_questions: list[str] = field(default_factory=list)
+    # PR #152 — RAG recall markdown 직접 흡수 (본인 비전 통찰 6 Phase 3 cycle wiring).
+    #
+    # 배경: PR #148 의 ``_node_recall_past_knowledge`` 가 state 에 entries 를
+    # 저장하지만 task description 에 *주입되지 않아* 학습 효과 사실상 0 이었음.
+    # PR #152 처방: ``_node_kickoff_meeting`` 이 ``format_recalled_entries_for_context``
+    # 산출 markdown 을 본 필드에 담아 ``to_kickoff_context_directive`` 가 자동 append
+    # → 기존 shared_kickoff_decisions 의 모든 task 주입 회로 (PR #138) 를 무료 재사용.
+    recalled_knowledge_markdown: str = ""
 
     # ------------------------------------------------------------------
     # 직렬화
@@ -92,6 +100,9 @@ class SharedKickoffDecisions:
             shared_assumptions=assumptions,
             agent_responsibilities=dict(data.get("agent_responsibilities", {})),
             open_questions=list(data.get("open_questions", [])),
+            recalled_knowledge_markdown=str(
+                data.get("recalled_knowledge_markdown", "") or ""
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -116,7 +127,8 @@ class SharedKickoffDecisions:
         has_decisions = bool(self.shared_assumptions) or bool(
             self.agent_responsibilities
         )
-        if not has_decisions and not prior_agent_roles:
+        has_recalled = bool(self.recalled_knowledge_markdown.strip())
+        if not has_decisions and not prior_agent_roles and not has_recalled:
             return ""
 
         lines: list[str] = [
@@ -173,6 +185,13 @@ class SharedKickoffDecisions:
                     "",
                 ]
             )
+
+        # PR #152 — RAG recall markdown append (본인 비전 통찰 6 Phase 3 cycle wiring).
+        # _node_kickoff_meeting 이 채워 둔 ``recalled_knowledge_markdown`` 가 있으면
+        # 본 directive 끝에 그대로 이어 붙임 → 모든 agent 가 과거 빌드 패턴 인지.
+        if has_recalled:
+            lines.append(self.recalled_knowledge_markdown.rstrip())
+            lines.append("")
 
         return "\n".join(lines)
 
