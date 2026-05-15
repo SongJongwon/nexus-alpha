@@ -168,6 +168,16 @@ class PhaseTracker:
         self._phase_name: str = ""
         self._completed_phases: list[tuple[str, float]] = []  # (name, elapsed)
 
+    def set_total(self, total: int) -> None:
+        """추정한 분모를 실 측정에 맞춰 mid-flow 갱신.
+
+        PR #150 Phase 4: build 후 .exe 산출 여부를 보고 Vision QA 단계를 늘리거나
+        줄여 표시 일관성 확보.
+        """
+        if total < self.current_index:
+            total = self.current_index
+        self.total = total
+
     def start(self, name: str) -> None:
         """단계 시작 표시."""
         self.current_index += 1
@@ -319,10 +329,10 @@ def _run_track_a(args: argparse.Namespace) -> int:
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
-    # 활성 phase 수 추정 (대시보드 분모) — build/release/vision-qa 토글 반영
+    # 활성 phase 수 추정 (대시보드 분모) — build + vision-qa 토글 반영. 실제 .exe
+    # 산출 여부에 따라 ``tracker.set_total`` 로 후보정 (.exe 미생성 시 vision 단계
+    # 스킵 → total 축소).
     total_phases = 1  # analyze_and_implement (필수)
-    if args.build:
-        total_phases += 0  # build 는 analyze_and_implement 안에 들어감
     if args.build and not args.no_vision_qa:
         total_phases += 2  # vision_qa + qa_feedback_loop
     tracker = PhaseTracker(total=total_phases)
@@ -353,6 +363,9 @@ def _run_track_a(args: argparse.Namespace) -> int:
     # PR #141 Phase 2 — Vision QA wiring (build 산출 .exe 가 있고 --no-vision-qa 미지정)
     vision_summary: Optional[str] = None
     qa_verdict_summary: Optional[str] = None
+    if not (exe_path and exe_path.exists() and not args.no_vision_qa):
+        # .exe 미생성 또는 vision-qa skip → 잔여 2단계 미실행 → total 후보정.
+        tracker.set_total(tracker.current_index)
     if exe_path and exe_path.exists() and not args.no_vision_qa:
         tracker.start("vision_qa (gui_test_executor 시각 검증)")
         vision_result = _run_vision_qa_full(exe_path, outputs_dir)
