@@ -137,6 +137,7 @@ def _print_result_summary(
     outputs_dir: Optional[Path],
     exe_path: Optional[Path],
     release_url: Optional[str],
+    vision_qa_summary: Optional[str] = None,
 ) -> None:
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
@@ -149,9 +150,58 @@ def _print_result_summary(
         print(f"  📦 .exe    : {exe_path} ({size_mb:.2f} MB)")
     elif exe_path:
         print(f"  📦 .exe (예상): {exe_path} — 생성 안 됨")
+    if vision_qa_summary:
+        print(f"  👁️  Vision : {vision_qa_summary}")
     if release_url:
         print(f"  🔗 Release: {release_url}")
     print()
+
+
+# ---------------------------------------------------------------------------
+# Vision QA — PR #141 Phase 2 (본인 비전 통찰 6, D-3)
+# ---------------------------------------------------------------------------
+def _run_vision_qa(
+    exe_path: Path,
+    outputs_dir: Path,
+    *,
+    skip_vision: bool = False,
+) -> Optional[str]:
+    """빌드된 .exe 에 대해 gui_test_executor 호출 → 한 줄 요약 반환.
+
+    PR #141 Phase 2 (2026-05-15, 본인 비전 통찰 6 D-3 처방):
+        ``gui_test_executor.run_gui_test`` 는 PR #133 단계에서 완성됐으나 production
+        path 에서 호출 X (호출자는 docstring 예시 + 별도 E2E 스크립트만). 본 wiring
+        으로 ``scripts/run.py --build`` 의 .exe 산출 직후 자동 검증 — 친구 베타의
+        Message_App.exe 같이 *어떤 에이전트도 시각적으로 본 적 없는* .exe 회귀 차단.
+
+    실패 격리:
+        Vision QA 자체 실패 (pyautogui 미설치 / Vision API 키 누락 등) 는 워크플로
+        차단 사유 아님 — 경고 메시지 + None 반환. ``--no-vision-qa`` 로 강제 skip.
+    """
+    try:
+        from src.agents.qa.gui_test_executor import run_gui_test
+    except ImportError:
+        return None
+
+    vision_dir = outputs_dir / "vision_qa"
+    vision_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_gui_test(
+            target_path=exe_path,
+            output_dir=vision_dir,
+            skip_vision=skip_vision,
+        )
+    except Exception as exc:  # noqa: BLE001 — wiring 실패는 정보로만
+        return f"[VISION ERROR] {exc!r}"
+
+    try:
+        # PR #146 의 shared_kickoff_decisions.yaml 옆에 summary 함께 보존
+        (vision_dir / "summary.txt").write_text(
+            result.summary_line(), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return result.summary_line()
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +234,18 @@ def _run_track_a(args: argparse.Namespace) -> int:
     publish = getattr(result, "publish_result", None)
     if publish:
         release_url = getattr(publish, "release_url", None)
-    _print_result_summary("A", elapsed, outputs_dir, exe_path, release_url)
+
+    # PR #141 Phase 2 — Vision QA wiring (build 산출 .exe 가 있고 --no-vision-qa 미지정)
+    vision_summary: Optional[str] = None
+    if exe_path and exe_path.exists() and not args.no_vision_qa:
+        _print_section("Vision QA — 시각 검증")
+        vision_summary = _run_vision_qa(exe_path, outputs_dir)
+        if vision_summary:
+            print(f"  {vision_summary}")
+        else:
+            print("  (Vision QA skip — gui_test_executor 호출 불가)")
+
+    _print_result_summary("A", elapsed, outputs_dir, exe_path, release_url, vision_summary)
     return 0
 
 
@@ -323,6 +384,13 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--non-interactive", action="store_true", default=False,
         help="인터랙티브 prompt 비활성 — --request 필수.",
+    )
+    parser.add_argument(
+        "--no-vision-qa", action="store_true", default=False,
+        help=(
+            "PR #141 Phase 2 — Vision QA 강제 skip. 기본은 --build 시 자동 활성. "
+            "pyautogui/Vision API 미설치 환경에서 강제 차단할 때 사용."
+        ),
     )
     return parser.parse_args(argv)
 

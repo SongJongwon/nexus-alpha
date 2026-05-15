@@ -169,6 +169,7 @@ class _LoopState(TypedDict, total=False):
     repo_url: str  # Phase 5 — Distribution Agent 입력
     signing_available: bool  # Phase 5 — Update Checker / Distribution Agent 입력
     privacy_level: str  # Phase 5 — Distribution Agent 입력
+    enable_engineer_reviewer_delegation: bool  # PR #141 Phase 2 — Engineer↔Reviewer delegation
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -407,6 +408,9 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
         signing_available=state.get("signing_available", False),
         privacy_level=state.get("privacy_level", "public"),
         shared_kickoff_decisions=state.get("shared_kickoff_decisions"),
+        enable_engineer_reviewer_delegation=state.get(
+            "enable_engineer_reviewer_delegation", False
+        ),
     )
 
     artifacts = list(state.get("iteration_artifacts", []))
@@ -639,6 +643,7 @@ def run_iterative_loop(
     repo_url: str = "",
     signing_available: bool = False,
     privacy_level: str = "public",
+    enable_engineer_reviewer_delegation: bool = False,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -725,6 +730,7 @@ def run_iterative_loop(
             "repo_url": repo_url,
             "signing_available": signing_available,
             "privacy_level": privacy_level,
+            "enable_engineer_reviewer_delegation": enable_engineer_reviewer_delegation,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.

@@ -730,6 +730,7 @@ def run_analyze_and_implement(
     automate_publish_as_draft: bool = True,
     automate_publish_timeout_sec: int = 120,
     shared_kickoff_decisions=None,
+    enable_engineer_reviewer_delegation: bool = False,
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -881,6 +882,7 @@ def run_analyze_and_implement(
                 workflow_dir,
                 verbose=verbose,
                 shared_kickoff_decisions=shared_kickoff_decisions,
+                enable_engineer_reviewer_delegation=enable_engineer_reviewer_delegation,
             )
         else:
             # ─── 분기 1: Phase 4 활성 — UI/UX 먼저 실행 ────────────────────────
@@ -909,6 +911,7 @@ def run_analyze_and_implement(
                     uiux_task=uiux_task,
                     verbose=verbose,
                     shared_kickoff_decisions=shared_kickoff_decisions,
+                    enable_engineer_reviewer_delegation=enable_engineer_reviewer_delegation,
                 )
             # ─── 분기 2-B: CLI 경로 ─────────────────────────────────────────────
             else:
@@ -919,6 +922,7 @@ def run_analyze_and_implement(
                     uiux_task=uiux_task,
                     verbose=verbose,
                     shared_kickoff_decisions=shared_kickoff_decisions,
+                    enable_engineer_reviewer_delegation=enable_engineer_reviewer_delegation,
                 )
 
         # ─── Phase 4.5 — Build 사슬 (옵션) ──────────────────────────────────────
@@ -1049,13 +1053,25 @@ def _run_classic_chain(
     *,
     verbose: bool,
     shared_kickoff_decisions=None,
+    enable_engineer_reviewer_delegation: bool = False,
 ) -> WorkflowResult:
-    """`enable_gui_branch=False` (기본) 경로. 기존 동작 그대로 보존 + PR #58 Pytest Author."""
+    """`enable_gui_branch=False` (기본) 경로. 기존 동작 그대로 보존 + PR #58 Pytest Author.
+
+    PR #141 Phase 2 (본인 비전 통찰 6 D-2):
+        ``enable_engineer_reviewer_delegation=True`` 시 Python Engineer + Code Reviewer
+        만 ``allow_delegation=True`` 로 생성 → CrewAI 가 둘 사이 양방향 위임 허용.
+        Engineer 가 Reviewer 에게 "이 가정 검증 부탁" 요청 가능, Reviewer 가
+        Engineer 에게 "이 부분 재작성 요청" 가능. 전체 ON 은 비용 폭증이라 *2 명만*.
+    """
     cto = create_cto_agent(verbose=verbose)
     analyst = create_data_analyst_agent(verbose=verbose)
-    engineer = create_python_engineer_agent(verbose=verbose)
+    engineer = create_python_engineer_agent(
+        verbose=verbose, allow_delegation=enable_engineer_reviewer_delegation
+    )
     pytest_author = create_pytest_author_agent(verbose=verbose)
-    reviewer = create_code_reviewer_agent(verbose=verbose)
+    reviewer = create_code_reviewer_agent(
+        verbose=verbose, allow_delegation=enable_engineer_reviewer_delegation
+    )
 
     cto_task = _build_cto_task(user_request, cto)
     analyst_task = _build_analyst_task(analyst, cto_task)
@@ -1133,13 +1149,18 @@ def _run_cli_branch_chain_with_ui_context(
     *,
     verbose: bool,
     shared_kickoff_decisions=None,
+    enable_engineer_reviewer_delegation: bool = False,
 ) -> WorkflowResult:
     """UI/UX 가 GUI 가 아니라고 판정한 경로. Engineer 그대로 + UI/UX context 만 추가 + PR #58 Pytest Author."""
     cto = create_cto_agent(verbose=verbose)
     analyst = create_data_analyst_agent(verbose=verbose)
-    engineer = create_python_engineer_agent(verbose=verbose)
+    engineer = create_python_engineer_agent(
+        verbose=verbose, allow_delegation=enable_engineer_reviewer_delegation
+    )
     pytest_author = create_pytest_author_agent(verbose=verbose)
-    reviewer = create_code_reviewer_agent(verbose=verbose)
+    reviewer = create_code_reviewer_agent(
+        verbose=verbose, allow_delegation=enable_engineer_reviewer_delegation
+    )
 
     cto_task = _build_cto_task(user_request, cto, ui_spec_context=uiux_task)
     analyst_task = _build_analyst_task(analyst, cto_task)
@@ -1220,15 +1241,27 @@ def _run_gui_branch_chain(
     *,
     verbose: bool,
     shared_kickoff_decisions=None,
+    enable_engineer_reviewer_delegation: bool = False,
 ) -> WorkflowResult:
-    """UI/UX 가 GUI 라고 판정한 경로. Engineer 자리를 디자인 본부 3명이 대체 + PR #58 Pytest Author."""
+    """UI/UX 가 GUI 라고 판정한 경로. Engineer 자리를 디자인 본부 3명이 대체 + PR #58 Pytest Author.
+
+    PR #141 Phase 2:
+        GUI 경로에서는 Python Engineer 자리를 GUI Code Generator 가 대체. delegation
+        토글이 켜지면 GUI Code Generator + Code Reviewer 사이 양방향 위임 허용.
+        (Engineer 가 *코드 산출자* 라는 역할 동일성 — Phase 2 의 paradigm shift 의도
+        그대로 GUI 경로에서도 작동.)
+    """
     cto = create_cto_agent(verbose=verbose)
     analyst = create_data_analyst_agent(verbose=verbose)
     designer = create_gui_designer_agent(verbose=verbose)
     theme = create_theme_designer_agent(verbose=verbose)
-    coder = create_gui_code_generator_agent(verbose=verbose)
+    coder = create_gui_code_generator_agent(
+        verbose=verbose, allow_delegation=enable_engineer_reviewer_delegation
+    )
     pytest_author = create_pytest_author_agent(verbose=verbose)
-    reviewer = create_code_reviewer_agent(verbose=verbose)
+    reviewer = create_code_reviewer_agent(
+        verbose=verbose, allow_delegation=enable_engineer_reviewer_delegation
+    )
 
     cto_task = _build_cto_task(user_request, cto, ui_spec_context=uiux_task)
     analyst_task = _build_analyst_task(analyst, cto_task)
