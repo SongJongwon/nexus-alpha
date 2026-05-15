@@ -1,10 +1,11 @@
-# 📝 세션 로그 — 2026-05-15 (Phase 4 D-3 cycle 완성 + Phase 3 학습 cycle 갭 해결 + RAG 인프라 정착 + Track B 확장 + iterative_loop production wire 진입)
+# 📝 세션 로그 — 2026-05-15 (Phase 4 D-3 cycle 완성 + Phase 3 학습 cycle 갭 해결 + RAG 인프라 정착 + Track A/B 확장 + iterative_loop production wire 진입 + E2E 발견 결함 fix)
 
-> 본 세션은 PR #150~#158 **9 PR 머지** 로 본인 비전 통찰 6 의 **Phase 4 (D-3 시각 검증)
-> cycle 완성** + **Phase 3 (학습 cycle) 갭 해결** + **RAG 인덱스 인프라 정착
-> (누적 회귀 차단 + LRU 회전)** + **Track A/B Vision QA 확장** + **iterative_loop
-> production wire (Track A/B 자기 진화 cycle 실 작동 진입점)** 까지 달성. 모든 PR
-> CI pass + squash merge.
+> 본 세션은 PR #150~#160 **11 PR 머지** (단일 세션 신기록) 로 본인 비전 통찰 6 의
+> **Phase 4 (D-3 시각 검증) cycle 완성** + **Phase 3 (학습 cycle) 갭 해결** + **RAG
+> 인덱스 인프라 정착 (누적 회귀 차단 + LRU 회전)** + **Track A/B Vision QA 확장** +
+> **iterative_loop production wire (Track A/B 자기 진화 cycle 실 작동 진입점)** +
+> **E2E 발견 결함 fix (Vision QA false-FAIL + retry build fail-silent)** 까지 달성.
+> 모든 PR CI pass + squash merge.
 
 ## TL;DR
 
@@ -17,14 +18,17 @@
 | #154 | `5066626` | LRU 회전 정책 (N=50 기본, `NEXUS_KNOWLEDGE_INDEX_MAX_ENTRIES` env var) | 1211 (+15) |
 | #155 | `11fb07d` | Track B Vision QA wiring (`detect_artifact_category` 자동 감지 → "gui" 만 트리거) | 1226 (+15) |
 | #156 | `05d5214` | docs — session_log_20260515 + WORK_STATUS 일일 보존 (PR #150~#155 6 PR) | 1226 (+0) |
-| **#157** | **`71057ad`** | **iterative_loop production wire (Track A) — `--auto-iterate` + `--max-iterations N` opt-in, 자기 진화 cycle 실 작동 진입점** | **1242 (+16)** |
-| **#158** | **`7d690ab`** | **Track B iterative_loop 진입 (Option A 어댑터 layer) — `_adapt_automate_to_chain_result` 로 결과 구조 매핑, Track A 패턴 재사용** | **1258 (+16)** |
+| #157 | `71057ad` | iterative_loop production wire (Track A) — `--auto-iterate` + `--max-iterations N` opt-in | 1242 (+16) |
+| #158 | `7d690ab` | Track B iterative_loop 진입 (Option A 어댑터 layer) — `_adapt_automate_to_chain_result` 결과 매핑 | 1258 (+16) |
+| #159 | `03ae6b1` | docs (2차) — PR #157 + #158 누적 반영 (9 PR 시점 보존) | 1258 (+0) |
+| **#160a+b** | **`0c8902f`** | **E2E 발견 결함 fix — Vision QA `vision_unavailable` + `VISION_UNAVAILABLE` 분기 (false-FAIL 차단), retry build .exe 미생성 3 분기 진단 (executor=None / exe_path=None / 파일 부재)** | **1272 (+14)** |
 
-**pytest 누적**: 1129 → **1258** (+129, 회귀 0)
-**누적 머지 PR**: 132 → **158** (+9 단일 세션 — 단일 세션 신기록)
-**Phase 4 시각 검증 cycle**: PR #147 wiring → PR #150 verdict 가시화 → **PR #151 재호출 (D-3 닫힘)** + PR #155 Track B 확장
-**Phase 3 학습 cycle**: PR #148 wiring → **PR #152 prompt 주입 갭 해결** + PR #153/154 인프라 정착
-**iterative_loop production wire**: PR #157 (Track A) + **PR #158 (Track B 어댑터)** — Track A/B 모두 `--auto-iterate` 동일 동작
+**pytest 누적**: 1129 → **1272** (+143, 회귀 0)
+**누적 머지 PR**: 149 → **160** (+11 단일 세션 — 신기록)
+**Phase 4 시각 검증 cycle**: PR #147 wiring → PR #150 verdict 가시화 → PR #151 재호출 (D-3 닫힘) + PR #155 Track B 확장 + **PR #160a Vision QA false-FAIL fix**
+**Phase 3 학습 cycle**: PR #148 wiring → PR #152 prompt 주입 갭 해결 + PR #153/154 인프라 정착
+**iterative_loop production wire**: PR #157 (Track A) + PR #158 (Track B 어댑터) — Track A/B 모두 `--auto-iterate` 동일 동작 + **PR #160b retry diagnostic 강화**
+**E2E 발견 결함 fix**: PR #160a+b — 본인 PC 라이브 검증 (`--auto-iterate --max-iterations 1`) 결과 발견 → false-FAIL + fail-silent 둘 다 처방
 
 ## 세션 흐름
 
@@ -143,6 +147,37 @@ Track A → Track B args mapping:
 
 **결과**: Track A/B 둘 다 `--auto-iterate` 로 자기 진화 cycle 동일하게 동작.
 
+### Phase 10 — docs (2차) 9 PR 누적 반영 (PR #159)
+
+PR #156 docs 머지 후 PR #157 + #158 추가 머지 됨. session_log + WORK_STATUS 갱신 (Phase 8/9 신규 섹션 + TL;DR 9 PR 반영 + Phase 진행표 + 다음 작업 후보 재정렬). 머지 commit `03ae6b1`.
+
+### Phase 11 — E2E 발견 결함 fix (PR #160a+b)
+
+본인 비전 통찰 *최후의 검증* — PR #157/#158 wire 후 PM 본인 PC 에서 `--auto-iterate --max-iterations 1` E2E 라이브 실행. 결과: Calculator.exe 10.67MB 정상 산출 + GUI 실 동작. 그러나 결과 패널에 **2 결함** 노출:
+
+**결함 #1 — Vision QA false-FAIL** (`[GUI_TEST FAIL] critical=0 ui_issues=0`):
+- `analyze_screenshot` 가 5 케이스 (screenshot 부재 / SDK 미설치 / ANTHROPIC_API_KEY 누락 / 호출 예외 / JSON 파싱 실패) 모두 `VisionAnalysis.success=False` 반환
+- `run_gui_test` 종합 판정이 그 결과를 *실 시각 결함* 으로 동일시 → `GUITestResult.success=False`
+- summary 가 `critical=0` 으로 표시하지만 verdict 는 FAIL → 사용자 입장 *모순*
+- 더 심각한 문제: 이 false FAIL 이 `qa_feedback_loop` 의 RETRY 트리거 → 9분 retry 시도 → 또 실패
+
+**결함 #2 — retry build .exe 미생성 fail-silent** (`⚠️ retry build .exe 미생성`):
+- 1줄 안내만 출력. 어느 원인 (executor_result=None / exe_path=None / 실 파일 부재) 인지 디버깅 불가
+- 사용자 입장 *근본 원인 추적 불가* → 사용자가 직접 코드 들여다봐야 함
+
+**처방 (단일 PR #160a+b bundled)**:
+
+| Fix | 변경 위치 | 효과 |
+|-----|---------|------|
+| #160a — `GUITestResult.vision_unavailable` property | [src/agents/qa/gui_test_executor.py](../../src/agents/qa/gui_test_executor.py) | vision_analyses 모두 실패 케이스 식별 |
+| #160a — `summary_line()` VISION_UNAVAILABLE 분기 | 동일 | `[GUI_TEST VISION_UNAVAILABLE] reason=ANTHROPIC_API_KEY 미설정` 형식 |
+| #160a — `run_gui_test` 종합 판정 | 동일 | vision-unavailable + critical=0 + screenshot OK → `skipped=True` (FAIL 아님) |
+| #160b — `_retry_engineer_with_vision_feedback` 진단 3 분기 | [scripts/run.py](../../scripts/run.py) | executor=None / exe_path=None / 파일 부재 각각 구체 메시지 |
+
+회귀 테스트 14 (vision_unavailable property + 4 시나리오 / summary_line 분기 / run_gui_test 통합 / qa_feedback_loop SKIPPED 처리 / retry 진단 3 분기 + happy path). 머지 commit `0c8902f`.
+
+**중요**: PR #160a 의 처방으로 다음 E2E 시 `[QA_LOOP RETRY]` 가 `[QA_LOOP PASS] skipped=1` 로 바뀜 → *false retry 트리거 차단* → 9분 retry 낭비 제거.
+
 ## 핵심 통찰 (이번 세션)
 
 ### 1. "Build-but-Forget" anti-pattern 의 마지막 잔재 정리
@@ -179,30 +214,68 @@ PR #157 Track A wiring 직후 Track B 적용 시 결과 구조 불일치 발견 
 
 Option A 선택. *어댑터 layer 패턴* 은 향후 새 Track / 새 chain 추가 시 동일 적용 가능 — duck type 매핑만 정의하면 LangGraph 인프라 (recall/kickoff/sandbox/gap/judge/retrospective/curate) 그대로 재사용.
 
-## 다음 세션 첫 행동 (자동 컨텍스트 복원)
+### 7. E2E 라이브 검증의 진단 가치 (PR #160a+b)
 
-1. **메모리 (이미 로드됨)**: `MEMORY.md` + `project_paradigm_shift_pointer.md` — Phase 1~4 완성 + iterative_loop production wire (Track A/B) 완료 상태
-2. **본 session_log** (PR #159 머지 후 9 PR 누적 반영) — 오늘 세션 evidence
-3. **WORK_STATUS** — 프로젝트 전체 현황 (별도 갱신)
-4. PM 에게 질문:
-   - 실 E2E (~30min~2h) 검증 원하시는지? `--auto-iterate --max-iterations 3` 으로 자기 진화 cycle 라이브 동작 확인
-   - dependabot 보류 major bumps (langchain/langgraph/pandas 1.x + rich) 처리 시점?
-   - `--auto-iterate` 기본 ON 전환 (PR #160) 시점 — E2E 검증 후 권장
-   - Track A 자체 enable_qa_loop 통합 검토 (Convergence Judge 와 중복 가능성)?
+1272 단위 테스트가 *모든 코드 path* 를 cover 하지만 *실 환경 통합* (no API key + real PyInstaller + real OS) 은 라이브 만이 노출. PM E2E 1회 (~36min) 가 2 결함 (false-FAIL + fail-silent) 발견 → *단위 테스트로 100% 잡을 수 없는 갭* 의 명확한 evidence. 향후 큰 wiring PR (#157/#158 같은 entry-point 변경) 후 **opt-in E2E 가 default workflow 가 되어야 함** — 자기 진화 paradigm 의 *결함이 결함으로 보이는지* 검증.
 
-## 남은 작업 후보 (Sprint 다음)
+### 8. Bundled fixup PR 의 가치 (PR #160a+b)
 
-| 후보 | 영역 | 비용 | 가치 |
-|------|------|------|------|
-| **실 E2E 검증** — 친구 PC 베타 환경에서 9 PR 통합 동작 라이브 확인 (특히 `--auto-iterate`) | A | M~L (~30min~2h) | VERY HIGH — paradigm shift evidence |
-| **PR #160 — `--auto-iterate` 기본 ON 전환** | A | S (~1h) | VERY HIGH — *자기 진화* 사용자 기본 노출 |
-| **dependabot major bumps 검증** — langchain/langgraph/pandas 1.x + rich CI fail 4건 | E | L (~2-4h) | M — 보안 + 의존성 신선도 |
-| **Track A enable_qa_loop 통합** — Convergence Judge vs code_qa 중복 검토 | A | M (~2h) | M — 일관성 |
-| **Track B qa_loop + Vision QA 종합 verdict** — 현재 두 결과 독립 표시. 1줄 통합 | A | S (~1h) | M — UX 일관성 |
-| **Telemetry fallback** (LangFuse silent → local jsonl) | E | M (~3h) | M — 친구 PC 실패 가시화 |
-| **session_log auto-summarizer** — 메모리 패턴 자동화 (현재 매 세션 수동) | E | M | M — 인지 부담 감소 |
+#160a (Vision QA fix) + #160b (retry build 진단) 는 *독립적인* 결함이지만 *같은 E2E session 의 발견* 이고 *둘 다 PR #161 (auto-iterate 기본 ON) 의 prerequisite*. 분리하면 같은 E2E 를 2번 재실행해야 하지만 bundled 1번이면 충분. 메모리 패턴 *single bundled PR 이 옳은 결정* 의 또 다른 확증.
 
-→ **VERY HIGH 후보 (다음 세션)**: **실 E2E 검증** — 본 세션의 9 PR 이 *재료* 완성 + 진입점 wire 됨. 라이브 동작 확인이 paradigm shift evidence 의 마지막 조각. E2E 결과에 따라 PR #160 (기본 ON) 결정.
+## 다음 세션 컨텍스트 복원 가이드 (3분 안)
+
+### 읽을 순서
+
+1. **본 session_log** (`docs/progress/session_log_20260515.md`) — 11 PR 누적 (`#150~#160`) 반영, pytest 1129 → 1272 (+143, 회귀 0), 본인 PC E2E 결과 + 진단 fix 까지
+2. **`docs/insights/agent_collaboration_paradigm_shift.md`** — 본질적 통찰 5 (north star, 변하지 않음)
+3. **`docs/WORK_STATUS.md`** — 11 PR 요약 + Phase 진행표 + 다음 Sprint 후보 (4건)
+4. **메모리 (자동 로드됨)** — `MEMORY.md` + `project_paradigm_shift_pointer.md` — Phase 1~4 완성 + production wire + 결함 fix 상태
+
+### 현재 상태 (2026-05-15 종료 시점)
+
+- ✅ Phase 1~4 모두 완성
+- ✅ Track A/B 둘 다 `--auto-iterate` (자기 진화 cycle) wiring 완료 — **opt-in 기본 OFF**
+- ✅ E2E 발견 결함 2개 fix 완료 (Vision QA false-FAIL, retry build fail-silent)
+- ⏳ **다음 단계: E2E 재검증** — PR #160a+b fix 가 라이브에서 실제로 작동하는지 확인
+
+### 내일 (다음 세션) 재개 순서 — PM 지시
+
+| # | 작업 | 비용 | 가치 | 비고 |
+|---|------|------|------|------|
+| **1** | **E2E 재검증** (`--auto-iterate --max-iterations 1`) | M (~25min, PM 본인 PC) | VERY HIGH | PR #160a+b 효과 라이브 확인 → `[GUI_TEST VISION_UNAVAILABLE]` 표시 + retry 트리거 안 됨 확인 |
+| **2** | **PR #161 — `--auto-iterate` 기본 ON 전환** | S (~1h) | VERY HIGH | E2E PASS 후 즉시 진행. 기본 ON + `--no-auto-iterate` opt-out flag 추가 |
+| **3** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail. Major bumps 별도 검증 PR |
+| **4** | **Track B Vision QA 추가 wiring** (PM 요청 항목) | TBD | TBD | PR #155 가 기본 wiring 완료 — 추가 항목 (예: retry 활성? 종합 verdict?) PM 과 협의 필요 |
+
+### E2E 재검증 명령 (#1)
+
+```powershell
+.venv\Scripts\python.exe scripts\run.py --request "계산기 만들어줘" --track A --build --auto-iterate --max-iterations 1
+```
+
+**기대 결과 (PR #160a+b 후)**:
+
+| 이전 (2026-05-15 16:33) | 본 PR #160a+b 후 (예상) |
+|-------------------------|------------------------|
+| `[GUI_TEST FAIL] critical=0 ui_issues=0` | `[GUI_TEST VISION_UNAVAILABLE] reason=ANTHROPIC_API_KEY 미설정` |
+| `[QA_LOOP RETRY] retry=0/1, failed=1` | `[QA_LOOP PASS] retry=0/1, failed=0, skipped=1` |
+| `⚠️ retry build .exe 미생성` (불분명) | retry 자체가 트리거 안 됨 (vision SKIPPED) — 또는 트리거 시 3 분기 중 하나의 구체 메시지 |
+| 총 ~36min (retry 9min 포함) | 총 ~25min (false retry 차단으로 9min 절약) |
+
+### PR #161 (#2) 작업 가이드
+
+E2E 재검증 PASS 시 즉시 진행:
+- `--auto-iterate` 기본 ON 으로 변경 (`argparse.add_argument` default=True)
+- `--no-auto-iterate` opt-out flag 추가 (backward compat)
+- 비용 안내 banner — opt-in / opt-out 어떤 모드 든 정확한 시간 추정 표시
+- 회귀 테스트 — backward compat 깨지지 않음 확인 (기존 사용자가 `--no-auto-iterate` 안 줘도 명시 OPT-OUT 권고)
+
+### 결정 보류 (PM 판단)
+
+1. **PR #161 기본 ON 의 최대 비용 안내 방식** — banner / dialog / 환경 변수?
+2. **dependabot 4건 시점** — PR #161 전 / 후?
+3. **Track B Vision QA 추가 wiring 범위** — PR #155 가 자동 감지 wiring 완료. PM 의 *추가* 의도 명확화 필요
+4. **베타 cohort 5명 ($250 budget)** — PR #161 후 결정 가능?
 
 ---
 
