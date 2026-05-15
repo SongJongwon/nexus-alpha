@@ -410,3 +410,45 @@ def format_consistency_directive(prior_agent_roles: Sequence[str]) -> str:
 
 → 이 directive 는 "AI 가상 기업" 의 *진짜 협업* 첫 단계 (본부 10 Coordination/Communication).
 """
+
+
+# ---------------------------------------------------------------------------
+# PR #138 Phase 1 full — Kickoff Context directive
+# ---------------------------------------------------------------------------
+# 본 helper 는 Meeting Facilitator (``src/agents/coordination/``) 가 산출한
+# ``SharedKickoffDecisions`` 를 task description 끝에 append 할 markdown 으로
+# 변환한다. ``format_consistency_directive`` 가 *지시만* 추가했다면, 이 helper 는
+# *실제 합의 사항* (공유 가정 / 부서별 책임 / 미해결 질문) 을 풀어 LLM 이
+# 합의를 "사실" 로 인식하도록 강제한다.
+#
+# decisions=None 또는 비어 있으면 ``format_consistency_directive`` 의 결과만 반환
+# → 호출 측은 무조건 본 helper 하나만 쓰면 minimal slice / full 모두 커버.
+
+
+def format_kickoff_context_directive(
+    decisions,  # SharedKickoffDecisions | None — 순환 import 회피로 untyped
+    prior_agent_roles: Sequence[str] = (),
+) -> str:
+    """킥오프 회의 결정 + consistency directive 를 task description 에 append.
+
+    PR #138 Phase 1 full (본인 비전 통찰 6) — Meeting Facilitator 의 산출물을
+    모든 task 에 자동 주입하는 단일 진입점. ``analyze_and_implement.py``,
+    ``build_workflow.py``, ``release_workflow.py`` 의 모든 task builder 가 본
+    helper 만 호출해서 directive 일관성을 유지한다.
+
+    Args:
+        decisions: ``SharedKickoffDecisions`` 또는 None.
+            - None / 비어 있음 → consistency directive 만 (minimal slice 동작).
+            - 채워져 있음 → 공유 가정 + 책임 + 미해결 질문 + consistency directive.
+        prior_agent_roles: 본 task 이전에 산출물이 있었던 에이전트 역할 리스트.
+
+    Returns:
+        markdown 문자열. 입력 모두 비어 있으면 ``""``.
+    """
+    if decisions is not None:
+        # SharedKickoffDecisions 의 to_kickoff_context_directive 사용 — 완전판
+        try:
+            return decisions.to_kickoff_context_directive(prior_agent_roles)
+        except AttributeError:  # 잘못된 객체 주입 시 minimal 로 fallback
+            pass
+    return format_consistency_directive(prior_agent_roles)

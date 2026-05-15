@@ -107,14 +107,22 @@ def test_directive_preserves_role_order() -> None:
 
 
 def test_gui_code_gen_task_uses_consistency_directive() -> None:
-    """``_build_gui_code_gen_task`` 가 ``format_consistency_directive`` 사용.
+    """``_build_gui_code_gen_task`` 가 consistency / kickoff context directive 사용.
 
     회귀 차단 — directive import 또는 호출이 빠지면 환율 사례 재발 가능.
+
+    PR #138 Phase 1 full (2026-05-15):
+        analyze_and_implement.py 의 GUI Code Generator 가 ``format_consistency_directive``
+        를 superset 인 ``format_kickoff_context_directive`` 로 교체. 둘 중 하나 라도
+        파일에 등장하면 directive 가 적용된 것으로 인정.
     """
     text = ANALYZE_PY.read_text(encoding="utf-8")
-    assert "format_consistency_directive" in text, (
-        "GUI Code Generator task 가 format_consistency_directive 미사용 — "
-        "PR #138 Phase 1 minimal slice 회귀"
+    assert (
+        "format_kickoff_context_directive" in text
+        or "format_consistency_directive" in text
+    ), (
+        "GUI Code Generator task 가 consistency / kickoff context directive 둘 다 "
+        "미사용 — PR #138 Phase 1 회귀"
     )
 
 
