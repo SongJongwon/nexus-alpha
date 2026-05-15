@@ -47,6 +47,21 @@ function Write-Banner {
     Write-Host ''
 }
 
+# ─── PR #150 Phase 4 (본인 비전 통찰 5) — PowerShell Quick Edit 안내 ──────────
+# 배경: 친구 PC 베타 22~33min 빌드 중 PowerShell selection (Quick Edit 부작용)
+# 으로 프로세스 일시정지 → 친구가 *멈춘 줄 알고* Ctrl+C → 작업 잃음. 자동 토글은
+# 위험 (사용자 콘솔 설정 변경) — *안내만* 제공.
+function Write-QuickEditWarning {
+    Write-Host ''
+    Write-Host '  ⚠️  PowerShell Quick Edit Mode 안내' -ForegroundColor Yellow
+    Write-Host '     긴 빌드 (~30분) 중 PowerShell 화면을 마우스로 selection 하면' -ForegroundColor DarkGray
+    Write-Host '     Quick Edit 부작용으로 프로세스가 *일시정지* 됩니다.' -ForegroundColor DarkGray
+    Write-Host '     → 빌드가 멈춘 듯 보이면 Enter 또는 Esc 한 번 누르면 재개.' -ForegroundColor DarkGray
+    Write-Host '     → 영구 비활성: PowerShell 창 상단 우클릭 → Properties → ' -ForegroundColor DarkGray
+    Write-Host '       Options 탭 → "QuickEdit Mode" 체크 해제.' -ForegroundColor DarkGray
+    Write-Host ''
+}
+
 function Write-Step {
     param([string]$Message)
     Write-Host "▶ $Message" -ForegroundColor Yellow
@@ -1829,6 +1844,7 @@ function Show-NextSteps {
 
 # ─── 진입점 ────────────────────────────────────────────────────────────────
 Write-Banner
+Write-QuickEditWarning
 try {
     Test-Prereqs
     Get-Repo

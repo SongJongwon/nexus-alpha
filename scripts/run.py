@@ -131,6 +131,80 @@ def _print_section(title: str) -> None:
     print(f"━━ {title} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 
+# ---------------------------------------------------------------------------
+# PR #150 Phase 4 — 실시간 진행 상황 대시보드 (본인 비전 통찰 5)
+# ---------------------------------------------------------------------------
+# 배경:
+#   친구 PC 베타 22~33min 빌드 중 PowerShell 화면이 *dead screen* → 친구가
+#   "멈춘 줄 알았다" → Quick Edit Mode 부작용으로 selection 시 실 정지 → Ctrl+C
+#   로 작업 잃음. 이는 *사용자 결함* 아닌 시스템의 진행 상황 가시화 부재 결과.
+#
+# 처방 (의존성 0 — 친구 PC 환경 안정):
+#   - PhaseTracker — print 기반 단순 진행률 표시. 단계 N 중 i, 누적 시간,
+#     단계 시작/종료 시각, 단계별 elapsed
+#   - install.ps1 에 Quick Edit Mode 안내 (별도 처리 — install.ps1)
+
+
+class PhaseTracker:
+    """Track A/B 의 단계별 진행 상황 print — 의존성 0, Quick Edit 사고 재발 차단.
+
+    사용 패턴::
+
+        tracker = PhaseTracker(total=3)
+        tracker.start("analyze_and_implement")
+        ...
+        tracker.end(summary="4-agent chain 완료")
+        tracker.start("vision_qa")
+        ...
+
+    스레드 안전 X — main 단일 흐름에서만 사용.
+    """
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.current_index = 0
+        self.session_start = datetime.now()
+        self._phase_start: Optional[datetime] = None
+        self._phase_name: str = ""
+        self._completed_phases: list[tuple[str, float]] = []  # (name, elapsed)
+
+    def set_total(self, total: int) -> None:
+        """추정한 분모를 실 측정에 맞춰 mid-flow 갱신.
+
+        PR #150 Phase 4: build 후 .exe 산출 여부를 보고 Vision QA 단계를 늘리거나
+        줄여 표시 일관성 확보.
+        """
+        if total < self.current_index:
+            total = self.current_index
+        self.total = total
+
+    def start(self, name: str) -> None:
+        """단계 시작 표시."""
+        self.current_index += 1
+        self._phase_name = name
+        self._phase_start = datetime.now()
+        cumulative = (self._phase_start - self.session_start).total_seconds()
+        print()
+        print(
+            f"▶ [{self.current_index}/{self.total}] {name} "
+            f"(누적 {cumulative:.1f}s)"
+        )
+
+    def end(self, summary: str = "") -> None:
+        """단계 종료 표시 + 산출 요약."""
+        if self._phase_start is None:
+            return
+        elapsed = (datetime.now() - self._phase_start).total_seconds()
+        self._completed_phases.append((self._phase_name, elapsed))
+        tail = f" — {summary}" if summary else ""
+        print(f"✓ [{self.current_index}/{self.total}] {self._phase_name} "
+              f"완료 ({elapsed:.1f}s){tail}")
+        self._phase_start = None
+
+    def total_elapsed(self) -> float:
+        return (datetime.now() - self.session_start).total_seconds()
+
+
 def _print_result_summary(
     track: str,
     elapsed_sec: float,
@@ -138,6 +212,7 @@ def _print_result_summary(
     exe_path: Optional[Path],
     release_url: Optional[str],
     vision_qa_summary: Optional[str] = None,
+    qa_verdict_summary: Optional[str] = None,
 ) -> None:
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
@@ -152,6 +227,8 @@ def _print_result_summary(
         print(f"  📦 .exe (예상): {exe_path} — 생성 안 됨")
     if vision_qa_summary:
         print(f"  👁️  Vision : {vision_qa_summary}")
+    if qa_verdict_summary:
+        print(f"  🔁 QA loop: {qa_verdict_summary}")
     if release_url:
         print(f"  🔗 Release: {release_url}")
     print()
@@ -160,23 +237,17 @@ def _print_result_summary(
 # ---------------------------------------------------------------------------
 # Vision QA — PR #141 Phase 2 (본인 비전 통찰 6, D-3)
 # ---------------------------------------------------------------------------
-def _run_vision_qa(
+def _run_vision_qa_full(
     exe_path: Path,
     outputs_dir: Path,
     *,
     skip_vision: bool = False,
-) -> Optional[str]:
-    """빌드된 .exe 에 대해 gui_test_executor 호출 → 한 줄 요약 반환.
+):
+    """빌드된 .exe 에 대해 gui_test_executor 호출 → GUITestResult 객체 반환.
 
-    PR #141 Phase 2 (2026-05-15, 본인 비전 통찰 6 D-3 처방):
-        ``gui_test_executor.run_gui_test`` 는 PR #133 단계에서 완성됐으나 production
-        path 에서 호출 X (호출자는 docstring 예시 + 별도 E2E 스크립트만). 본 wiring
-        으로 ``scripts/run.py --build`` 의 .exe 산출 직후 자동 검증 — 친구 베타의
-        Message_App.exe 같이 *어떤 에이전트도 시각적으로 본 적 없는* .exe 회귀 차단.
-
-    실패 격리:
-        Vision QA 자체 실패 (pyautogui 미설치 / Vision API 키 누락 등) 는 워크플로
-        차단 사유 아님 — 경고 메시지 + None 반환. ``--no-vision-qa`` 로 강제 skip.
+    PR #150 Phase 4 (2026-05-15): PR #147 의 ``_run_vision_qa`` 가 str summary 만
+    반환했던 것을 확장 — 결과 객체 자체를 반환해 후속 ``qa_feedback_loop`` 평가에
+    활용. 실패 / pyautogui 미설치 등 호출 자체 불가 시 None.
     """
     try:
         from src.agents.qa.gui_test_executor import run_gui_test
@@ -191,29 +262,82 @@ def _run_vision_qa(
             output_dir=vision_dir,
             skip_vision=skip_vision,
         )
-    except Exception as exc:  # noqa: BLE001 — wiring 실패는 정보로만
-        return f"[VISION ERROR] {exc!r}"
+    except Exception:  # noqa: BLE001 — wiring 실패는 정보로만
+        return None
 
     try:
-        # PR #146 의 shared_kickoff_decisions.yaml 옆에 summary 함께 보존
         (vision_dir / "summary.txt").write_text(
             result.summary_line(), encoding="utf-8"
         )
     except OSError:
         pass
+    return result
+
+
+def _run_vision_qa(
+    exe_path: Path,
+    outputs_dir: Path,
+    *,
+    skip_vision: bool = False,
+) -> Optional[str]:
+    """PR #141 Phase 2 backward-compat wrapper — str summary 만 반환.
+
+    PR #150 Phase 4: 신규 호출 측은 ``_run_vision_qa_full`` 사용 권장.
+    본 함수는 기존 호출 측 + 회귀 테스트 호환성 유지를 위해 보존.
+    """
+    result = _run_vision_qa_full(exe_path, outputs_dir, skip_vision=skip_vision)
+    if result is None:
+        return None
     return result.summary_line()
+
+
+def _evaluate_vision_qa_via_feedback_loop(vision_result) -> str:
+    """Vision QA 결과를 ``qa_feedback_loop.evaluate_qa_results`` 로 평가 → verdict 1줄.
+
+    PR #150 Phase 4 (본인 비전 통찰 6 D-3 + 통찰 5 가시화):
+        Vision QA 가 critical_issue_count > 0 또는 success=False 면 NEEDS_REVISION
+        verdict 도출. 자동 retry 루프는 *시작하지 않음* (별도 PR 의 결정) — verdict
+        가시화만 제공해 사용자가 결함을 즉시 인지.
+
+        ``qa_feedback_loop.evaluate_qa_results`` 는 duck-typed (``success: bool`` +
+        ``summary_line()``) 라 ``GUITestResult`` 가 그대로 들어감.
+    """
+    try:
+        from src.workflows.qa_feedback_loop import evaluate_qa_results
+    except ImportError:
+        return "[QA_FEEDBACK_LOOP unavailable]"
+
+    decision = evaluate_qa_results(
+        results={"vision_qa": vision_result},
+        retry_count=0,
+        max_retries=0,  # auto-retry 비활성 — verdict 가시화만
+    )
+    return decision.summary_line()
 
 
 # ---------------------------------------------------------------------------
 # Track A / B 실행
 # ---------------------------------------------------------------------------
 def _run_track_a(args: argparse.Namespace) -> int:
-    """Track A — Calculator-style GUI/CLI 앱 풀체인."""
+    """Track A — Calculator-style GUI/CLI 앱 풀체인.
+
+    PR #150 Phase 4: PhaseTracker 로 단계 진행 표시 + Vision QA 결과를
+    ``qa_feedback_loop.evaluate_qa_results`` 로 평가해 verdict 출력.
+    """
     from src.workflows.analyze_and_implement import run_analyze_and_implement
 
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
+    # 활성 phase 수 추정 (대시보드 분모) — build + vision-qa 토글 반영. 실제 .exe
+    # 산출 여부에 따라 ``tracker.set_total`` 로 후보정 (.exe 미생성 시 vision 단계
+    # 스킵 → total 축소).
+    total_phases = 1  # analyze_and_implement (필수)
+    if args.build and not args.no_vision_qa:
+        total_phases += 2  # vision_qa + qa_feedback_loop
+    tracker = PhaseTracker(total=total_phases)
+
+    tracker.start("analyze_and_implement (4~7 agent chain + build/release)")
     result = run_analyze_and_implement(
         args.request,
         outputs_dir=outputs_dir,
@@ -226,6 +350,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
         publish_as_draft=True,
         repo_url=args.repo,
     )
+    tracker.end(summary=f"saved_dir={result.saved_dir}")
 
     elapsed = (datetime.now() - start).total_seconds()
     exe_path = getattr(result, "executor_result", None)
@@ -237,25 +362,46 @@ def _run_track_a(args: argparse.Namespace) -> int:
 
     # PR #141 Phase 2 — Vision QA wiring (build 산출 .exe 가 있고 --no-vision-qa 미지정)
     vision_summary: Optional[str] = None
+    qa_verdict_summary: Optional[str] = None
+    if not (exe_path and exe_path.exists() and not args.no_vision_qa):
+        # .exe 미생성 또는 vision-qa skip → 잔여 2단계 미실행 → total 후보정.
+        tracker.set_total(tracker.current_index)
     if exe_path and exe_path.exists() and not args.no_vision_qa:
-        _print_section("Vision QA — 시각 검증")
-        vision_summary = _run_vision_qa(exe_path, outputs_dir)
-        if vision_summary:
-            print(f"  {vision_summary}")
+        tracker.start("vision_qa (gui_test_executor 시각 검증)")
+        vision_result = _run_vision_qa_full(exe_path, outputs_dir)
+        if vision_result is not None:
+            vision_summary = vision_result.summary_line()
+            tracker.end(summary=vision_summary)
         else:
-            print("  (Vision QA skip — gui_test_executor 호출 불가)")
+            vision_summary = "(Vision QA skip — gui_test_executor 호출 불가)"
+            tracker.end(summary=vision_summary)
 
-    _print_result_summary("A", elapsed, outputs_dir, exe_path, release_url, vision_summary)
+        # PR #150 Phase 4 — Vision QA 결과를 qa_feedback_loop.evaluate_qa_results 로 평가
+        if vision_result is not None:
+            tracker.start("qa_feedback_loop (Vision QA verdict 합산)")
+            qa_verdict_summary = _evaluate_vision_qa_via_feedback_loop(vision_result)
+            tracker.end(summary=qa_verdict_summary)
+
+    _print_result_summary(
+        "A", elapsed, outputs_dir, exe_path, release_url,
+        vision_summary, qa_verdict_summary,
+    )
     return 0
 
 
 def _run_track_b(args: argparse.Namespace) -> int:
-    """Track B — 5 도메인 자동화 풀체인."""
+    """Track B — 5 도메인 자동화 풀체인.
+
+    PR #150 Phase 4: PhaseTracker 로 단계 진행 표시 (Vision QA wiring 은 Track A
+    전용 — Track B 산출은 자동화 스크립트 위주라 GUI 검증 부적합).
+    """
     from src.workflows.automate_workflow import run_automate_workflow
 
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
+    tracker = PhaseTracker(total=1)
+    tracker.start("automate_workflow (5 도메인 자동화 chain + build/release)")
     result = run_automate_workflow(
         args.request,
         outputs_dir=outputs_dir,
@@ -267,6 +413,7 @@ def _run_track_b(args: argparse.Namespace) -> int:
         release_tag=args.tag,
         publish_as_draft=True,
     )
+    tracker.end(summary=f"saved_dir={getattr(result, 'saved_dir', None)}")
 
     elapsed = (datetime.now() - start).total_seconds()
     executor = getattr(result, "executor_result", None)
