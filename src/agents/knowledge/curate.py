@@ -20,13 +20,107 @@ LLM 호출 (선택):
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import yaml
+
 from .schemas import VALID_QA_VERDICTS, KnowledgeEntry
+
+
+# ---------------------------------------------------------------------------
+# PR #154 — knowledge_index LRU 회전 정책 (본인 비전 통찰 6 Phase 3 cycle 후속)
+# ---------------------------------------------------------------------------
+# 배경: PR #148 부터 ``outputs/knowledge_index/<wid>.yaml`` 무제한 누적. 100+ 빌드
+# 누적 시 ``recall_past_entries`` 의 glob + parse 비용 + disk 사용량 증가 위험.
+#
+# 처방 (의존성 0, 결정론):
+#   - LRU by ``curated_at`` (ISO date string, lex sort 친화) — 가장 최근 N 개만 유지
+#   - 기본 N=50, ``NEXUS_KNOWLEDGE_INDEX_MAX_ENTRIES`` env var override
+#   - curate_workflow 종료 시 트리거 — 새 entry 작성 직후 정리
+#   - tie break (동일 curated_at) → workflow_id alphabet — 결정론 보장
+#   - 실패 격리: 정리 도중 OSError 등은 워크플로 차단 사유 아님
+
+DEFAULT_KNOWLEDGE_INDEX_MAX_ENTRIES = 50
+
+
+def _resolve_max_entries(explicit: Optional[int]) -> int:
+    """env var 또는 명시 인자로 최대 entry 수 결정. <= 0 이면 회전 비활성."""
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get("NEXUS_KNOWLEDGE_INDEX_MAX_ENTRIES")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_KNOWLEDGE_INDEX_MAX_ENTRIES
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_KNOWLEDGE_INDEX_MAX_ENTRIES
+
+
+def _entry_sort_key(yaml_path: Path) -> tuple[str, str]:
+    """LRU 정렬 키 — ``(curated_at, workflow_id)``.
+
+    실패 시 ``("", path.stem)`` 으로 fallback — 가장 오래된 것으로 분류되어
+    우선 삭제 후보가 됨 (의도적: 깨진 entry 정리 효과).
+    """
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        curated_at = str(data.get("curated_at", "") or "")
+        workflow_id = str(data.get("workflow_id", "") or yaml_path.stem)
+        return (curated_at, workflow_id)
+    except (OSError, yaml.YAMLError, ValueError):
+        return ("", yaml_path.stem)
+
+
+def prune_knowledge_index_lru(
+    knowledge_index_dir: Path,
+    *,
+    max_entries: Optional[int] = None,
+) -> list[Path]:
+    """``knowledge_index_dir`` 의 yaml 파일을 LRU 정책으로 정리.
+
+    ``curated_at`` 내림차순 + ``workflow_id`` 내림차순 (tie break) 으로 정렬해 상위
+    ``max_entries`` 개만 유지, 나머지 hard delete. 디렉터리 부재 / 빈 디렉터리 /
+    파일 수 <= max_entries → no-op.
+
+    Args:
+        knowledge_index_dir: ``outputs/knowledge_index/`` 경로.
+        max_entries: 유지할 최대 entry 수. None 이면 env var 또는 기본 (50) 사용.
+            ``<= 0`` 이면 회전 비활성 (no-op).
+
+    Returns:
+        삭제된 yaml 파일 경로 리스트 (회귀 테스트용). 정책 비활성 / 정리 불요 / 실패 시
+        빈 리스트.
+    """
+    if not knowledge_index_dir.exists() or not knowledge_index_dir.is_dir():
+        return []
+
+    limit = _resolve_max_entries(max_entries)
+    if limit <= 0:
+        return []
+
+    yaml_files = list(knowledge_index_dir.glob("*.yaml"))
+    if len(yaml_files) <= limit:
+        return []
+
+    # 내림차순 정렬 (최신이 앞) — (curated_at, workflow_id) tie break
+    yaml_files.sort(key=_entry_sort_key, reverse=True)
+    to_keep = yaml_files[:limit]
+    to_delete = yaml_files[limit:]
+
+    deleted: list[Path] = []
+    for path in to_delete:
+        try:
+            path.unlink()
+            deleted.append(path)
+        except OSError:
+            # 1 파일 실패해도 나머지 정리 계속 — graceful
+            continue
+    return deleted
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +355,17 @@ def curate_workflow(
         except OSError:
             index_path = None
 
+        # PR #154 — LRU 회전 (새 entry 작성 직후 트리거, 실패 격리)
+        try:
+            prune_knowledge_index_lru(knowledge_index_dir)
+        except Exception:  # noqa: BLE001 — 정리 실패는 워크플로 차단 X
+            pass
+
     return entry, distributed_path, index_path
 
 
-__all__ = ["curate_workflow"]
+__all__ = [
+    "DEFAULT_KNOWLEDGE_INDEX_MAX_ENTRIES",
+    "curate_workflow",
+    "prune_knowledge_index_lru",
+]
