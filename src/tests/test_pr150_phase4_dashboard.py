@@ -138,18 +138,28 @@ class _FakeVisionFail:
 
 
 def test_evaluate_vision_qa_pass_returns_pass_verdict() -> None:
-    """Vision PASS → qa_feedback_loop verdict 도 PASS."""
+    """Vision PASS → qa_feedback_loop verdict 도 PASS.
+
+    PR #151: 반환이 ``(verdict_str, decision)`` 튜플로 변경됨.
+    """
     module = _load_run_module()
-    summary = module._evaluate_vision_qa_via_feedback_loop(_FakeVisionPass())
+    summary, _decision = module._evaluate_vision_qa_via_feedback_loop(
+        _FakeVisionPass()
+    )
     assert "PASS" in summary
 
 
 def test_evaluate_vision_qa_fail_returns_non_pass_verdict() -> None:
-    """Vision FAIL → verdict 가 PASS 아님 (RETRY / BUDGET_EXHAUSTED 등)."""
+    """Vision FAIL → verdict 가 PASS 아님 (RETRY / BUDGET_EXHAUSTED 등).
+
+    PR #151: 반환이 tuple 로 변경됨. 기본 ``max_retries=0`` 유지.
+    """
     module = _load_run_module()
-    summary = module._evaluate_vision_qa_via_feedback_loop(_FakeVisionFail())
+    summary, _decision = module._evaluate_vision_qa_via_feedback_loop(
+        _FakeVisionFail()
+    )
     assert "PASS" not in summary
-    # max_retries=0 으로 호출하므로 BUDGET_EXHAUSTED 가 정상
+    # max_retries=0 (기본) 으로 호출하므로 BUDGET_EXHAUSTED 가 정상
     assert "BUDGET_EXHAUSTED" in summary or "RETRY" in summary
 
 

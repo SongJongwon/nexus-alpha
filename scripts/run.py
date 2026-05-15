@@ -291,28 +291,216 @@ def _run_vision_qa(
     return result.summary_line()
 
 
-def _evaluate_vision_qa_via_feedback_loop(vision_result) -> str:
-    """Vision QA 결과를 ``qa_feedback_loop.evaluate_qa_results`` 로 평가 → verdict 1줄.
+def _evaluate_vision_qa_via_feedback_loop(
+    vision_result,
+    *,
+    retry_count: int = 0,
+    max_retries: int = 0,
+):
+    """Vision QA 결과를 ``qa_feedback_loop.evaluate_qa_results`` 로 평가.
 
-    PR #150 Phase 4 (본인 비전 통찰 6 D-3 + 통찰 5 가시화):
-        Vision QA 가 critical_issue_count > 0 또는 success=False 면 NEEDS_REVISION
-        verdict 도출. 자동 retry 루프는 *시작하지 않음* (별도 PR 의 결정) — verdict
-        가시화만 제공해 사용자가 결함을 즉시 인지.
+    PR #150 Phase 4: verdict 가시화만.
+    PR #151 (Phase 4 후속, 2026-05-15): ``retry_count`` / ``max_retries`` kwargs
+        추가 → Track A 가 ``--vision-qa-max-retries`` 값을 주입해 retry 가능 여부
+        (``should_retry``) 판정. 반환은 (verdict_str, decision) 튜플 — 호출 측이
+        decision 객체 자체를 검사할 수 있게 (회귀 차단: PR #150 의 기존 호출 측은
+        반환의 첫 요소만 사용).
 
-        ``qa_feedback_loop.evaluate_qa_results`` 는 duck-typed (``success: bool`` +
-        ``summary_line()``) 라 ``GUITestResult`` 가 그대로 들어감.
+    Args:
+        vision_result: ``GUITestResult`` (duck-typed).
+        retry_count: 현재까지의 retry 횟수 (0=첫 평가).
+        max_retries: 허용 retry 총 횟수.
+
+    Returns:
+        ``(summary_line, QAFeedbackDecision_or_None)``. ``QAFeedbackDecision`` 이
+        None 이면 qa_feedback_loop import 실패.
     """
     try:
         from src.workflows.qa_feedback_loop import evaluate_qa_results
     except ImportError:
-        return "[QA_FEEDBACK_LOOP unavailable]"
+        return "[QA_FEEDBACK_LOOP unavailable]", None
 
     decision = evaluate_qa_results(
         results={"vision_qa": vision_result},
-        retry_count=0,
-        max_retries=0,  # auto-retry 비활성 — verdict 가시화만
+        retry_count=retry_count,
+        max_retries=max_retries,
     )
-    return decision.summary_line()
+    return decision.summary_line(), decision
+
+
+# ---------------------------------------------------------------------------
+# Engineer + Build 재호출 — PR #151 (Phase 4 후속, 본인 비전 통찰 6 D-3 완성)
+# ---------------------------------------------------------------------------
+def _retry_engineer_with_vision_feedback(
+    *,
+    prev_result,
+    vision_result,
+    user_request: str,
+    outputs_dir: Path,
+    retry_index: int,
+    max_retries: int,
+    verbose: bool = False,
+) -> Optional[Path]:
+    """Vision QA 결함을 Engineer 에게 피드백해 *Engineer + Build 만* 재실행.
+
+    PR #151 처방 (PR #150 verdict 가시화의 다음 단계):
+        Vision QA verdict 가 ``should_retry`` 일 때 풀체인 재실행 (~25min) 대신
+        Engineer + Build 만 (~5min) 재호출 → 비용 폭증 차단.
+
+        ``qa_feedback_loop.build_feedback_message_for_engineer`` 가 작성한 markdown
+        피드백을 Engineer revision task description 에 주입 → 단일 task Crew kickoff
+        → ``_extract_code_blocks`` 로 새 코드 추출 → ``run_build_workflow`` 로 새 .exe
+        산출.
+
+    실패 격리:
+        Crew kickoff / build 어느 단계든 실패 시 ``None`` 반환 — 워크플로 차단 X.
+
+    Args:
+        prev_result: 직전 ``run_analyze_and_implement`` 결과 (``saved_code_files``
+            + ``gui_code_output`` 등 포함).
+        vision_result: 직전 Vision QA 결과 — feedback 메시지 작성 입력.
+        user_request: 원본 사용자 자연어 요청.
+        outputs_dir: 산출 dir — ``retry_{N:02d}/`` 하위에 저장.
+        retry_index: 1-based retry 번호.
+        max_retries: 전체 허용 retry 수 (feedback 메시지의 budget 표시용).
+        verbose: CrewAI 중간 로그 출력 여부.
+
+    Returns:
+        새 ``.exe`` 경로 또는 None (재호출 실패).
+    """
+    try:
+        from src.workflows.qa_feedback_loop import (
+            build_feedback_message_for_engineer,
+            evaluate_qa_results,
+        )
+    except ImportError as exc:
+        print(f"  ⚠️  qa_feedback_loop import 실패: {exc!r}", file=sys.stderr)
+        return None
+
+    # 1. Vision QA feedback 메시지 작성 (Engineer 에게 줄 markdown 지시)
+    decision = evaluate_qa_results(
+        results={"vision_qa": vision_result},
+        retry_count=retry_index - 1,
+        max_retries=max_retries,
+    )
+    vision_report_text = (
+        vision_result.summary_line() if hasattr(vision_result, "summary_line") else str(vision_result)
+    )
+    feedback_md = build_feedback_message_for_engineer(
+        decision, full_qa_reports={"vision_qa": vision_report_text}
+    )
+
+    retry_dir = outputs_dir / f"retry_{retry_index:02d}"
+    retry_dir.mkdir(parents=True, exist_ok=True)
+    (retry_dir / "feedback_for_engineer.md").write_text(feedback_md, encoding="utf-8")
+
+    # 2. 이전 코드를 markdown 으로 조립 — Engineer 가 그대로 revision 가능하도록
+    prior_code_parts: list[str] = []
+    for code_path in getattr(prev_result, "saved_code_files", []) or []:
+        try:
+            content = Path(code_path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        prior_code_parts.append(
+            f"```python\n# file: {Path(code_path).name}\n{content}\n```"
+        )
+    prior_code_md = (
+        "\n\n".join(prior_code_parts) if prior_code_parts else "# (이전 산출 코드 없음)"
+    )
+
+    # 3. Engineer agent + 단일 revision task — GUI 분기 / CLI 분기 자동 판별
+    try:
+        from crewai import Crew, Process, Task
+
+        from src.agents.design.gui_code_generator import create_gui_code_generator_agent
+        from src.agents.engineering import create_python_engineer_agent
+    except ImportError as exc:
+        print(f"  ⚠️  retry 의존성 import 실패: {exc!r}", file=sys.stderr)
+        return None
+
+    is_gui = bool(getattr(prev_result, "gui_code_output", "") or "")
+    engineer = (
+        create_gui_code_generator_agent(verbose=verbose)
+        if is_gui
+        else create_python_engineer_agent(verbose=verbose)
+    )
+
+    revision_task = Task(
+        description=(
+            f"사용자 원 요청: {user_request}\n\n"
+            "## 이전 코드 산출물\n\n"
+            f"{prior_code_md}\n\n"
+            "## Vision QA 자동 검증 피드백\n\n"
+            f"{feedback_md}\n\n"
+            "## 보정 지시\n\n"
+            "위 Vision QA 피드백의 *결함* 만 보정한 새 코드를 산출하세요. 무관한 "
+            "리팩토링은 금지. 산출 규약: 각 파일은 ```python 코드 블록 + 첫 줄 "
+            "`# file: <상대경로>` 헤더 주석 + 단독 실행 가능 (`python <entry>.py`) "
+            "구조."
+        ),
+        expected_output=(
+            "이전 코드의 Vision QA 결함을 보정한 완전한 Python 코드 세트 "
+            "(```python 블록 + # file: 헤더 + python <entry>.py 실행 가능)."
+        ),
+        agent=engineer,
+    )
+
+    try:
+        crew = Crew(
+            agents=[engineer],
+            tasks=[revision_task],
+            process=Process.sequential,
+            verbose=verbose,
+        )
+        crew.kickoff()
+    except Exception as exc:  # noqa: BLE001 — retry 실패는 워크플로 차단 X
+        print(f"  ⚠️  Engineer 재호출 실패: {exc!r}", file=sys.stderr)
+        return None
+
+    # 4. 산출 markdown → 코드 파일 추출
+    try:
+        from src.workflows._common import task_output_text
+        from src.workflows.analyze_and_implement import _extract_code_blocks
+    except ImportError as exc:
+        print(f"  ⚠️  _extract_code_blocks import 실패: {exc!r}", file=sys.stderr)
+        return None
+
+    revised_output = task_output_text(revision_task)
+    if not revised_output:
+        print("  ⚠️  Engineer 재호출 산출 비어 있음", file=sys.stderr)
+        return None
+    (retry_dir / "engineer_revised_output.md").write_text(
+        revised_output, encoding="utf-8"
+    )
+    new_code_paths = _extract_code_blocks(revised_output, retry_dir / "code")
+    if not new_code_paths:
+        print("  ⚠️  재산출에서 코드 블록 추출 실패", file=sys.stderr)
+        return None
+
+    # 5. Build 재실행 — Platform Tester skip (retry 비용 절감)
+    try:
+        from src.workflows.build_workflow import run_build_workflow
+
+        build_result = run_build_workflow(
+            code_files=new_code_paths,
+            user_request=user_request,
+            target_platform="windows",
+            ui_spec=getattr(prev_result, "ui_spec", "") or "",
+            design_tokens=getattr(prev_result, "design_tokens", "") or "",
+            workflow_dir=retry_dir,
+            enable_platform_test=False,
+            enable_executor=True,
+            verbose=verbose,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ⚠️  retry build 실패: {exc!r}", file=sys.stderr)
+        return None
+
+    executor = getattr(build_result, "executor_result", None)
+    if not (executor and getattr(executor, "exe_path", None)):
+        print("  ⚠️  retry build .exe 미생성", file=sys.stderr)
+        return None
+    return Path(executor.exe_path)
 
 
 # ---------------------------------------------------------------------------
@@ -329,12 +517,16 @@ def _run_track_a(args: argparse.Namespace) -> int:
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
-    # 활성 phase 수 추정 (대시보드 분모) — build + vision-qa 토글 반영. 실제 .exe
-    # 산출 여부에 따라 ``tracker.set_total`` 로 후보정 (.exe 미생성 시 vision 단계
-    # 스킵 → total 축소).
+    # 활성 phase 수 추정 (대시보드 분모) — build + vision-qa + retry 토글 반영.
+    # 실제 .exe 산출 여부 / retry 발생 여부에 따라 ``tracker.set_total`` 로
+    # 후보정 (.exe 미생성 → 축소, retry 발생 → 확장 불필요 — 각 retry 가 본인 phase
+    # 를 push 하므로 current_index 가 자연 증가, set_total 가 clamp).
     total_phases = 1  # analyze_and_implement (필수)
     if args.build and not args.no_vision_qa:
         total_phases += 2  # vision_qa + qa_feedback_loop
+        if args.vision_qa_max_retries > 0:
+            # 각 retry 는 1 phase (engineer+build → 재 Vision QA + verdict 까지 합산)
+            total_phases += args.vision_qa_max_retries
     tracker = PhaseTracker(total=total_phases)
 
     tracker.start("analyze_and_implement (4~7 agent chain + build/release)")
@@ -379,8 +571,65 @@ def _run_track_a(args: argparse.Namespace) -> int:
         # PR #150 Phase 4 — Vision QA 결과를 qa_feedback_loop.evaluate_qa_results 로 평가
         if vision_result is not None:
             tracker.start("qa_feedback_loop (Vision QA verdict 합산)")
-            qa_verdict_summary = _evaluate_vision_qa_via_feedback_loop(vision_result)
+            qa_verdict_summary, qa_decision = _evaluate_vision_qa_via_feedback_loop(
+                vision_result,
+                retry_count=0,
+                max_retries=args.vision_qa_max_retries,
+            )
             tracker.end(summary=qa_verdict_summary)
+
+            # PR #151 — should_retry 일 때 Engineer + Build 재호출 (max_retries 한도 안)
+            if (
+                qa_decision is not None
+                and args.vision_qa_max_retries > 0
+                and qa_decision.should_retry
+            ):
+                for retry_idx in range(1, args.vision_qa_max_retries + 1):
+                    tracker.start(
+                        f"retry {retry_idx}/{args.vision_qa_max_retries} "
+                        "(Engineer + Build 재호출)"
+                    )
+                    new_exe = _retry_engineer_with_vision_feedback(
+                        prev_result=result,
+                        vision_result=vision_result,
+                        user_request=args.request,
+                        outputs_dir=outputs_dir,
+                        retry_index=retry_idx,
+                        max_retries=args.vision_qa_max_retries,
+                        verbose=args.verbose,
+                    )
+                    if new_exe is None:
+                        tracker.end(summary="retry skip — 재호출 실패")
+                        break
+                    exe_path = new_exe
+
+                    # 재 Vision QA 1회 + verdict 재평가
+                    retry_vision_dir = outputs_dir / f"retry_{retry_idx:02d}"
+                    new_vision = _run_vision_qa_full(new_exe, retry_vision_dir)
+                    if new_vision is None:
+                        vision_summary = (
+                            f"retry {retry_idx} new_exe={new_exe.name} "
+                            "(Vision QA 호출 불가)"
+                        )
+                        tracker.end(summary=vision_summary)
+                        break
+
+                    vision_result = new_vision
+                    vision_summary = new_vision.summary_line()
+                    qa_verdict_summary, qa_decision = (
+                        _evaluate_vision_qa_via_feedback_loop(
+                            new_vision,
+                            retry_count=retry_idx,
+                            max_retries=args.vision_qa_max_retries,
+                        )
+                    )
+                    tracker.end(
+                        summary=f"new_exe={new_exe.name}, {qa_verdict_summary}"
+                    )
+                    if qa_decision is None or qa_decision.overall_passed:
+                        break
+                    if not qa_decision.should_retry:
+                        break  # budget exhausted
 
     _print_result_summary(
         "A", elapsed, outputs_dir, exe_path, release_url,
@@ -537,6 +786,14 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help=(
             "PR #141 Phase 2 — Vision QA 강제 skip. 기본은 --build 시 자동 활성. "
             "pyautogui/Vision API 미설치 환경에서 강제 차단할 때 사용."
+        ),
+    )
+    parser.add_argument(
+        "--vision-qa-max-retries", type=int, default=1,
+        help=(
+            "PR #151 — Vision QA 실패 시 Engineer + Build 재호출 횟수 (기본 1). "
+            "0 으로 설정하면 retry 비활성 (PR #150 의 verdict 가시화만). "
+            "풀체인 (~25min) 이 아닌 Engineer + Build (~5min) 만 재실행."
         ),
     )
     return parser.parse_args(argv)
