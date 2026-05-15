@@ -1,15 +1,15 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-15 (PR #150~#155 6 PR 머지 — Phase 4 D-3 시각 검증 cycle 완성 + Phase 3 학습 cycle 갭 해결 + RAG 인프라 정착 + Track B 확장)
+> **마지막 업데이트**: 2026-05-15 (PR #150~#158 **9 PR 머지** — Phase 1~4 완성 + iterative_loop production wire 진입점 도입 — Track A/B 모두 자기 진화 cycle 지원)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서
 >
-> 1. **[docs/progress/session_log_20260515.md](progress/session_log_20260515.md)** — 본 세션 (6 PR 머지, pytest 1129 → 1226 / +97, 회귀 0)
+> 1. **[docs/progress/session_log_20260515.md](progress/session_log_20260515.md)** — 본 세션 (9 PR 머지, pytest 1129 → 1258 / +129, 회귀 0)
 > 2. **[docs/insights/agent_collaboration_paradigm_shift.md](insights/agent_collaboration_paradigm_shift.md)** — 본질적 통찰 5 (이전 세션 보존, 여전히 north star)
 > 3. **[docs/progress/session_log_20260514.md](progress/session_log_20260514.md)** — 직전 세션 (본부 10 완비)
-> 4. PM 에게 질문 — 실 E2E 검증 / dependabot major bumps / iterative_loop production wire 우선순위
+> 4. PM 에게 질문 — 실 E2E 검증 / PR #160 (auto-iterate 기본 ON) / dependabot major bumps 우선순위
 >
-> ## 🎯 2026-05-15 세션 — 6 PR 머지 요약
+> ## 🎯 2026-05-15 세션 — 9 PR 머지 요약 (단일 세션 신기록)
 >
 > | PR | 머지 commit | 효과 | 분야 |
 > |----|-----------|------|------|
@@ -19,9 +19,12 @@
 > | **#153** | `9870c96` | RAG knowledge_index 다중 누적 회귀 차단 (11) + 메모리 오기억 정정 | RAG 인프라 |
 > | **#154** | `5066626` | LRU 회전 정책 N=50 + `NEXUS_KNOWLEDGE_INDEX_MAX_ENTRIES` env var | RAG 인프라 |
 > | **#155** | `11fb07d` | Track B Vision QA wiring (`detect_artifact_category` 자동 감지) | Vision QA 확장 |
+> | **#156** | `05d5214` | docs — session_log + WORK_STATUS 일일 보존 (PR #150~#155) | docs |
+> | **#157** | `71057ad` | iterative_loop production wire (Track A) — `--auto-iterate` opt-in, 자기 진화 cycle 실 작동 진입점 | 자기 진화 wire |
+> | **#158** | `7d690ab` | Track B iterative_loop 진입 (Option A 어댑터 layer) — Track A 패턴 재사용 | 자기 진화 wire |
 >
-> **pytest 누적**: 1129 → **1226** (+97, 회귀 0)
-> **누적 머지 PR**: 132 → **155** (+6 단일 세션)
+> **pytest 누적**: 1129 → **1258** (+129, 회귀 0)
+> **누적 머지 PR**: 132 → **158** (+9 단일 세션 — 신기록)
 >
 > ## 🩺 본인 비전 통찰 6 — Phase 진행 상황 (2026-05-15 갱신)
 >
@@ -37,16 +40,19 @@
 > | Phase 4 dashboard | ✅ 완료 (2026-05-15) | #150 |
 > | **Phase 4 D-3 시각 검증 cycle (재호출)** | ✅ **완료** (2026-05-15) | **#151** |
 > | **Phase 4 Track B 확장** | ✅ **완료** (2026-05-15) | **#155** |
+> | **iterative_loop production wire (Track A)** | ✅ **완료** (2026-05-15) | **#157** |
+> | **iterative_loop production wire (Track B, 어댑터)** | ✅ **완료** (2026-05-15) | **#158** |
 >
-> → **Phase 1~4 모두 완료**. 본부 10 4 멤버 완비 + 시각 검증 cycle 닫힘 + 학습 cycle 닫힘 + RAG 인프라 정착.
+> → **Phase 1~4 모두 완료 + iterative_loop production wire 진입점 도입**. 본부 10 4 멤버 완비 + 시각 검증 cycle 닫힘 + 학습 cycle 닫힘 + RAG 인프라 정착 + Track A/B 자기 진화 cycle (`--auto-iterate` opt-in) 지원.
 >
 > ## 🎯 다음 Sprint 후보 (우선순위 순)
 >
 > | 후보 | 영역 | 비용 | 가치 | 비고 |
 > |------|------|------|------|------|
-> | **iterative_loop production wire** ⭐⭐⭐ | A | XL (multi-PR) | VERY HIGH | 본 세션 6 PR 이 *재료* — *자기 진화* 실 작동 진입점 |
-> | **실 E2E 검증** (친구 PC 베타) | A | M (~30min) | HIGH | retry + LRU + Track B Vision 통합 검증 |
+> | **실 E2E 검증** (친구 PC 베타) ⭐⭐⭐ | A | M~L (~30min~2h) | VERY HIGH | 9 PR 통합 동작 + `--auto-iterate` 라이브 확인 |
+> | **PR #160 — `--auto-iterate` 기본 ON 전환** | A | S (~1h) | VERY HIGH | *자기 진화* 사용자 기본 노출 (E2E 후) |
 > | **dependabot major bumps 검증** | E | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich (4건 CI fail) |
+> | **Track A enable_qa_loop 통합** | A | M (~2h) | M | Convergence Judge 와 중복 검토 |
 > | **Track B qa_loop + Vision verdict 종합** | A | S (~1h) | M | UX 일관성 |
 > | **Telemetry fallback** (LangFuse silent → local jsonl) | E | M (~3h) | M | 친구 PC 실패 가시화 |
 >
@@ -58,15 +64,16 @@
 >
 > ## 📝 결정 보류 (PM 판단 필요)
 >
-> 1. **iterative_loop production wire 시점** — 본 세션 6 PR 이 재료 갖춰진 직후 진행 vs 친구 베타 추가 검증 우선?
-> 2. **dependabot 4건 CI fail 처리** — 검증 PR 별도 만들기 vs 보류 연장?
-> 3. **베타 cohort 5명 ($250 budget)** — 본 세션 6 PR 효과 확인 후 결정 가능?
+> 1. **실 E2E 검증 시점** — `--auto-iterate --max-iterations 3` 으로 자기 진화 라이브 동작 확인. 친구 PC 베타 환경?
+> 2. **PR #160 (auto-iterate 기본 ON)** — E2E 검증 후 권장. 비용 충격 위험 (max 2시간) 사용자 안내?
+> 3. **dependabot 4건 CI fail 처리** — 검증 PR 별도 만들기 vs 보류 연장?
+> 4. **베타 cohort 5명 ($250 budget)** — 본 세션 9 PR 효과 확인 후 결정 가능?
 >
 > ---
 >
 > ## 🔍 이전 (2026-05-14) 종합 점검 보존 — 본질적 통찰 5
 >
-> > 본 세션 6 PR 모두 통찰 6 의 *처방* 으로 명시 매핑됨 — 통찰 1~5 는 *진단*, 통찰 6 은 *처방 비전*. 본 세션으로 Phase 1~4 모두 완료 → 통찰 6 의 8개월 비전 중 Sprint 1+2+3 완료. iterative_loop production wire 가 통찰 6 의 *마지막 진입점*.
+> > 본 세션 9 PR 모두 통찰 6 의 *처방* 으로 명시 매핑됨 — 통찰 1~5 는 *진단*, 통찰 6 은 *처방 비전*. 본 세션으로 Phase 1~4 모두 완료 + **iterative_loop production wire 진입점 도입** (PR #157 Track A + PR #158 Track B 어댑터) → 통찰 6 의 8개월 비전 중 Sprint 1+2+3 완료. **다음 단계는 실 E2E 검증 + 기본 ON 전환**.
 >
 > 이전 세션 보존 — 본질 변화 X:
 >

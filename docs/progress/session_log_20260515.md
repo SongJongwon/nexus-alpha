@@ -1,9 +1,10 @@
-# 📝 세션 로그 — 2026-05-15 (Phase 4 D-3 cycle 완성 + Phase 3 학습 cycle 갭 해결 + RAG 인프라 정착 + Track B 확장)
+# 📝 세션 로그 — 2026-05-15 (Phase 4 D-3 cycle 완성 + Phase 3 학습 cycle 갭 해결 + RAG 인프라 정착 + Track B 확장 + iterative_loop production wire 진입)
 
-> 본 세션은 PR #150~#155 6 PR 머지로 본인 비전 통찰 6 의 **Phase 4 (D-3 시각 검증)
+> 본 세션은 PR #150~#158 **9 PR 머지** 로 본인 비전 통찰 6 의 **Phase 4 (D-3 시각 검증)
 > cycle 완성** + **Phase 3 (학습 cycle) 갭 해결** + **RAG 인덱스 인프라 정착
-> (누적 회귀 차단 + LRU 회전)** + **Track B Vision QA 확장** 까지 달성. 모든 PR
-> CI 4종 (pytest/CodeQL/analyze/gitleaks) pass + squash merge.
+> (누적 회귀 차단 + LRU 회전)** + **Track A/B Vision QA 확장** + **iterative_loop
+> production wire (Track A/B 자기 진화 cycle 실 작동 진입점)** 까지 달성. 모든 PR
+> CI pass + squash merge.
 
 ## TL;DR
 
@@ -15,11 +16,15 @@
 | #153 | `9870c96` | RAG knowledge_index 다중 누적 회귀 차단 (11 테스트) + `outputs/_index.yaml` 오기억 정정 | 1196 (+11) |
 | #154 | `5066626` | LRU 회전 정책 (N=50 기본, `NEXUS_KNOWLEDGE_INDEX_MAX_ENTRIES` env var) | 1211 (+15) |
 | #155 | `11fb07d` | Track B Vision QA wiring (`detect_artifact_category` 자동 감지 → "gui" 만 트리거) | 1226 (+15) |
+| #156 | `05d5214` | docs — session_log_20260515 + WORK_STATUS 일일 보존 (PR #150~#155 6 PR) | 1226 (+0) |
+| **#157** | **`71057ad`** | **iterative_loop production wire (Track A) — `--auto-iterate` + `--max-iterations N` opt-in, 자기 진화 cycle 실 작동 진입점** | **1242 (+16)** |
+| **#158** | **`7d690ab`** | **Track B iterative_loop 진입 (Option A 어댑터 layer) — `_adapt_automate_to_chain_result` 로 결과 구조 매핑, Track A 패턴 재사용** | **1258 (+16)** |
 
-**pytest 누적**: 1129 → **1226** (+97, 회귀 0)
-**누적 머지 PR**: 132 → **155** (+6 단일 세션)
+**pytest 누적**: 1129 → **1258** (+129, 회귀 0)
+**누적 머지 PR**: 132 → **158** (+9 단일 세션 — 단일 세션 신기록)
 **Phase 4 시각 검증 cycle**: PR #147 wiring → PR #150 verdict 가시화 → **PR #151 재호출 (D-3 닫힘)** + PR #155 Track B 확장
 **Phase 3 학습 cycle**: PR #148 wiring → **PR #152 prompt 주입 갭 해결** + PR #153/154 인프라 정착
+**iterative_loop production wire**: PR #157 (Track A) + **PR #158 (Track B 어댑터)** — Track A/B 모두 `--auto-iterate` 동일 동작
 
 ## 세션 흐름
 
@@ -91,6 +96,53 @@ PR #150/151 Vision QA wiring 은 Track A 전용. Track B (5 도메인 자동화)
 
 회귀 테스트 15 (휴리스틱 단위 7 + file-text wiring 4 + 실행 동작 4). 머지 commit `11fb07d`.
 
+### Phase 7 — docs 일일 보존 (PR #156)
+
+PR #150~#155 6 PR 머지 일일 보존. session_log_20260515.md 신규 + WORK_STATUS.md 갱신 (헤더 / 6 PR 요약 / Phase 진행표 / 다음 Sprint 후보). 사용자 메모리의 *일일 갱신* 워크플로 패턴 준수. 단일 docs PR (#156). 머지 commit `05d5214`.
+
+(주의: 본 세션 로그는 PR #156 머지 시점의 *스냅샷* — PR #157, #158 은 그 다음 작업이라 본 갱신 (PR #159) 으로 합쳐서 누적 보존.)
+
+### Phase 8 — iterative_loop production wire Track A (PR #157)
+
+본 세션 PR #150~#155 후 마지막 갭 식별: `run_iterative_loop` 풀체인 완성 + 1196 테스트 cover 하지만 *production path 호출 0건* → 자기 진화 cycle 미작동. 추가로 시그니처에 `enable_executor` / `enable_publish` / `publish_as_draft` / `executor_timeout_sec` / `publish_timeout_sec` / `verbose` 누락 → 호출 시 .exe 빌드 + Draft Release 미실행.
+
+처방 (Path D — opt-in 기본 OFF, 단일 PR):
+1. **시그니처 propagation** — `run_iterative_loop` + `_LoopState` + `_node_run_chain` 에 6 args 추가 (`verbose` 는 기존 hardcoded `False` → state 의 값 사용으로 변경)
+2. **`--auto-iterate` CLI 플래그** (Track A only, 기본 OFF) + **`--max-iterations N`** (기본 5)
+3. **`_run_track_a` 분기** — `auto_iterate=True` 시 `run_iterative_loop` 호출 → `LoopOutcome.final_chain_result` 를 result 변수로 매핑 → Vision QA + retry + 결과 패널 동일 흐름 재사용
+4. **None fallback** — `LoopOutcome.final_chain_result=None` 시 dummy `SimpleNamespace` 폴백 (AttributeError 회피)
+5. **결과 패널 `🔄 Iterate:` 라인** — `verdict=COMPLETE iterations=2/5` 형식
+
+회귀 테스트 16 (시그니처 propagation 2 + _node_run_chain 전달 + 기본값 fallback 2 + CLI 플래그 5 + _run_track_a 분기 4 + 결과 패널 2 + file-text 1). 머지 commit `71057ad`.
+
+비용 주의 — `--auto-iterate` 시 최대 `max_iterations × ~25min` 가능 (기본 5 = 최악 2시간). 명시 opt-in 으로 보호.
+
+### Phase 9 — Track B iterative_loop 진입 (PR #158)
+
+PR #157 직후 식별된 갭: Track B 의 `AutomateWorkflowResult` 가 iterative_loop 의 Gap Analyst 입력과 *구조적으로 불일치* (`agent_output` vs `engineer_output`, `code_qa_result` vs `qa_review`). PR #157 패턴 그대로 Track B 에 적용 불가.
+
+3 옵션 비교 후 **Option A (어댑터 layer)** 선택 — 사용자 confirm. iterative_loop 자체는 chain-agnostic 으로 유지하고, Track B 분기에서만 결과 형식 매핑:
+
+1. **`_adapt_automate_to_chain_result`** 신설 — `AutomateWorkflowResult` → `WorkflowResult`-like `SimpleNamespace` duck type:
+   - `agent_output` → `engineer_output`
+   - `code_qa_result.summary_line()` → `qa_review` (fallback: `"(no QA review — Track B 자동화 산출)"`)
+   - `executor_result` / `publish_result` / `saved_dir` / `saved_code_files` 직접 매핑
+   - Track B 의 GUI 부재 → `gui_code_output` / `ui_spec` / `design_tokens` 빈 문자열
+2. **`run_iterative_loop(track="A"|"B", release_tag="")`** kwargs 추가 (backward compat: 기본 `"A"`)
+3. **`_node_run_chain`** state.track 분기 — Track B → `run_automate_workflow` 호출 + 어댑터 → chain_result
+4. **`_run_track_b`** `--auto-iterate` 분기 (PR #157 Track A 패턴 재사용)
+
+Track A → Track B args mapping:
+- `enable_build_branch` → `enable_qa_loop` + `enable_build` (Track B QA loop 는 build 와 함께 활성)
+- `enable_executor` → `enable_build`
+- `enable_release_branch` / `enable_publish` → `enable_release`
+- `executor_timeout_sec` → `build_timeout_sec`
+- 신규 `release_tag` → `release_tag` (Track B 의 gh release tag)
+
+회귀 테스트 16 (어댑터 매핑 6 + 시그니처 2 + _node_run_chain 분기 3 + _run_track_b 분기 4 + file-text 1) + PR #155 의 `_make_args` 정정 (auto_iterate / max_iterations 추가). 머지 commit `7d690ab`.
+
+**결과**: Track A/B 둘 다 `--auto-iterate` 로 자기 진화 cycle 동일하게 동작.
+
 ## 핵심 통찰 (이번 세션)
 
 ### 1. "Build-but-Forget" anti-pattern 의 마지막 잔재 정리
@@ -114,28 +166,43 @@ PR #148 (Phase 3 Knowledge wiring) 머지 후 메모리 노트에는 *"다음 �
 
 PR #153 브랜치가 stale main 에서 분기되어 PR #152 의 11 테스트가 누락된 채로 PR #154 베이스가 될 뻔. fixture 가 1196 보고했지만 git log 확인 시 PR #152 머지 commit 부재 발견 → stash → 새 fresh branch → stash pop. 매 PR 시작 시 `git fetch origin main` 직후 `git checkout -b ... origin/main` 강제 패턴 필요.
 
+### 5. 마지막 갭 — 진입점은 wire 됐는가? (PR #157)
+
+본부 10 4 멤버 완비 + Phase 1~4 모든 cycle 완성 후에도 *iterative_loop production 호출 0건* 갭 잔존. 메모리 / 테스트 / 라이브 검증으로 확인했지만 **scripts/run.py 가 직접 호출하지 않으면** 사용자에게 도달 안 함. 패턴: "*인프라가 완성된 후* 마지막 production 진입점 wire 가 별도 PR 로 필요" — 추적 대상.
+
+### 6. 어댑터 layer 패턴 — chain-agnostic 워크플로 (PR #158)
+
+PR #157 Track A wiring 직후 Track B 적용 시 결과 구조 불일치 발견 (engineer_output vs agent_output). 옵션 검토:
+- **A**: 어댑터 layer (chain-agnostic) — 1 helper 추가, 패턴 보존
+- **B**: Track B 전용 mini-loop — 인프라 중복
+- **C**: 명시 skip + 안내 — 사용자 의도 미충족
+
+Option A 선택. *어댑터 layer 패턴* 은 향후 새 Track / 새 chain 추가 시 동일 적용 가능 — duck type 매핑만 정의하면 LangGraph 인프라 (recall/kickoff/sandbox/gap/judge/retrospective/curate) 그대로 재사용.
+
 ## 다음 세션 첫 행동 (자동 컨텍스트 복원)
 
-1. **메모리 (이미 로드됨)**: `MEMORY.md` + `project_paradigm_shift_pointer.md` — Phase 4 + Phase 3 cycle 완성 상태
-2. **본 session_log** — 오늘 세션 evidence
-3. **WORK_STATUS** — 프로젝트 전체 현황 (아래 갱신됨)
+1. **메모리 (이미 로드됨)**: `MEMORY.md` + `project_paradigm_shift_pointer.md` — Phase 1~4 완성 + iterative_loop production wire (Track A/B) 완료 상태
+2. **본 session_log** (PR #159 머지 후 9 PR 누적 반영) — 오늘 세션 evidence
+3. **WORK_STATUS** — 프로젝트 전체 현황 (별도 갱신)
 4. PM 에게 질문:
-   - 실 E2E (~30min) 검증 원하시는지? (PR #151 retry + PR #154 LRU + PR #155 Track B Vision)
+   - 실 E2E (~30min~2h) 검증 원하시는지? `--auto-iterate --max-iterations 3` 으로 자기 진화 cycle 라이브 동작 확인
    - dependabot 보류 major bumps (langchain/langgraph/pandas 1.x + rich) 처리 시점?
-   - Track B 자체 qa_loop + Vision QA verdict 종합 표시?
+   - `--auto-iterate` 기본 ON 전환 (PR #160) 시점 — E2E 검증 후 권장
+   - Track A 자체 enable_qa_loop 통합 검토 (Convergence Judge 와 중복 가능성)?
 
 ## 남은 작업 후보 (Sprint 다음)
 
 | 후보 | 영역 | 비용 | 가치 |
 |------|------|------|------|
-| **실 E2E 검증** — 친구 PC 베타 환경에서 6 PR 통합 동작 라이브 확인 | A | M (~30min) | HIGH — paradigm shift evidence |
+| **실 E2E 검증** — 친구 PC 베타 환경에서 9 PR 통합 동작 라이브 확인 (특히 `--auto-iterate`) | A | M~L (~30min~2h) | VERY HIGH — paradigm shift evidence |
+| **PR #160 — `--auto-iterate` 기본 ON 전환** | A | S (~1h) | VERY HIGH — *자기 진화* 사용자 기본 노출 |
 | **dependabot major bumps 검증** — langchain/langgraph/pandas 1.x + rich CI fail 4건 | E | L (~2-4h) | M — 보안 + 의존성 신선도 |
+| **Track A enable_qa_loop 통합** — Convergence Judge vs code_qa 중복 검토 | A | M (~2h) | M — 일관성 |
 | **Track B qa_loop + Vision QA 종합 verdict** — 현재 두 결과 독립 표시. 1줄 통합 | A | S (~1h) | M — UX 일관성 |
-| **iterative_loop production wire** — 4 entry-picker 통합 + `analyze_and_implement` 의 iter 진입 | A | XL (multi-PR) | VERY HIGH — *자기 진화* 실 작동 |
 | **Telemetry fallback** (LangFuse silent → local jsonl) | E | M (~3h) | M — 친구 PC 실패 가시화 |
 | **session_log auto-summarizer** — 메모리 패턴 자동화 (현재 매 세션 수동) | E | M | M — 인지 부담 감소 |
 
-→ **VERY HIGH 후보**: `iterative_loop production wire`. 본 세션의 6 PR 이 *재료* — recall/retry/learn/index/Track B 모두 갖춰진 상태에서 *진입점* 만 wire 하면 *자기 진화* 가 실제로 돌아감.
+→ **VERY HIGH 후보 (다음 세션)**: **실 E2E 검증** — 본 세션의 9 PR 이 *재료* 완성 + 진입점 wire 됨. 라이브 동작 확인이 paradigm shift evidence 의 마지막 조각. E2E 결과에 따라 PR #160 (기본 ON) 결정.
 
 ---
 
