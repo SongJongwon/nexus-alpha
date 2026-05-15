@@ -68,8 +68,10 @@ from src.agents.analysis import (
     create_requirement_expander_agent,
 )
 from src.agents.coordination import (
+    RetrospectiveReport,
     SharedKickoffDecisions,
     run_kickoff_meeting,
+    run_retrospective,
 )
 from src.agents.knowledge import (
     KnowledgeEntry,
@@ -154,6 +156,9 @@ class LoopOutcome:
     curated_entry: Optional[KnowledgeEntry] = None
     curated_entry_path: Optional[Path] = None
     curated_index_path: Optional[Path] = None
+    # PR #149 — Retrospective Lead (Phase 3 cycle 완성, 본부 10 두 번째 멤버)
+    retrospective_report: Optional[RetrospectiveReport] = None
+    retrospective_md_path: Optional[Path] = None
 
 
 class _LoopState(TypedDict, total=False):
@@ -193,6 +198,10 @@ class _LoopState(TypedDict, total=False):
     curated_entry: Any  # KnowledgeEntry | None — curate_workflow 산출
     curated_entry_path: str  # workflow_dir/knowledge_entry.yaml Path.as_posix(), "" 가능
     curated_index_path: str  # knowledge_index_dir/<workflow_id>.yaml, "" 가능
+
+    # PR #149 — Retrospective Lead (Phase 3 cycle 완성, 종결 시 1회만)
+    retrospective_report: Any  # RetrospectiveReport | None
+    retrospective_md_path: str  # workflow_dir/retrospective.md 경로, "" 가능
 
     # 매 iteration 마다 갱신
     iteration: int
@@ -394,6 +403,69 @@ def _node_recall_past_knowledge(state: _LoopState) -> dict[str, Any]:
     }
 
 
+def _node_retrospective(state: _LoopState) -> dict[str, Any]:
+    """PR #149 — Retrospective Lead 회고 (본부 10 두 번째 멤버).
+
+    워크플로 종료 시 1회만 실행 (curate_knowledge 직전). 본 빌드의:
+        - 사용자 요청 + 킥오프 합의 (PR #146)
+        - chain_result (Engineer/QA 산출)
+        - execution_result (Sandbox)
+        - 결정표 verdict
+    을 입력으로 ``RetrospectiveReport`` 산출 → ``workflow_dir/retrospective.md`` 저장
+    + state["retrospective_report"] 보존. 다음 노드 ``_node_curate_knowledge`` 가
+    retrospective markdown 을 Curator prompt 에 추가 입력으로 사용 → entry 의
+    summary/tags 가 *결함/성공 패턴* 으로 풍부해짐 (Phase 3 cycle 완성).
+    """
+    chain_result: Optional[WorkflowResult] = state.get("chain_result")
+    workflow_id = ""
+    if chain_result is not None and chain_result.saved_dir is not None:
+        workflow_id = Path(chain_result.saved_dir).name
+
+    decision: Optional[JudgmentDecision] = state.get("decision")
+    verdict_str = "UNKNOWN"
+    if decision is not None:
+        v = getattr(decision, "verdict", None)
+        if v is not None:
+            verdict_str = getattr(v, "name", str(v))
+
+    qa_review = ""
+    if chain_result is not None:
+        qa_review = getattr(chain_result, "qa_review", "") or ""
+
+    try:
+        report = run_retrospective(
+            user_request=state["user_request"],
+            workflow_id=workflow_id or "unknown",
+            verdict=verdict_str,
+            shared_kickoff_decisions=state.get("shared_kickoff_decisions"),
+            chain_result=chain_result,
+            execution_result=state.get("execution_result"),
+            qa_review=qa_review,
+        )
+    except Exception:  # noqa: BLE001 — 회고 실패는 워크플로 차단 X
+        return {
+            "retrospective_report": None,
+            "retrospective_md_path": "",
+        }
+
+    # workflow_dir 에 markdown 저장 (사람용)
+    md_path_str = ""
+    if chain_result is not None and chain_result.saved_dir is not None:
+        workflow_dir = Path(chain_result.saved_dir)
+        try:
+            workflow_dir.mkdir(parents=True, exist_ok=True)
+            md_path = workflow_dir / "retrospective.md"
+            md_path.write_text(report.to_markdown(), encoding="utf-8")
+            md_path_str = md_path.as_posix()
+        except OSError:
+            pass
+
+    return {
+        "retrospective_report": report,
+        "retrospective_md_path": md_path_str,
+    }
+
+
 def _node_curate_knowledge(state: _LoopState) -> dict[str, Any]:
     """PR #140 Phase 3 — Knowledge Curator 색인 (본인 비전 통찰 6, D-1).
 
@@ -402,6 +474,10 @@ def _node_curate_knowledge(state: _LoopState) -> dict[str, Any]:
     다음 빌드 진입 시 ``_node_recall_past_knowledge`` 가 이 entry 들에서 검색.
 
     BLOCKED 종결도 색인 — partial-output 태그로 향후 결함 패턴 학습.
+
+    PR #149: ``state["retrospective_report"]`` 가 있으면 그 markdown 을
+    ``curate_workflow`` 의 ``retrospective_md`` 인자로 전달 → entry summary/tags 가
+    회고 기반으로 풍부해짐 (Phase 3 cycle 완성).
     """
     chain_result: Optional[WorkflowResult] = state.get("chain_result")
     if chain_result is None or chain_result.saved_dir is None:
@@ -434,12 +510,17 @@ def _node_curate_knowledge(state: _LoopState) -> dict[str, Any]:
             elif name == "BLOCKED":
                 qa_hint = "NEEDS_REVISION"
 
+    # PR #149 — 회고 markdown 을 Curator prompt 에 추가 입력으로 전달
+    retro_report: Optional[RetrospectiveReport] = state.get("retrospective_report")
+    retro_md = retro_report.to_markdown() if retro_report is not None else ""
+
     try:
         entry, dist_path, idx_path = curate_workflow(
             workflow_dir=workflow_dir,
             user_request=state["user_request"],
             knowledge_index_dir=index_dir,
             qa_verdict_hint=qa_hint,
+            retrospective_md=retro_md,
         )
     except Exception:  # noqa: BLE001 — curate 실패는 워크플로 차단 X
         return {
@@ -690,57 +771,53 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     구조:
         expand_requirements → recall_past_knowledge → kickoff_meeting → run_chain →
             run_sandbox → analyze_gap → judge_convergence
-                ├── COMPLETE → curate_knowledge → finalize → END
+                ├── COMPLETE → retrospective → curate_knowledge → finalize → END
                 ├── IMPROVE_NEEDED → prepare_feedback → run_chain (loop)
-                └── BLOCKED → curate_knowledge → escalate → END
+                └── BLOCKED → retrospective_blocked → curate_knowledge_blocked → escalate → END
 
-    PR #138 Phase 1 full (2026-05-15, 본인 비전 통찰 6):
-        ``kickoff_meeting`` 노드 신설. expand_requirements 직후 1회만 실행되어
-        Meeting Facilitator 가 SharedKickoffDecisions 산출. iteration 재진입은
-        ``prepare_feedback → run_chain`` 직진이라 kickoff 재실행 없음.
-
-    PR #140 Phase 3 (2026-05-15, 본인 비전 통찰 6 D-1):
-        ``recall_past_knowledge`` 신설 — 진입 시 RAG Searcher 가 과거 entry 검색.
-        ``curate_knowledge`` 신설 — 종결 시 Knowledge Curator 가 본 빌드 색인 →
-        다음 빌드 진입 시 recall. *진짜 자기 진화* 의 첫 cycle.
+    PR #138 Phase 1 full (2026-05-15): kickoff_meeting 신설.
+    PR #140 Phase 3 (2026-05-15): recall_past_knowledge + curate_knowledge 신설.
+    PR #149 (2026-05-15, 본부 10 두 번째 멤버): retrospective 노드 신설 — Curator
+        직전에 회고를 산출해 그 markdown 을 Curator prompt 입력으로 추가 →
+        entry summary/tags 가 *결함/성공 패턴* 으로 풍부해짐 (Phase 3 cycle 완성).
     """
     g = StateGraph(_LoopState)
     g.add_node("expand_requirements", _node_expand_requirements)
-    g.add_node("recall_past_knowledge", _node_recall_past_knowledge)  # PR #140 신규
-    g.add_node("kickoff_meeting", _node_kickoff_meeting)  # PR #138 full 신규
+    g.add_node("recall_past_knowledge", _node_recall_past_knowledge)  # PR #140
+    g.add_node("kickoff_meeting", _node_kickoff_meeting)               # PR #138 full
     g.add_node("run_chain", _node_run_chain)
-    g.add_node("run_sandbox", _node_run_sandbox)  # Phase 3 신규
+    g.add_node("run_sandbox", _node_run_sandbox)
     g.add_node("analyze_gap", _node_analyze_gap)
     g.add_node("judge_convergence", _node_judge_convergence)
     g.add_node("prepare_feedback", _node_prepare_feedback)
-    g.add_node("curate_knowledge", _node_curate_knowledge)  # PR #140 신규
+    g.add_node("retrospective", _node_retrospective)                   # PR #149
+    g.add_node("curate_knowledge", _node_curate_knowledge)             # PR #140
+    g.add_node("retrospective_blocked", _node_retrospective)           # PR #149 alias
+    g.add_node("curate_knowledge_blocked", _node_curate_knowledge)     # PR #140 alias
     g.add_node("finalize", _node_finalize)
     g.add_node("escalate", _node_escalate)
 
     g.set_entry_point("expand_requirements")
-    g.add_edge("expand_requirements", "recall_past_knowledge")  # PR #140
-    g.add_edge("recall_past_knowledge", "kickoff_meeting")      # PR #140
-    g.add_edge("kickoff_meeting", "run_chain")            # PR #138 full
-    g.add_edge("run_chain", "run_sandbox")        # Phase 3
-    g.add_edge("run_sandbox", "analyze_gap")      # Phase 3
+    g.add_edge("expand_requirements", "recall_past_knowledge")
+    g.add_edge("recall_past_knowledge", "kickoff_meeting")
+    g.add_edge("kickoff_meeting", "run_chain")
+    g.add_edge("run_chain", "run_sandbox")
+    g.add_edge("run_sandbox", "analyze_gap")
     g.add_edge("analyze_gap", "judge_convergence")
     g.add_conditional_edges(
         "judge_convergence",
         _route_after_judge,
         {
-            "finalize": "curate_knowledge",        # PR #140 — finalize 전 색인
+            "finalize": "retrospective",                # PR #149 — finalize 전 회고
             "prepare_feedback": "prepare_feedback",
-            "escalate": "curate_knowledge_blocked",  # PR #140 — escalate 전 색인
+            "escalate": "retrospective_blocked",        # PR #149 — escalate 전 회고
         },
     )
-    # curate_knowledge 노드 1개 + 두 종결 경로 (LangGraph 가 동일 노드 multi-edge 허용
-    # 안 함 → conditional edge 의 매핑으로만 분기 표현). 실제로는 하나의 노드를
-    # 두 경로 모두 거치게 하기 위해, curate_knowledge 의 다음 단계를 또 분기.
-    # 단순화: curate_knowledge 만 통과 후 finalize/escalate 결정은 별도 router.
-    g.add_node("curate_knowledge_blocked", _node_curate_knowledge)  # alias 노드
+    g.add_edge("retrospective", "curate_knowledge")
+    g.add_edge("retrospective_blocked", "curate_knowledge_blocked")
     g.add_edge("curate_knowledge", "finalize")
     g.add_edge("curate_knowledge_blocked", "escalate")
-    g.add_edge("prepare_feedback", "run_chain")  # 루프 재진입
+    g.add_edge("prepare_feedback", "run_chain")
     g.add_edge("finalize", END)
     g.add_edge("escalate", END)
 
@@ -865,6 +942,7 @@ def run_iterative_loop(
 
         curated_entry_path_str = final_state.get("curated_entry_path", "")
         curated_index_path_str = final_state.get("curated_index_path", "")
+        retro_md_path_str = final_state.get("retrospective_md_path", "")
         return LoopOutcome(
             user_request=user_request,
             verdict=decision.verdict,
@@ -883,6 +961,8 @@ def run_iterative_loop(
             curated_entry=final_state.get("curated_entry"),
             curated_entry_path=Path(curated_entry_path_str) if curated_entry_path_str else None,
             curated_index_path=Path(curated_index_path_str) if curated_index_path_str else None,
+            retrospective_report=final_state.get("retrospective_report"),
+            retrospective_md_path=Path(retro_md_path_str) if retro_md_path_str else None,
         )
 
     finally:

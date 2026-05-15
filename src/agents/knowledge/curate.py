@@ -105,8 +105,9 @@ def _build_deterministic_entry(
 # 1 LLM call (선택) — summary + tags 채움
 # ---------------------------------------------------------------------------
 _CURATE_PROMPT_TEMPLATE = """\
-당신은 한국 IT 회사의 지식 큐레이터입니다. 아래 사용자 요청 + 산출물 미리보기를 보고,
-**JSON 으로** summary (최대 120자, 1줄) + tags (5개 이내) 만 출력하세요. 다른 설명 금지.
+당신은 한국 IT 회사의 지식 큐레이터입니다. 아래 사용자 요청 + 산출물 미리보기 +
+회고 (있으면) 를 보고, **JSON 으로** summary (최대 120자, 1줄) + tags (5개 이내)
+만 출력하세요. 다른 설명 금지.
 
 스키마:
 {{
@@ -119,6 +120,8 @@ _CURATE_PROMPT_TEMPLATE = """\
   - 기술 스택 (예: python, pandas, tkinter)
   - 산출 형태 (예: cli-script, gui-app, package)
   - 상태 (qa-approved / qa-needs-revision / partial-output 중 1)
+  - **회고 기반 태그** (PR #149) — Retrospective Lead 가 결함 패턴 명시한 경우
+    그 패턴을 short-hand tag 로 (예: stale-data-dict / mock-vs-real / timeout-too-short)
 
 --- 사용자 요청 ---
 {user_request}
@@ -126,6 +129,8 @@ _CURATE_PROMPT_TEMPLATE = """\
 {preview}
 --- QA verdict (결정론 추출) ---
 {verdict}
+--- 회고 (Retrospective Lead 산출, 있으면) ---
+{retrospective}
 --- 끝 ---
 """
 
@@ -192,6 +197,7 @@ def curate_workflow(
     *,
     knowledge_index_dir: Optional[Path] = None,
     qa_verdict_hint: Optional[str] = None,
+    retrospective_md: str = "",
     llm_call: Optional[Callable[[str], str]] = None,
 ) -> tuple[KnowledgeEntry, Path, Optional[Path]]:
     """워크플로 종료 시 1회 호출 — KnowledgeEntry 산출 + yaml 저장.
@@ -204,6 +210,9 @@ def curate_workflow(
             지정 시 ``<index_dir>/<workflow_id>.yaml`` 복사본 추가 저장.
         qa_verdict_hint: 호출 측에서 알고 있는 verdict (있으면 우선 사용,
             없으면 ``04_qa_review.md`` 결정론 파싱).
+        retrospective_md: PR #149 — Retrospective Lead 산출 markdown (있으면).
+            Curator prompt 에 추가 입력으로 들어가 entry summary/tags 가 *결함/성공
+            패턴* 으로 풍부해진다. 빈 문자열이면 PR #148 동작 그대로.
         llm_call: 외부 주입 가능한 LLM 호출 (테스트용). None + 비-pytest 환경에선
             ``_default_llm_call`` 사용. pytest 환경에선 자동 skip.
 
@@ -222,6 +231,7 @@ def curate_workflow(
             user_request=user_request.strip(),
             preview=_build_preview(workflow_dir),
             verdict=entry.qa_verdict,
+            retrospective=retrospective_md.strip() if retrospective_md else "(회고 없음)",
         )
         try:
             response = llm_call(prompt)

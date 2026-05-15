@@ -177,7 +177,77 @@ class SharedKickoffDecisions:
         return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Retrospective — 빌드 종료 후 회고 (PR #149, 2026-05-15)
+# ---------------------------------------------------------------------------
+@dataclass
+class RetrospectiveReport:
+    """본부 10 Retrospective Lead 가 매 빌드 종료 시 산출하는 4단 회고.
+
+    PR #149 (본인 비전 통찰 6, D-5 처방 — 회고/학습 메커니즘 부재):
+        Phase 3 wiring (PR #148) 의 Knowledge Curator 가 코드 본문에서 평면적
+        정보로 summary/tags 채우는 한계를 해결. Retrospective Lead 가 *킥오프 합의 ↔
+        실제 산출* 차이까지 회고한 markdown 을 Curator 의 prompt 입력으로 추가 →
+        entry 의 summary/tags 가 학습 가능한 *결함/성공 패턴* 으로 풍부해짐.
+
+    Attributes:
+        workflow_id: 본 빌드의 디렉터리 이름.
+        verdict: 결정표 verdict ("COMPLETE" / "BLOCKED").
+        what_went_well: 성공 패턴 1~3개 (다음 빌드 재활용 대상).
+        what_went_wrong: 결함 패턴 1~3개 (다음 빌드 회피 대상).
+        lessons_learned: actionable insight 1~3개 (다음 빌드 task description 에
+            힌트로 주입 가능한 *행동 가능한* 학습).
+        delta_from_kickoff: 킥오프 합의 ↔ 실제 산출 차이 (있을 때만, 환율 사례 evidence).
+    """
+
+    workflow_id: str
+    verdict: str
+    what_went_well: list[str] = field(default_factory=list)
+    what_went_wrong: list[str] = field(default_factory=list)
+    lessons_learned: list[str] = field(default_factory=list)
+    delta_from_kickoff: list[str] = field(default_factory=list)
+
+    def to_yaml(self) -> str:
+        return yaml.safe_dump(asdict(self), allow_unicode=True, sort_keys=False)
+
+    @classmethod
+    def from_yaml(cls, text: str) -> "RetrospectiveReport":
+        data = yaml.safe_load(text) or {}
+        return cls(
+            workflow_id=str(data.get("workflow_id", "")),
+            verdict=str(data.get("verdict", "UNKNOWN")),
+            what_went_well=list(data.get("what_went_well", []) or []),
+            what_went_wrong=list(data.get("what_went_wrong", []) or []),
+            lessons_learned=list(data.get("lessons_learned", []) or []),
+            delta_from_kickoff=list(data.get("delta_from_kickoff", []) or []),
+        )
+
+    def to_markdown(self) -> str:
+        """사람용 markdown — ``workflow_dir/retrospective.md`` 산출 + Curator prompt 입력."""
+        lines = [
+            f"# Retrospective — {self.workflow_id}",
+            "",
+            f"**verdict**: {self.verdict}",
+            "",
+        ]
+        for title, items in (
+            ("✅ What went well", self.what_went_well),
+            ("❌ What went wrong", self.what_went_wrong),
+            ("💡 Lessons learned", self.lessons_learned),
+            ("⚠️  Delta from kickoff", self.delta_from_kickoff),
+        ):
+            lines.append(f"## {title}")
+            if items:
+                for it in items:
+                    lines.append(f"- {it}")
+            else:
+                lines.append("- (없음)")
+            lines.append("")
+        return "\n".join(lines)
+
+
 __all__ = [
+    "RetrospectiveReport",
     "SharedAssumption",
     "SharedKickoffDecisions",
 ]
