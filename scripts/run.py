@@ -39,6 +39,7 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -213,6 +214,7 @@ def _print_result_summary(
     release_url: Optional[str],
     vision_qa_summary: Optional[str] = None,
     qa_verdict_summary: Optional[str] = None,
+    iterative_summary: Optional[str] = None,
 ) -> None:
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
@@ -225,6 +227,8 @@ def _print_result_summary(
         print(f"  📦 .exe    : {exe_path} ({size_mb:.2f} MB)")
     elif exe_path:
         print(f"  📦 .exe (예상): {exe_path} — 생성 안 됨")
+    if iterative_summary:
+        print(f"  🔄 Iterate: {iterative_summary}")
     if vision_qa_summary:
         print(f"  👁️  Vision : {vision_qa_summary}")
     if qa_verdict_summary:
@@ -511,9 +515,13 @@ def _run_track_a(args: argparse.Namespace) -> int:
 
     PR #150 Phase 4: PhaseTracker 로 단계 진행 표시 + Vision QA 결과를
     ``qa_feedback_loop.evaluate_qa_results`` 로 평가해 verdict 출력.
+    PR #157 (2026-05-15): ``--auto-iterate`` 시 ``run_iterative_loop`` 호출 분기.
+        Convergence Judge 가 COMPLETE/BLOCKED 판정할 때까지 최대 ``--max-iterations``
+        회 recall→kickoff→chain→sandbox→gap→judge→retrospective→curate cycle 자동
+        반복. LoopOutcome.final_chain_result 의 ``executor_result`` / ``publish_result``
+        를 그대로 result 변수로 매핑해 downstream (Vision QA + retry + 결과 패널) 가
+        동일 흐름 재사용.
     """
-    from src.workflows.analyze_and_implement import run_analyze_and_implement
-
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
@@ -521,7 +529,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
     # 실제 .exe 산출 여부 / retry 발생 여부에 따라 ``tracker.set_total`` 로
     # 후보정 (.exe 미생성 → 축소, retry 발생 → 확장 불필요 — 각 retry 가 본인 phase
     # 를 push 하므로 current_index 가 자연 증가, set_total 가 clamp).
-    total_phases = 1  # analyze_and_implement (필수)
+    total_phases = 1  # analyze_and_implement 또는 iterative_loop (필수)
     if args.build and not args.no_vision_qa:
         total_phases += 2  # vision_qa + qa_feedback_loop
         if args.vision_qa_max_retries > 0:
@@ -529,20 +537,65 @@ def _run_track_a(args: argparse.Namespace) -> int:
             total_phases += args.vision_qa_max_retries
     tracker = PhaseTracker(total=total_phases)
 
-    tracker.start("analyze_and_implement (4~7 agent chain + build/release)")
-    result = run_analyze_and_implement(
-        args.request,
-        outputs_dir=outputs_dir,
-        verbose=args.verbose,
-        enable_gui_branch=not args.force_cli,
-        enable_build_branch=args.build,
-        enable_release_branch=args.release,
-        enable_executor=args.build,
-        enable_publish=args.release,
-        publish_as_draft=True,
-        repo_url=args.repo,
-    )
-    tracker.end(summary=f"saved_dir={result.saved_dir}")
+    iterative_summary: Optional[str] = None
+    if args.auto_iterate:
+        # PR #157 — 자기 진화 루프 진입 (opt-in)
+        from src.workflows.iterative_loop import run_iterative_loop
+
+        tracker.start(
+            f"iterative_loop (max_iter={args.max_iterations}, "
+            "recall→kickoff→chain→sandbox→gap→judge→retro→curate)"
+        )
+        outcome = run_iterative_loop(
+            args.request,
+            outputs_dir=outputs_dir,
+            max_iterations=args.max_iterations,
+            verbose=args.verbose,
+            enable_gui_branch=not args.force_cli,
+            enable_build_branch=args.build,
+            enable_release_branch=args.release,
+            enable_executor=args.build,
+            enable_publish=args.release,
+            publish_as_draft=True,
+            repo_url=args.repo,
+        )
+        result = outcome.final_chain_result
+        verdict_str = getattr(outcome.verdict, "value", str(outcome.verdict))
+        iterative_summary = (
+            f"verdict={verdict_str} iterations={outcome.iterations_run}/"
+            f"{args.max_iterations}"
+        )
+        if result is None:
+            # 안전망: 어떤 이유로든 chain_result 부재 → downstream 가 .saved_dir 등 접근 시
+            # AttributeError 위험. dummy result-like namespace 로 폴백.
+            result = SimpleNamespace(
+                saved_dir=outputs_dir,
+                executor_result=None,
+                publish_result=None,
+                gui_code_output="",
+                ui_spec="",
+                design_tokens="",
+                saved_code_files=[],
+                engineer_output="",
+            )
+        tracker.end(summary=iterative_summary)
+    else:
+        from src.workflows.analyze_and_implement import run_analyze_and_implement
+
+        tracker.start("analyze_and_implement (4~7 agent chain + build/release)")
+        result = run_analyze_and_implement(
+            args.request,
+            outputs_dir=outputs_dir,
+            verbose=args.verbose,
+            enable_gui_branch=not args.force_cli,
+            enable_build_branch=args.build,
+            enable_release_branch=args.release,
+            enable_executor=args.build,
+            enable_publish=args.release,
+            publish_as_draft=True,
+            repo_url=args.repo,
+        )
+        tracker.end(summary=f"saved_dir={result.saved_dir}")
 
     elapsed = (datetime.now() - start).total_seconds()
     exe_path = getattr(result, "executor_result", None)
@@ -633,7 +686,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
 
     _print_result_summary(
         "A", elapsed, outputs_dir, exe_path, release_url,
-        vision_summary, qa_verdict_summary,
+        vision_summary, qa_verdict_summary, iterative_summary,
     )
     return 0
 
@@ -886,6 +939,22 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "PR #151 — Vision QA 실패 시 Engineer + Build 재호출 횟수 (기본 1). "
             "0 으로 설정하면 retry 비활성 (PR #150 의 verdict 가시화만). "
             "풀체인 (~25min) 이 아닌 Engineer + Build (~5min) 만 재실행."
+        ),
+    )
+    parser.add_argument(
+        "--auto-iterate", action="store_true", default=False,
+        help=(
+            "PR #157 — Track A 진입을 run_iterative_loop (자기 진화 루프) 로 전환. "
+            "기본 OFF (backward compat — 1회 실행). 켜면 Convergence Judge 가 COMPLETE/"
+            "BLOCKED 판정할 때까지 최대 5 iteration (recall→kickoff→chain→sandbox→gap→"
+            "judge→retrospective→curate cycle). 비용 주의 — iter 당 ~25min × 최대 5회."
+        ),
+    )
+    parser.add_argument(
+        "--max-iterations", type=int, default=5,
+        help=(
+            "PR #157 — --auto-iterate 시 최대 iteration 횟수 (기본 5). 1 로 설정하면 "
+            "사실상 1회 실행 (자기 진화 없이 recall + curate cycle 만)."
         ),
     )
     return parser.parse_args(argv)

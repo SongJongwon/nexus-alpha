@@ -185,6 +185,13 @@ class _LoopState(TypedDict, total=False):
     signing_available: bool  # Phase 5 — Update Checker / Distribution Agent 입력
     privacy_level: str  # Phase 5 — Distribution Agent 입력
     enable_engineer_reviewer_delegation: bool  # PR #141 Phase 2 — Engineer↔Reviewer delegation
+    # PR #157 — production wire: 매 iteration 의 analyze_and_implement 에 propagate
+    enable_executor: bool  # PyInstaller .exe 실 빌드 활성
+    executor_timeout_sec: int  # PyInstaller subprocess 타임아웃
+    enable_publish: bool  # gh release create 실 발행 활성
+    publish_as_draft: bool  # Draft 로 발행할지 (안전 기본 True)
+    publish_timeout_sec: int  # gh CLI 타임아웃
+    verbose: bool  # CrewAI 중간 로그 출력
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -603,7 +610,7 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     chain_result = run_analyze_and_implement(
         request_with_feedback,
         outputs_dir=outputs_dir,
-        verbose=False,
+        verbose=state.get("verbose", False),
         enable_gui_branch=state.get("enable_gui_branch", False),
         enable_build_branch=state.get("enable_build_branch", False),
         target_platform=state.get("target_platform", "windows"),
@@ -612,6 +619,13 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
         repo_url=state.get("repo_url", ""),
         signing_available=state.get("signing_available", False),
         privacy_level=state.get("privacy_level", "public"),
+        # PR #157 — production wire: 실 .exe 빌드 + Draft Release 발행 propagate.
+        # 기본 False 유지 (기존 호출 측 backward compat).
+        enable_executor=state.get("enable_executor", False),
+        executor_timeout_sec=state.get("executor_timeout_sec", 300),
+        enable_publish=state.get("enable_publish", False),
+        publish_as_draft=state.get("publish_as_draft", True),
+        publish_timeout_sec=state.get("publish_timeout_sec", 120),
         shared_kickoff_decisions=state.get("shared_kickoff_decisions"),
         enable_engineer_reviewer_delegation=state.get(
             "enable_engineer_reviewer_delegation", False
@@ -860,6 +874,13 @@ def run_iterative_loop(
     signing_available: bool = False,
     privacy_level: str = "public",
     enable_engineer_reviewer_delegation: bool = False,
+    # PR #157 — production wire: scripts/run.py 의 --auto-iterate 진입 시 필요
+    enable_executor: bool = False,
+    executor_timeout_sec: int = 300,
+    enable_publish: bool = False,
+    publish_as_draft: bool = True,
+    publish_timeout_sec: int = 120,
+    verbose: bool = False,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -947,6 +968,13 @@ def run_iterative_loop(
             "signing_available": signing_available,
             "privacy_level": privacy_level,
             "enable_engineer_reviewer_delegation": enable_engineer_reviewer_delegation,
+            # PR #157 — production wire propagate
+            "enable_executor": enable_executor,
+            "executor_timeout_sec": executor_timeout_sec,
+            "enable_publish": enable_publish,
+            "publish_as_draft": publish_as_draft,
+            "publish_timeout_sec": publish_timeout_sec,
+            "verbose": verbose,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.
