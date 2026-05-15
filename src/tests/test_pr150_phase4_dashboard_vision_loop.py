@@ -211,28 +211,37 @@ def test_run_vision_qa_str_wrapper_returns_summary_line(
 
 
 def test_evaluate_vision_qa_via_feedback_loop_pass_verdict(run_mod) -> None:
-    """Vision result success=True → QA_LOOP PASS verdict."""
+    """Vision result success=True → QA_LOOP PASS verdict.
+
+    PR #151: 반환이 ``(verdict_str, decision)`` 튜플로 변경됨. PR #150 회귀 테스트는
+    첫 요소가 PR #150 verdict 형식 유지하는지 확인.
+    """
     result = SimpleNamespace(
         success=True,
         skipped=False,
         summary_line=lambda: "[GUI_TEST PASS]",
     )
-    verdict = run_mod._evaluate_vision_qa_via_feedback_loop(result)
+    verdict, decision = run_mod._evaluate_vision_qa_via_feedback_loop(result)
     assert "QA_LOOP PASS" in verdict
+    assert decision is not None
+    assert decision.overall_passed is True
 
 
 def test_evaluate_vision_qa_via_feedback_loop_fail_verdict(run_mod) -> None:
-    """Vision result success=False → BUDGET_EXHAUSTED (max_retries=0 이므로 retry 불가).
+    """Vision result success=False → BUDGET_EXHAUSTED (max_retries=0 기본).
 
     PR #150 의 의도적 선택 — verdict 가시화만, 자동 retry 미시작.
+    PR #151: 호출 측이 ``max_retries=0`` 명시했을 때만 verdict 가시화 모드.
     """
     result = SimpleNamespace(
         success=False,
         skipped=False,
         summary_line=lambda: "[GUI_TEST FAIL] critical=2",
     )
-    verdict = run_mod._evaluate_vision_qa_via_feedback_loop(result)
+    verdict, decision = run_mod._evaluate_vision_qa_via_feedback_loop(result)
     assert "BUDGET_EXHAUSTED" in verdict or "RETRY" in verdict
+    assert decision is not None
+    assert decision.overall_passed is False
 
 
 # ---------------------------------------------------------------------------
