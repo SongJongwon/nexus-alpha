@@ -64,6 +64,7 @@ from src.agents.build_release.build_executor import ExecuteResult, execute_pyins
 from src.agents.operations import run_python_package_in_sandbox
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
+    format_kickoff_context_directive,
     kickoff_with_converter_rescue,
     retry_short_tasks_in_chain,
     task_output_text as _task_output_text,
@@ -117,20 +118,32 @@ class BuildWorkflowResult:
 # ---------------------------------------------------------------------------
 # Task 빌더 (5명 각자)
 # ---------------------------------------------------------------------------
-def _build_dependency_analyzer_task(agent, code_summary: str, target_platform: str) -> Task:
+def _build_dependency_analyzer_task(
+    agent,
+    code_summary: str,
+    target_platform: str,
+    *,
+    shared_kickoff_decisions=None,
+) -> Task:
+    """Track B 첫 task — kickoff context only (no prior LLM task)."""
     import sys
 
+    base_description = (
+        "아래 4블록을 입력으로, 백스토리에 명시된 3단 구조(YAML 보고서 6축 + "
+        "분석가 코멘트 + 미검토 영역)로 한국어 의존성 보고서를 작성하세요. "
+        "lazy import / data file / native binary 신호를 빠뜨리지 마세요.\n\n"
+        f"[PROJECT_LAYOUT]\n{code_summary}\n\n"
+        f"[CODE_SAMPLES]\n(상위 호출 측이 코드 본문을 별도로 첨부하지 않은 경우, "
+        f"PROJECT_LAYOUT 의 파일명·역할만으로 lazy import 가능성 추정)\n\n"
+        f"[REQUIREMENTS]\n(상위 호출 측 미제공 — 코드에서 추론)\n\n"
+        f"[TARGET_PLATFORM]\n{target_platform}\n"
+    )
+    directive = format_kickoff_context_directive(
+        shared_kickoff_decisions, prior_agent_roles=()
+    )
+
     kwargs: dict = dict(
-        description=(
-            "아래 4블록을 입력으로, 백스토리에 명시된 3단 구조(YAML 보고서 6축 + "
-            "분석가 코멘트 + 미검토 영역)로 한국어 의존성 보고서를 작성하세요. "
-            "lazy import / data file / native binary 신호를 빠뜨리지 마세요.\n\n"
-            f"[PROJECT_LAYOUT]\n{code_summary}\n\n"
-            f"[CODE_SAMPLES]\n(상위 호출 측이 코드 본문을 별도로 첨부하지 않은 경우, "
-            f"PROJECT_LAYOUT 의 파일명·역할만으로 lazy import 가능성 추정)\n\n"
-            f"[REQUIREMENTS]\n(상위 호출 측 미제공 — 코드에서 추론)\n\n"
-            f"[TARGET_PLATFORM]\n{target_platform}\n"
-        ),
+        description=base_description + directive,
         expected_output=(
             "YAML 6축 보고서 + 분석가 코멘트 + 미검토 영역. 마지막 줄 `Final Answer: "
             "deps=N개, hidden=M개, license_warnings=L개, os_blockers=B개`."
@@ -143,21 +156,32 @@ def _build_dependency_analyzer_task(agent, code_summary: str, target_platform: s
 
 
 def _build_build_engineer_task(
-    agent, code_summary: str, target_platform: str, entry_hint: str, dep_task: Task
+    agent,
+    code_summary: str,
+    target_platform: str,
+    entry_hint: str,
+    dep_task: Task,
+    *,
+    shared_kickoff_decisions=None,
 ) -> Task:
     # 이슈 6 방어선 2 (PR #31) — production 에서만 output_pydantic 활성.
     # pytest 환경에선 FakeProvider 응답이 JSON 스키마와 맞지 않아 false 실패 방지.
     import sys
 
+    base_description = (
+        "이전 컨텍스트의 의존성 보고서 + 아래 3블록을 받아, 백스토리에 명시된 "
+        "5단 구조(도구 선택 / 빌드 명령 / 함정 / 검증 체크리스트 / 빌드 엔지니어 "
+        "노트)로 한국어 빌드 사양을 작성하세요.\n\n"
+        f"[PROJECT_LAYOUT]\n{code_summary}\n\n"
+        f"[TARGET_PLATFORM]\n{target_platform}\n\n"
+        f"[ENTRY_POINT]\n{entry_hint}\n"
+    )
+    directive = format_kickoff_context_directive(
+        shared_kickoff_decisions, prior_agent_roles=["Dependency Analyzer"]
+    )
+
     kwargs: dict = dict(
-        description=(
-            "이전 컨텍스트의 의존성 보고서 + 아래 3블록을 받아, 백스토리에 명시된 "
-            "5단 구조(도구 선택 / 빌드 명령 / 함정 / 검증 체크리스트 / 빌드 엔지니어 "
-            "노트)로 한국어 빌드 사양을 작성하세요.\n\n"
-            f"[PROJECT_LAYOUT]\n{code_summary}\n\n"
-            f"[TARGET_PLATFORM]\n{target_platform}\n\n"
-            f"[ENTRY_POINT]\n{entry_hint}\n"
-        ),
+        description=base_description + directive,
         expected_output=(
             "5단 한국어 빌드 사양. 마지막 줄 `Final Answer: tool=X, mode=Y, "
             "hidden_imports=N개, est_size=~ZMB`."
@@ -176,21 +200,28 @@ def _build_asset_manager_task(
     code_summary: str,
     design_tokens: str,
     target_platform: str,
+    *,
+    shared_kickoff_decisions=None,
 ) -> Task:
     import sys
 
+    base_description = (
+        "아래 5블록을 입력으로, 백스토리에 명시된 3단 구조(YAML 매니페스트 + "
+        "처리 지시 + 매니저 노트)로 한국어 자원 매니페스트를 작성하세요. "
+        "사용자가 자원을 안 준 항목은 placeholder 로 채우고 사후 교체 권고를 "
+        "노트에 명시하세요.\n\n"
+        f"[USER_REQUEST]\n{user_request}\n\n"
+        f"[PROJECT_LAYOUT]\n{code_summary}\n\n"
+        f"[DESIGN_TOKENS]\n{design_tokens or '(없음 — Phase 4 GUI 분기 미사용)'}\n\n"
+        f"[TARGET_PLATFORM]\n{target_platform}\n\n"
+        f"[PROVIDED_ASSETS]\nnone   # 사용자 자원 미제공 — placeholder 처리\n"
+    )
+    directive = format_kickoff_context_directive(
+        shared_kickoff_decisions, prior_agent_roles=()
+    )
+
     kwargs: dict = dict(
-        description=(
-            "아래 5블록을 입력으로, 백스토리에 명시된 3단 구조(YAML 매니페스트 + "
-            "처리 지시 + 매니저 노트)로 한국어 자원 매니페스트를 작성하세요. "
-            "사용자가 자원을 안 준 항목은 placeholder 로 채우고 사후 교체 권고를 "
-            "노트에 명시하세요.\n\n"
-            f"[USER_REQUEST]\n{user_request}\n\n"
-            f"[PROJECT_LAYOUT]\n{code_summary}\n\n"
-            f"[DESIGN_TOKENS]\n{design_tokens or '(없음 — Phase 4 GUI 분기 미사용)'}\n\n"
-            f"[TARGET_PLATFORM]\n{target_platform}\n\n"
-            f"[PROVIDED_ASSETS]\nnone   # 사용자 자원 미제공 — placeholder 처리\n"
-        ),
+        description=base_description + directive,
         expected_output=(
             "YAML 매니페스트 + 처리 지시 + 매니저 노트 3단 구조. 마지막 줄 "
             "`Final Answer: assets — icons=N개, fonts=M개, images=I개, locales=L개, "
@@ -209,21 +240,29 @@ def _build_installer_creator_task(
     user_request: str,
     build_task: Task,
     asset_task: Task,
+    *,
+    shared_kickoff_decisions=None,
 ) -> Task:
     import sys
 
+    base_description = (
+        "이전 컨텍스트의 빌드 사양 + 자원 매니페스트 + 아래 3블록을 받아, "
+        "백스토리에 명시된 4단 구조(도구 선택 / 인스톨러 스크립트 / 사용자 가이드 / "
+        "노트)로 한국어 인스톨러 사양을 작성하세요. 코드 서명이 없으므로 SignTool "
+        "절은 비활성 주석으로만 남기고, SmartScreen 우회 안내를 사용자 가이드에 "
+        "포함하세요.\n\n"
+        f"[TARGET_PLATFORM]\n{target_platform}\n\n"
+        f"[APP_METADATA]\n사용자 요청: {user_request}\n"
+        f"display_name·short_name·publisher 는 자원 매니페스트의 app_metadata 값 사용\n\n"
+        f"[SIGNING_AVAILABLE]\nno\n"
+    )
+    directive = format_kickoff_context_directive(
+        shared_kickoff_decisions,
+        prior_agent_roles=["Build Engineer", "Asset Manager"],
+    )
+
     kwargs: dict = dict(
-        description=(
-            "이전 컨텍스트의 빌드 사양 + 자원 매니페스트 + 아래 3블록을 받아, "
-            "백스토리에 명시된 4단 구조(도구 선택 / 인스톨러 스크립트 / 사용자 가이드 / "
-            "노트)로 한국어 인스톨러 사양을 작성하세요. 코드 서명이 없으므로 SignTool "
-            "절은 비활성 주석으로만 남기고, SmartScreen 우회 안내를 사용자 가이드에 "
-            "포함하세요.\n\n"
-            f"[TARGET_PLATFORM]\n{target_platform}\n\n"
-            f"[APP_METADATA]\n사용자 요청: {user_request}\n"
-            f"display_name·short_name·publisher 는 자원 매니페스트의 app_metadata 값 사용\n\n"
-            f"[SIGNING_AVAILABLE]\nno\n"
-        ),
+        description=base_description + directive,
         expected_output=(
             "4단 한국어 인스톨러 사양. 마지막 줄 `Final Answer: tool=<X>, "
             "output=<setup.exe|...>, est_size=<N>MB, signed=no`."
@@ -237,22 +276,31 @@ def _build_installer_creator_task(
 
 
 def _build_platform_tester_task(
-    agent, sandbox_summary: str, build_context_summary: str
+    agent,
+    sandbox_summary: str,
+    build_context_summary: str,
+    *,
+    shared_kickoff_decisions=None,
 ) -> Task:
     import sys
 
+    base_description = (
+        "아래는 Phase 3 의 결정론 sandbox(`run_python_package_in_sandbox`) "
+        "산출물입니다. 진짜 .exe 검증이 아니라 **Engineer 산출 .py 코드의 부팅 "
+        "smoke** 임을 인지하고, 백스토리에 명시된 5단 구조(종합 판정 / 출력 "
+        "인용 / 근본 원인 / 재현·다음 단계 / 미관찰 영역)로 한국어 보고서를 "
+        "작성하세요. **verdict 는 절대 뒤집지 마세요.**\n\n"
+        f"--- PlatformTestResult (sandbox 결과 차용) ---\n{sandbox_summary}\n\n"
+        f"[BUILD_CONTEXT]\n{build_context_summary}\n\n"
+        "주의: 본 검증은 *.py 코드 실행* 이며, 실제 PyInstaller 빌드 산출 .exe 가 "
+        "아닙니다. '미관찰 영역' 섹션에 이 한계를 반드시 명시하세요."
+    )
+    directive = format_kickoff_context_directive(
+        shared_kickoff_decisions, prior_agent_roles=()
+    )
+
     kwargs: dict = dict(
-        description=(
-            "아래는 Phase 3 의 결정론 sandbox(`run_python_package_in_sandbox`) "
-            "산출물입니다. 진짜 .exe 검증이 아니라 **Engineer 산출 .py 코드의 부팅 "
-            "smoke** 임을 인지하고, 백스토리에 명시된 5단 구조(종합 판정 / 출력 "
-            "인용 / 근본 원인 / 재현·다음 단계 / 미관찰 영역)로 한국어 보고서를 "
-            "작성하세요. **verdict 는 절대 뒤집지 마세요.**\n\n"
-            f"--- PlatformTestResult (sandbox 결과 차용) ---\n{sandbox_summary}\n\n"
-            f"[BUILD_CONTEXT]\n{build_context_summary}\n\n"
-            "주의: 본 검증은 *.py 코드 실행* 이며, 실제 PyInstaller 빌드 산출 .exe 가 "
-            "아닙니다. '미관찰 영역' 섹션에 이 한계를 반드시 명시하세요."
-        ),
+        description=base_description + directive,
         expected_output=(
             "5단 한국어 산출물 검증 보고서. 마지막 줄 `Final Answer: <verdict> "
             "(exit=<int>, startup=<X.X>s, elapsed=<X.X>s)`."
@@ -1473,6 +1521,7 @@ def run_build_workflow(
     enable_executor: bool = False,
     executor_timeout_sec: int = 300,
     verbose: bool = False,
+    shared_kickoff_decisions=None,
 ) -> BuildWorkflowResult:
     """5-agent 빌드 사슬을 한 번에 실행. analyze_and_implement 산출 직후 호출 가정.
 
@@ -1531,15 +1580,35 @@ def run_build_workflow(
         asset_agent = create_asset_manager_agent(verbose=verbose)
         installer_agent = create_installer_creator_agent(verbose=verbose)
 
-        dep_task = _build_dependency_analyzer_task(dep_agent, code_summary, target_platform)
+        dep_task = _build_dependency_analyzer_task(
+            dep_agent,
+            code_summary,
+            target_platform,
+            shared_kickoff_decisions=shared_kickoff_decisions,
+        )
         build_task = _build_build_engineer_task(
-            build_agent, code_summary, target_platform, entry_hint, dep_task
+            build_agent,
+            code_summary,
+            target_platform,
+            entry_hint,
+            dep_task,
+            shared_kickoff_decisions=shared_kickoff_decisions,
         )
         asset_task = _build_asset_manager_task(
-            asset_agent, user_request, code_summary, design_tokens, target_platform
+            asset_agent,
+            user_request,
+            code_summary,
+            design_tokens,
+            target_platform,
+            shared_kickoff_decisions=shared_kickoff_decisions,
         )
         installer_task = _build_installer_creator_task(
-            installer_agent, target_platform, user_request, build_task, asset_task
+            installer_agent,
+            target_platform,
+            user_request,
+            build_task,
+            asset_task,
+            shared_kickoff_decisions=shared_kickoff_decisions,
         )
 
         _build_chain_tasks = [dep_task, build_task, asset_task, installer_task]
@@ -1570,7 +1639,12 @@ def run_build_workflow(
                 f"n_code_files={len(code_files)}, "
                 f"entry_hint={entry_hint}"
             )
-            tester_task = _build_platform_tester_task(tester, sandbox_serialized, build_ctx)
+            tester_task = _build_platform_tester_task(
+                tester,
+                sandbox_serialized,
+                build_ctx,
+                shared_kickoff_decisions=shared_kickoff_decisions,
+            )
             _tester_crew = Crew(
                 agents=[tester],
                 tasks=[tester_task],

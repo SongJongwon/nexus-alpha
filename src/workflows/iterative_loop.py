@@ -67,6 +67,10 @@ from src.agents.analysis import (
     create_gap_analyst_agent,
     create_requirement_expander_agent,
 )
+from src.agents.coordination import (
+    SharedKickoffDecisions,
+    run_kickoff_meeting,
+)
 from src.agents.c_level import (
     DEFAULT_MAX_ITERATIONS,
     NO_BUDGET_GATE,
@@ -168,6 +172,9 @@ class _LoopState(TypedDict, total=False):
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
+
+    # PR #138 Phase 1 full — Meeting Facilitator 산출 (1회만, kickoff 회의 결과)
+    shared_kickoff_decisions: Any  # SharedKickoffDecisions | None
 
     # 매 iteration 마다 갱신
     iteration: int
@@ -339,6 +346,41 @@ def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
     }
 
 
+def _node_kickoff_meeting(state: _LoopState) -> dict[str, Any]:
+    """PR #138 Phase 1 full — Meeting Facilitator 킥오프 회의 1회 진행.
+
+    설계 (본인 비전 통찰 6, 2026-05-15):
+        expand_requirements 직후 / run_chain 진입 직전. 사용자 요청 +
+        Requirement Expander 산출 YAML 을 받아 Meeting Facilitator 가
+        ``SharedKickoffDecisions`` 산출. state 에 저장되어 후속 chain 의 모든
+        task description 에 자동 주입됨 — 환율 변환기 사례 (cross-agent
+        inconsistency) 재발 차단.
+
+    iteration 재진입 시:
+        ``prepare_feedback → run_chain`` 경로로 돌아오므로 본 노드는 skip.
+        state 의 ``shared_kickoff_decisions`` 가 그대로 유지.
+    """
+    decisions = run_kickoff_meeting(
+        user_request=state["user_request"],
+        spec_markdown=state.get("spec_markdown", ""),
+    )
+
+    # outputs_dir 루트에 yaml 산출 — 후속 iteration 들 사이 공유. 1회만 작성.
+    outputs_dir = (
+        Path(state["outputs_dir"]) if state.get("outputs_dir") else DEFAULT_OUTPUTS_DIR
+    )
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        (outputs_dir / "shared_kickoff_decisions.yaml").write_text(
+            decisions.to_yaml(), encoding="utf-8"
+        )
+    except OSError:
+        # 디스크 실패는 워크플로 차단 사유 아님 — state 의 객체만 유지
+        pass
+
+    return {"shared_kickoff_decisions": decisions}
+
+
 def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     """analyze_and_implement 4-agent 체인 호출. iteration 마다 실행."""
     next_iter = state["iteration"] + 1
@@ -364,6 +406,7 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
         repo_url=state.get("repo_url", ""),
         signing_available=state.get("signing_available", False),
         privacy_level=state.get("privacy_level", "public"),
+        shared_kickoff_decisions=state.get("shared_kickoff_decisions"),
     )
 
     artifacts = list(state.get("iteration_artifacts", []))
@@ -533,13 +576,20 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     """LangGraph StateGraph 인스턴스를 조립해 compiled graph 를 반환한다.
 
     구조:
-        expand_requirements → run_chain → analyze_gap → judge_convergence
-            ├── COMPLETE → finalize → END
-            ├── IMPROVE_NEEDED → prepare_feedback → run_chain (loop)
-            └── BLOCKED → escalate → END
+        expand_requirements → kickoff_meeting → run_chain → run_sandbox →
+            analyze_gap → judge_convergence
+                ├── COMPLETE → finalize → END
+                ├── IMPROVE_NEEDED → prepare_feedback → run_chain (loop)
+                └── BLOCKED → escalate → END
+
+    PR #138 Phase 1 full (2026-05-15, 본인 비전 통찰 6):
+        ``kickoff_meeting`` 노드 신설. expand_requirements 직후 1회만 실행되어
+        Meeting Facilitator 가 SharedKickoffDecisions 산출. iteration 재진입은
+        ``prepare_feedback → run_chain`` 직진이라 kickoff 재실행 없음.
     """
     g = StateGraph(_LoopState)
     g.add_node("expand_requirements", _node_expand_requirements)
+    g.add_node("kickoff_meeting", _node_kickoff_meeting)  # PR #138 full 신규
     g.add_node("run_chain", _node_run_chain)
     g.add_node("run_sandbox", _node_run_sandbox)  # Phase 3 신규
     g.add_node("analyze_gap", _node_analyze_gap)
@@ -549,7 +599,8 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     g.add_node("escalate", _node_escalate)
 
     g.set_entry_point("expand_requirements")
-    g.add_edge("expand_requirements", "run_chain")
+    g.add_edge("expand_requirements", "kickoff_meeting")  # PR #138 full
+    g.add_edge("kickoff_meeting", "run_chain")            # PR #138 full
     g.add_edge("run_chain", "run_sandbox")        # Phase 3
     g.add_edge("run_sandbox", "analyze_gap")      # Phase 3
     g.add_edge("analyze_gap", "judge_convergence")

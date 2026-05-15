@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from crewai import Crew, Process, Task
 
@@ -404,7 +404,13 @@ def _build_engineer_task(engineer, cto_task: Task, analyst_task: Task) -> Task:
     )
 
 
-def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
+def _build_pytest_author_task(
+    pytest_author,
+    code_task: Task,
+    *,
+    shared_kickoff_decisions=None,
+    prior_agent_roles: Optional[Sequence[str]] = None,
+) -> Task:
     """Pytest Author Task — code_task (Engineer 또는 GUI Code Generator) 의 산출
     코드를 컨텍스트로 받아 같은 디렉터리 배치 가능한 ``test_*.py`` 작성.
 
@@ -415,49 +421,63 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
         - pytest 환경에선 output_pydantic 미적용 (FakeProvider 호환)
         - 의도: functional/robustness executor 가 GUI 산출물에서 SKIPPED 되므로
           그 *의미* 를 pytest 안에 흡수 → code_qa 안에 부하/엣지 검증 포함
+
+    PR #138 Phase 1 full (2026-05-15, 본인 비전 통찰 6):
+        kickoff context + cross-agent consistency directive 를 description 에
+        append. Pytest 가 코드 산출과 *다른 가정* (예: 환율 API vs 정적 dict) 으로
+        테스트를 짜면 환율 변환기 사례 같은 비일관성이 묻혀 통과 — 본 directive
+        가 그 사각지대 차단.
     """
     import sys
 
+    from ._common import format_kickoff_context_directive
+
+    base_description = (
+        "이전 컨텍스트의 산출 코드 (`<entry>.py`) 를 읽고 같은 디렉터리에 "
+        "배치 가능한 ``test_<entry>.py`` 를 백스토리에 명시된 3단 구조"
+        "(테스트 전략 / 실 코드 / 검증 의도+한계)로 작성하세요.\n\n"
+        "## 분량 임계 (PR #61 강화 + PR #64 fence 마커) 🚨\n"
+        "  - 전체 출력 **최소 1200자** — Final Answer 한 줄만 출력하면 task 실패로 간주\n"
+        "  - ``test_code_block`` 안에 **```python\\n 으로 시작하고 \\n``` 으로 "
+        "    닫는 fence 마커** 반드시 포함 [PR #64] — fence 누락 시 "
+        "    ``_extract_code_blocks`` 매치 실패로 ``test_*.py`` 추출 안 됨 "
+        "    (10차 E2E 9차 회귀 사례). schema ``_ensure_python_fence`` 가 "
+        "    자동 보정하지만 LLM 응답 자체에 포함이 1순위\n"
+        "  - 코드 블록 첫 줄 ``# file: test_<entry>.py`` 헤더\n"
+        "  - 코드 블록 안에 ``def test_*`` **최소 10개** (4 카테고리 분포)\n\n"
+        "## 4 카테고리 분포 강제 (PR #61) — functional/robustness 의미 흡수\n"
+        "GUI 산출물의 경우 functional/robustness executor 가 SKIPPED 되므로, "
+        "본 pytest 가 그 *의미* 를 모두 흡수해야 합니다:\n"
+        "  a) **Happy path** ≥ 3개: 기본 사칙연산, 결과 누적 등\n"
+        "  b) **Edge cases** ≥ 4개 (functional 흡수): 0, 음수, 매우 큰 수 "
+        "(10**15+), 빈 입력, 유니코드 (한글/이모지), 비-수치 입력\n"
+        "  c) **Robustness/load** ≥ 3개 (robustness 흡수): 1000회 연속 호출 "
+        "(`for _ in range(1000): ...`), 긴 표현식 chain (10+ 연산자), "
+        "rapid_repeat (인스턴스 5회 재생성 후 idempotency)\n"
+        "  d) **Error handling** ≥ 1개: ZeroDivisionError, OverflowError, "
+        "ValueError 등 `with pytest.raises(...):` 패턴\n\n"
+        "## 절대 규칙\n"
+        "  1. ``pytest <code_dir>`` 만으로 standalone 실행 가능\n"
+        "  2. GUI 윈도우 절대 미표시 (tkinter/customtkinter/PyQt 등은 "
+        "     ``monkeypatch`` 로 ``__init__`` / ``mainloop`` no-op)\n"
+        "  3. import 경로 보정: 테스트 상단에 ``sys.path.insert(0, str("
+        "Path(__file__).parent))``\n"
+        "  4. 결정론적 assertion (예상값을 코드에 박아넣음 — truthy-only 금지)\n"
+        "  5. 함수명 prefix 권장: ``test_happy_*`` / ``test_edge_*`` / "
+        "``test_load_*`` / ``test_error_*``\n\n"
+        "## output_pydantic 강제\n"
+        "본 task 는 ``PytestSuiteOutput`` schema 로 4개 필드 (summary / "
+        "test_strategy / test_code_block / intent_and_limits) 모두 채워져야 "
+        "완료됩니다. 누락 시 CrewAI 가 재호출 → 그래도 실패 시 PR #55 "
+        "capture-before-rescue 로 raw 보존.\n"
+    )
+    directive = format_kickoff_context_directive(
+        shared_kickoff_decisions,
+        prior_agent_roles=list(prior_agent_roles or ["Engineer (코드 산출자)"]),
+    )
+
     kwargs: dict = dict(
-        description=(
-            "이전 컨텍스트의 산출 코드 (`<entry>.py`) 를 읽고 같은 디렉터리에 "
-            "배치 가능한 ``test_<entry>.py`` 를 백스토리에 명시된 3단 구조"
-            "(테스트 전략 / 실 코드 / 검증 의도+한계)로 작성하세요.\n\n"
-            "## 분량 임계 (PR #61 강화 + PR #64 fence 마커) 🚨\n"
-            "  - 전체 출력 **최소 1200자** — Final Answer 한 줄만 출력하면 task 실패로 간주\n"
-            "  - ``test_code_block`` 안에 **```python\\n 으로 시작하고 \\n``` 으로 "
-            "    닫는 fence 마커** 반드시 포함 [PR #64] — fence 누락 시 "
-            "    ``_extract_code_blocks`` 매치 실패로 ``test_*.py`` 추출 안 됨 "
-            "    (10차 E2E 9차 회귀 사례). schema ``_ensure_python_fence`` 가 "
-            "    자동 보정하지만 LLM 응답 자체에 포함이 1순위\n"
-            "  - 코드 블록 첫 줄 ``# file: test_<entry>.py`` 헤더\n"
-            "  - 코드 블록 안에 ``def test_*`` **최소 10개** (4 카테고리 분포)\n\n"
-            "## 4 카테고리 분포 강제 (PR #61) — functional/robustness 의미 흡수\n"
-            "GUI 산출물의 경우 functional/robustness executor 가 SKIPPED 되므로, "
-            "본 pytest 가 그 *의미* 를 모두 흡수해야 합니다:\n"
-            "  a) **Happy path** ≥ 3개: 기본 사칙연산, 결과 누적 등\n"
-            "  b) **Edge cases** ≥ 4개 (functional 흡수): 0, 음수, 매우 큰 수 "
-            "(10**15+), 빈 입력, 유니코드 (한글/이모지), 비-수치 입력\n"
-            "  c) **Robustness/load** ≥ 3개 (robustness 흡수): 1000회 연속 호출 "
-            "(`for _ in range(1000): ...`), 긴 표현식 chain (10+ 연산자), "
-            "rapid_repeat (인스턴스 5회 재생성 후 idempotency)\n"
-            "  d) **Error handling** ≥ 1개: ZeroDivisionError, OverflowError, "
-            "ValueError 등 `with pytest.raises(...):` 패턴\n\n"
-            "## 절대 규칙\n"
-            "  1. ``pytest <code_dir>`` 만으로 standalone 실행 가능\n"
-            "  2. GUI 윈도우 절대 미표시 (tkinter/customtkinter/PyQt 등은 "
-            "     ``monkeypatch`` 로 ``__init__`` / ``mainloop`` no-op)\n"
-            "  3. import 경로 보정: 테스트 상단에 ``sys.path.insert(0, str("
-            "Path(__file__).parent))``\n"
-            "  4. 결정론적 assertion (예상값을 코드에 박아넣음 — truthy-only 금지)\n"
-            "  5. 함수명 prefix 권장: ``test_happy_*`` / ``test_edge_*`` / "
-            "``test_load_*`` / ``test_error_*``\n\n"
-            "## output_pydantic 강제\n"
-            "본 task 는 ``PytestSuiteOutput`` schema 로 4개 필드 (summary / "
-            "test_strategy / test_code_block / intent_and_limits) 모두 채워져야 "
-            "완료됩니다. 누락 시 CrewAI 가 재호출 → 그래도 실패 시 PR #55 "
-            "capture-before-rescue 로 raw 보존.\n"
-        ),
+        description=base_description + directive,
         expected_output=(
             "PytestSuiteOutput schema 4 필드 모두 채워진 마크다운 (전체 1200자+, "
             "```python``` 블록 1개+, def test_* 10개+ — happy/edge/load/error 4 "
@@ -471,23 +491,49 @@ def _build_pytest_author_task(pytest_author, code_task: Task) -> Task:
     return Task(**kwargs)
 
 
-def _build_qa_task(reviewer, code_task: Task) -> Task:
-    """Code Reviewer Task — code_task (Engineer 또는 GUI Code Generator) 컨텍스트로."""
+def _build_qa_task(
+    reviewer,
+    code_task: Task,
+    *,
+    shared_kickoff_decisions=None,
+    prior_agent_roles: Optional[Sequence[str]] = None,
+) -> Task:
+    """Code Reviewer Task — code_task (Engineer 또는 GUI Code Generator) 컨텍스트로.
+
+    PR #138 Phase 1 full (2026-05-15, 본인 비전 통찰 6):
+        kickoff context + cross-agent consistency directive 추가. Reviewer 가
+        *킥오프 합의된 가정* 과 *코드 산출* 의 일치 여부를 명시적으로 점검하도록
+        강제 — 환율 변환기 사례의 "API 가정 vs 정적 dict 구현" 같은 불일치가
+        Reviewer 의 5 점검 항목에 잡히지 않고 통과한 회귀 차단.
+    """
     import sys
 
+    from ._common import format_kickoff_context_directive
+
+    base_description = (
+        "이전 컨텍스트의 코드 산출물을 백스토리에 명시된 다섯 가지 정적 점검 "
+        "항목 — 타입 힌트 / docstring / pytest 실행 가능성 / 경계 예외 처리 / "
+        "모듈 분리 — 으로 점검하고, **5단 구조(종합 판정 / 항목별 결과표 / "
+        "발견된 이슈 / 권장 보정 / 미검토 영역)** 의 한국어 마크다운 리뷰 "
+        "보고서를 작성하세요.\n\n"
+        "유의 사항:\n"
+        "  - 코드를 실행하지 않습니다(정적 점검 전담).\n"
+        "  - 발견 사항은 (파일:라인 — 인용 — 원칙 — 보정안) 형식으로 적습니다.\n"
+        "  - **킥오프 합의 사항 일치 점검 필수** (PR #138 Phase 1 full):\n"
+        "    아래 ``킥오프 회의 합의 사항`` 섹션에 명시된 공유 가정 (예: 외부 "
+        "    API 호출 / 데이터 저장 방식) 과 코드 산출이 일치하는지 명시적으로 "
+        "    검증하고, 불일치 발견 시 ``NEEDS_REVISION`` 으로 차단. 환율 변환기 "
+        "    사례 (API 가정 vs 정적 dict 구현) 재발 차단.\n"
+        "  - 마지막 줄은 반드시 `Final Answer:` 로 시작하는 한 줄 종합 "
+        "    판정(APPROVED / NEEDS_REVISION)이어야 합니다."
+    )
+    directive = format_kickoff_context_directive(
+        shared_kickoff_decisions,
+        prior_agent_roles=list(prior_agent_roles or ["Engineer (코드 산출자)"]),
+    )
+
     kwargs: dict = dict(
-        description=(
-            "이전 컨텍스트의 코드 산출물을 백스토리에 명시된 다섯 가지 정적 점검 "
-            "항목 — 타입 힌트 / docstring / pytest 실행 가능성 / 경계 예외 처리 / "
-            "모듈 분리 — 으로 점검하고, **5단 구조(종합 판정 / 항목별 결과표 / "
-            "발견된 이슈 / 권장 보정 / 미검토 영역)** 의 한국어 마크다운 리뷰 "
-            "보고서를 작성하세요.\n\n"
-            "유의 사항:\n"
-            "  - 코드를 실행하지 않습니다(정적 점검 전담).\n"
-            "  - 발견 사항은 (파일:라인 — 인용 — 원칙 — 보정안) 형식으로 적습니다.\n"
-            "  - 마지막 줄은 반드시 `Final Answer:` 로 시작하는 한 줄 종합 "
-            "    판정(APPROVED / NEEDS_REVISION)이어야 합니다."
-        ),
+        description=base_description + directive,
         expected_output=(
             "5단 구조의 한국어 리뷰 보고서. 마지막 줄에 `Final Answer:`로 시작하는 "
             "종합 판정(APPROVED 또는 NEEDS_REVISION) 포함."
@@ -573,7 +619,12 @@ def _build_theme_task(theme, uiux_task: Task, designer_task: Task) -> Task:
 
 
 def _build_gui_code_gen_task(
-    coder, uiux_task: Task, designer_task: Task, theme_task: Task
+    coder,
+    uiux_task: Task,
+    designer_task: Task,
+    theme_task: Task,
+    *,
+    shared_kickoff_decisions=None,
 ) -> Task:
     """GUI Code Generator Task — 셋 모두 컨텍스트로.
 
@@ -583,12 +634,15 @@ def _build_gui_code_gen_task(
         작성을 *명시적으로* 강제. 환율 변환기 사례 (cross-agent inconsistency)
         재발 차단의 첫 시범 적용.
 
-        이번 slice 는 *1 task 만* (GUI Code Generator). 다음 PR (Phase 1 full)
-        에서 Pytest Author / Code Reviewer / Build chain 으로 확대.
+    PR #138 Phase 1 full (2026-05-15):
+        ``format_consistency_directive`` → ``format_kickoff_context_directive``
+        로 교체. ``shared_kickoff_decisions`` 가 None 이면 minimal slice 와 동일
+        동작 (지시만), 채워져 있으면 *공유 가정 + 부서별 책임* 까지 description
+        에 풀어 LLM 이 합의를 *사실* 로 인식하도록 강제.
     """
     import sys
 
-    from ._common import format_consistency_directive
+    from ._common import format_kickoff_context_directive
 
     base_description = (
         "이전 컨텍스트의 ui_spec + GUI 설계 + 디자인 토큰을 모두 만족하는 "
@@ -596,8 +650,9 @@ def _build_gui_code_gen_task(
         "(프레임워크 선택 + 코드 + 실행 방법 + 작성자 노트)로 작성하세요. "
         "각 파일은 ```python 블록 + `# file:` 헤더 포함."
     )
-    consistency_directive = format_consistency_directive(
-        prior_agent_roles=["UI/UX Analyst", "GUI Designer", "Theme Designer"]
+    consistency_directive = format_kickoff_context_directive(
+        shared_kickoff_decisions,
+        prior_agent_roles=["UI/UX Analyst", "GUI Designer", "Theme Designer"],
     )
 
     kwargs: dict = dict(
@@ -674,6 +729,7 @@ def run_analyze_and_implement(
     automate_release_title: str = "",
     automate_publish_as_draft: bool = True,
     automate_publish_timeout_sec: int = 120,
+    shared_kickoff_decisions=None,
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -820,7 +876,12 @@ def run_analyze_and_implement(
 
         # ─── 분기 0: Phase 4 비활성 — 기존 4-agent 그대로 ──────────────────────
         if not enable_gui_branch:
-            result = _run_classic_chain(user_request, workflow_dir, verbose=verbose)
+            result = _run_classic_chain(
+                user_request,
+                workflow_dir,
+                verbose=verbose,
+                shared_kickoff_decisions=shared_kickoff_decisions,
+            )
         else:
             # ─── 분기 1: Phase 4 활성 — UI/UX 먼저 실행 ────────────────────────
             ui_ux = create_uiux_analyst_agent(verbose=verbose)
@@ -847,6 +908,7 @@ def run_analyze_and_implement(
                     ui_spec=ui_spec,
                     uiux_task=uiux_task,
                     verbose=verbose,
+                    shared_kickoff_decisions=shared_kickoff_decisions,
                 )
             # ─── 분기 2-B: CLI 경로 ─────────────────────────────────────────────
             else:
@@ -856,6 +918,7 @@ def run_analyze_and_implement(
                     ui_spec=ui_spec,
                     uiux_task=uiux_task,
                     verbose=verbose,
+                    shared_kickoff_decisions=shared_kickoff_decisions,
                 )
 
         # ─── Phase 4.5 — Build 사슬 (옵션) ──────────────────────────────────────
@@ -874,6 +937,7 @@ def run_analyze_and_implement(
                 enable_executor=enable_executor,
                 executor_timeout_sec=executor_timeout_sec,
                 verbose=verbose,
+                shared_kickoff_decisions=shared_kickoff_decisions,
             )
             # Build 결과를 메인 WorkflowResult 에 merge
             result.dependency_report = build_result.dependency_report
@@ -984,6 +1048,7 @@ def _run_classic_chain(
     workflow_dir: Path,
     *,
     verbose: bool,
+    shared_kickoff_decisions=None,
 ) -> WorkflowResult:
     """`enable_gui_branch=False` (기본) 경로. 기존 동작 그대로 보존 + PR #58 Pytest Author."""
     cto = create_cto_agent(verbose=verbose)
@@ -995,8 +1060,18 @@ def _run_classic_chain(
     cto_task = _build_cto_task(user_request, cto)
     analyst_task = _build_analyst_task(analyst, cto_task)
     engineer_task = _build_engineer_task(engineer, cto_task, analyst_task)
-    pytest_author_task = _build_pytest_author_task(pytest_author, engineer_task)
-    qa_review_task = _build_qa_task(reviewer, engineer_task)
+    pytest_author_task = _build_pytest_author_task(
+        pytest_author,
+        engineer_task,
+        shared_kickoff_decisions=shared_kickoff_decisions,
+        prior_agent_roles=["CTO", "Data Analyst", "Python Engineer"],
+    )
+    qa_review_task = _build_qa_task(
+        reviewer,
+        engineer_task,
+        shared_kickoff_decisions=shared_kickoff_decisions,
+        prior_agent_roles=["CTO", "Data Analyst", "Python Engineer"],
+    )
 
     _classic_tasks = [
         cto_task,
@@ -1057,6 +1132,7 @@ def _run_cli_branch_chain_with_ui_context(
     uiux_task: Task,
     *,
     verbose: bool,
+    shared_kickoff_decisions=None,
 ) -> WorkflowResult:
     """UI/UX 가 GUI 가 아니라고 판정한 경로. Engineer 그대로 + UI/UX context 만 추가 + PR #58 Pytest Author."""
     cto = create_cto_agent(verbose=verbose)
@@ -1068,8 +1144,18 @@ def _run_cli_branch_chain_with_ui_context(
     cto_task = _build_cto_task(user_request, cto, ui_spec_context=uiux_task)
     analyst_task = _build_analyst_task(analyst, cto_task)
     engineer_task = _build_engineer_task(engineer, cto_task, analyst_task)
-    pytest_author_task = _build_pytest_author_task(pytest_author, engineer_task)
-    qa_review_task = _build_qa_task(reviewer, engineer_task)
+    pytest_author_task = _build_pytest_author_task(
+        pytest_author,
+        engineer_task,
+        shared_kickoff_decisions=shared_kickoff_decisions,
+        prior_agent_roles=["UI/UX Analyst", "CTO", "Data Analyst", "Python Engineer"],
+    )
+    qa_review_task = _build_qa_task(
+        reviewer,
+        engineer_task,
+        shared_kickoff_decisions=shared_kickoff_decisions,
+        prior_agent_roles=["UI/UX Analyst", "CTO", "Data Analyst", "Python Engineer"],
+    )
 
     _cli_tasks = [
         cto_task,
@@ -1133,6 +1219,7 @@ def _run_gui_branch_chain(
     uiux_task: Task,
     *,
     verbose: bool,
+    shared_kickoff_decisions=None,
 ) -> WorkflowResult:
     """UI/UX 가 GUI 라고 판정한 경로. Engineer 자리를 디자인 본부 3명이 대체 + PR #58 Pytest Author."""
     cto = create_cto_agent(verbose=verbose)
@@ -1147,9 +1234,35 @@ def _run_gui_branch_chain(
     analyst_task = _build_analyst_task(analyst, cto_task)
     designer_task = _build_gui_designer_task(designer, uiux_task)
     theme_task = _build_theme_task(theme, uiux_task, designer_task)
-    code_gen_task = _build_gui_code_gen_task(coder, uiux_task, designer_task, theme_task)
-    pytest_author_task = _build_pytest_author_task(pytest_author, code_gen_task)
-    qa_review_task = _build_qa_task(reviewer, code_gen_task)
+    code_gen_task = _build_gui_code_gen_task(
+        coder,
+        uiux_task,
+        designer_task,
+        theme_task,
+        shared_kickoff_decisions=shared_kickoff_decisions,
+    )
+    pytest_author_task = _build_pytest_author_task(
+        pytest_author,
+        code_gen_task,
+        shared_kickoff_decisions=shared_kickoff_decisions,
+        prior_agent_roles=[
+            "UI/UX Analyst",
+            "GUI Designer",
+            "Theme Designer",
+            "GUI Code Generator",
+        ],
+    )
+    qa_review_task = _build_qa_task(
+        reviewer,
+        code_gen_task,
+        shared_kickoff_decisions=shared_kickoff_decisions,
+        prior_agent_roles=[
+            "UI/UX Analyst",
+            "GUI Designer",
+            "Theme Designer",
+            "GUI Code Generator",
+        ],
+    )
 
     _gui_tasks = [
         cto_task,
