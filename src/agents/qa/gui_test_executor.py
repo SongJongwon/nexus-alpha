@@ -137,9 +137,35 @@ class GUITestResult:
     def total_ui_issues(self) -> int:
         return sum(len(a.ui_issues) for a in self.vision_analyses)
 
+    @property
+    def vision_unavailable(self) -> bool:
+        """PR #160a — Vision API 호출 자체 실패 케이스 (key 누락 / SDK 미설치 / 호출 예외 / 파싱 실패).
+
+        screenshot 은 캡처됐으나 Vision 분석 결과 모두 실패 → 실 시각 결함 검출 아닌
+        *미평가* 상태. 호출 측은 이걸 FAIL 로 처리하면 false negative 회귀.
+        """
+        if not self.vision_analyses:
+            return False
+        return not any(a.success for a in self.vision_analyses)
+
+    def _vision_unavailable_reason(self) -> str:
+        """Vision 미평가 케이스의 실 원인 (첫 실패 entry 의 ``error_message``)."""
+        for a in self.vision_analyses:
+            if not a.success and a.error_message:
+                return a.error_message
+        return "(unknown — Vision API 호출 실패)"
+
     def summary_line(self) -> str:
         if self.skipped:
             return f"[GUI_TEST SKIPPED] {self.error_message or 'pyautogui 미설치 등'}"
+        # PR #160a — Vision API 미평가 (key 누락 등) 가 FAIL 로 표시되던 false negative 차단.
+        # 실 시각 결함 (critical>0 또는 ui_issues>0) 이 없고 Vision 호출 자체가 실패한
+        # 케이스는 SKIPPED 와 동급으로 처리 — 결과 표시 + qa_feedback_loop 모두 이 분기 활용.
+        if self.vision_unavailable and self.total_critical_issues == 0:
+            return (
+                f"[GUI_TEST VISION_UNAVAILABLE] screenshots={len(self.screenshot_paths)} "
+                f"reason={self._vision_unavailable_reason()} ({self.elapsed_sec:.2f}s)"
+            )
         verdict = "PASS" if self.success else "FAIL"
         return (
             f"[GUI_TEST {verdict}] screenshots={len(self.screenshot_paths)} "
@@ -526,6 +552,40 @@ def run_gui_test(
     # 3) 종합 판정
     total_critical = sum(a.critical_issue_count for a in vision_analyses)
     vision_all_succeeded = all(a.success for a in vision_analyses) if vision_analyses else True
+    # PR #160a — Vision API 미평가 케이스 (key 누락 / SDK 미설치 / 호출 예외) 식별.
+    # vision_analyses 가 있고 *모두* 실패 → Vision 자체가 작동 안 함 (실 시각 결함 X).
+    vision_unavailable_only = bool(vision_analyses) and not any(
+        a.success for a in vision_analyses
+    )
+
+    # Vision 미평가 + 실 시각 결함 0 + screenshot 캡처 OK → SKIPPED (FAIL 아님)
+    if (
+        vision_unavailable_only
+        and total_critical == 0
+        and len(screenshot_paths) > 0
+        and terminated_by != "timeout_kill"
+    ):
+        # 첫 실패 entry 의 error_message 를 SKIPPED reason 으로 surface
+        skip_reason: Optional[str] = None
+        for a in vision_analyses:
+            if not a.success and a.error_message:
+                skip_reason = a.error_message
+                break
+        return GUITestResult(
+            success=False,
+            skipped=True,
+            elapsed_sec=elapsed,
+            target_path=target_path,
+            screenshot_paths=screenshot_paths,
+            process_exit_code=exit_code,
+            process_terminated_by=terminated_by,
+            vision_analyses=vision_analyses,
+            error_message=(
+                f"Vision API 미평가 — {skip_reason or '(unknown)'}. "
+                "screenshot 은 정상 캡처, qa_feedback_loop 는 SKIPPED 로 처리."
+            ),
+        )
+
     overall_success = (
         len(screenshot_paths) > 0
         and total_critical == 0
