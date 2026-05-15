@@ -100,6 +100,9 @@ from src.workflows.analyze_and_implement import (
     run_analyze_and_implement,
 )
 
+# PR #158 — Track B run_automate_workflow 도 iterative_loop 안에서 호출 가능하게 지연 import.
+# 순환 import 회피 + Track A 만 쓰는 경우 import 비용 0.
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUTS_DIR = PROJECT_ROOT / "outputs"
@@ -192,6 +195,9 @@ class _LoopState(TypedDict, total=False):
     publish_as_draft: bool  # Draft 로 발행할지 (안전 기본 True)
     publish_timeout_sec: int  # gh CLI 타임아웃
     verbose: bool  # CrewAI 중간 로그 출력
+    # PR #158 — Track B 지원 (chain 분기)
+    track: str  # "A" (analyze_and_implement) | "B" (automate_workflow)
+    release_tag: str  # Track B run_automate_workflow 의 release_tag
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -594,8 +600,60 @@ def _node_kickoff_meeting(state: _LoopState) -> dict[str, Any]:
     return {"shared_kickoff_decisions": decisions}
 
 
+def _adapt_automate_to_chain_result(automate_result: Any) -> Any:
+    """PR #158 — ``AutomateWorkflowResult`` 를 ``WorkflowResult``-like duck type 으로 변환.
+
+    iterative_loop 의 Gap Analyst / sandbox / retry helper 는 다음 attr 접근:
+        - ``engineer_output`` / ``qa_review`` (Gap Analyst 입력)
+        - ``saved_dir`` / ``saved_code_files`` (산출 경로 + sandbox 입력)
+        - ``executor_result`` / ``publish_result`` (Vision QA + 결과 패널)
+        - ``gui_code_output`` / ``ui_spec`` / ``design_tokens`` (retry GUI 분기)
+
+    Track B 의 AutomateWorkflowResult 는 ``agent_output`` (engineer_output 대신) +
+    ``code_qa_result`` (qa_review 대신) 만 가짐. 본 어댑터가 그 mapping 을 수행 →
+    iterative_loop 가 Track A/B 무관하게 동작 가능.
+    """
+    qa_review = ""
+    code_qa = getattr(automate_result, "code_qa_result", None)
+    if code_qa is not None and hasattr(code_qa, "summary_line"):
+        try:
+            qa_review = code_qa.summary_line()
+        except Exception:  # noqa: BLE001
+            qa_review = ""
+    if not qa_review:
+        qa_review = "(no QA review — Track B 자동화 산출)"
+
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        saved_dir=getattr(automate_result, "saved_dir", None),
+        saved_code_files=list(getattr(automate_result, "saved_code_files", []) or []),
+        engineer_output=getattr(automate_result, "agent_output", ""),
+        qa_review=qa_review,
+        executor_result=getattr(automate_result, "executor_result", None),
+        publish_result=getattr(automate_result, "publish_result", None),
+        # Track B 는 GUI/UI 디자인 산출이 없음 — retry helper 의 GUI 분기 판정이 CLI 로
+        gui_code_output="",
+        ui_spec="",
+        design_tokens="",
+        # WorkflowResult 의 기타 필드 — 빈 기본값
+        dependency_report="",
+        build_spec="",
+        asset_manifest="",
+        installer_spec="",
+        platform_test_report="",
+        release_decision="",
+        changelog_entry="",
+        update_module_spec=getattr(automate_result, "update_module_spec", "") or "",
+    )
+
+
 def _node_run_chain(state: _LoopState) -> dict[str, Any]:
-    """analyze_and_implement 4-agent 체인 호출. iteration 마다 실행."""
+    """analyze_and_implement (Track A) 또는 automate_workflow (Track B) 체인 호출.
+
+    iteration 마다 실행. PR #158 — ``state["track"]`` 가 "B" 면 Track B 분기 (Track A
+    의 WorkflowResult 와 호환되는 SimpleNamespace 로 어댑터).
+    """
     next_iter = state["iteration"] + 1
     feedback = state.get("feedback", "")
     if feedback:
@@ -607,33 +665,63 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
 
     outputs_dir = Path(state["outputs_dir"]) if state.get("outputs_dir") else DEFAULT_OUTPUTS_DIR
 
-    chain_result = run_analyze_and_implement(
-        request_with_feedback,
-        outputs_dir=outputs_dir,
-        verbose=state.get("verbose", False),
-        enable_gui_branch=state.get("enable_gui_branch", False),
-        enable_build_branch=state.get("enable_build_branch", False),
-        target_platform=state.get("target_platform", "windows"),
-        enable_release_branch=state.get("enable_release_branch", False),
-        previous_version=state.get("previous_version", ""),
-        repo_url=state.get("repo_url", ""),
-        signing_available=state.get("signing_available", False),
-        privacy_level=state.get("privacy_level", "public"),
-        # PR #157 — production wire: 실 .exe 빌드 + Draft Release 발행 propagate.
-        # 기본 False 유지 (기존 호출 측 backward compat).
-        enable_executor=state.get("enable_executor", False),
-        executor_timeout_sec=state.get("executor_timeout_sec", 300),
-        enable_publish=state.get("enable_publish", False),
-        publish_as_draft=state.get("publish_as_draft", True),
-        publish_timeout_sec=state.get("publish_timeout_sec", 120),
-        shared_kickoff_decisions=state.get("shared_kickoff_decisions"),
-        enable_engineer_reviewer_delegation=state.get(
-            "enable_engineer_reviewer_delegation", False
-        ),
-    )
+    track = state.get("track", "A")
+    if track == "B":
+        # PR #158 — Track B 분기: run_automate_workflow 호출 → 어댑터 → chain_result
+        from src.workflows.automate_workflow import run_automate_workflow
+
+        enable_build = state.get("enable_executor", False) or state.get(
+            "enable_build_branch", False
+        )
+        enable_release = state.get("enable_publish", False) or state.get(
+            "enable_release_branch", False
+        )
+        automate_result = run_automate_workflow(
+            request_with_feedback,
+            outputs_dir=outputs_dir,
+            verbose=state.get("verbose", False),
+            enable_qa_loop=enable_build,  # Track B QA loop 는 build 와 함께 활성
+            enable_build=enable_build,
+            build_timeout_sec=state.get("executor_timeout_sec", 300),
+            enable_release=enable_release,
+            repo_url=state.get("repo_url", ""),
+            release_tag=state.get("release_tag", ""),
+            publish_as_draft=state.get("publish_as_draft", True),
+            publish_timeout_sec=state.get("publish_timeout_sec", 120),
+            target_platform=state.get("target_platform", "windows"),
+        )
+        chain_result = _adapt_automate_to_chain_result(automate_result)
+    else:
+        chain_result = run_analyze_and_implement(
+            request_with_feedback,
+            outputs_dir=outputs_dir,
+            verbose=state.get("verbose", False),
+            enable_gui_branch=state.get("enable_gui_branch", False),
+            enable_build_branch=state.get("enable_build_branch", False),
+            target_platform=state.get("target_platform", "windows"),
+            enable_release_branch=state.get("enable_release_branch", False),
+            previous_version=state.get("previous_version", ""),
+            repo_url=state.get("repo_url", ""),
+            signing_available=state.get("signing_available", False),
+            privacy_level=state.get("privacy_level", "public"),
+            # PR #157 — production wire: 실 .exe 빌드 + Draft Release 발행 propagate.
+            # 기본 False 유지 (기존 호출 측 backward compat).
+            enable_executor=state.get("enable_executor", False),
+            executor_timeout_sec=state.get("executor_timeout_sec", 300),
+            enable_publish=state.get("enable_publish", False),
+            publish_as_draft=state.get("publish_as_draft", True),
+            publish_timeout_sec=state.get("publish_timeout_sec", 120),
+            shared_kickoff_decisions=state.get("shared_kickoff_decisions"),
+            enable_engineer_reviewer_delegation=state.get(
+                "enable_engineer_reviewer_delegation", False
+            ),
+        )
 
     artifacts = list(state.get("iteration_artifacts", []))
-    artifacts.append(chain_result.saved_dir.as_posix())
+    # PR #158 — Track B 의 saved_dir 이 None 일 수 있음 (outputs_dir=None 인 경우).
+    # outputs_dir 폴백으로 안전성 보장.
+    saved_dir = getattr(chain_result, "saved_dir", None) or outputs_dir
+    artifacts.append(saved_dir.as_posix() if hasattr(saved_dir, "as_posix") else str(saved_dir))
 
     return {
         "iteration": next_iter,
@@ -881,6 +969,9 @@ def run_iterative_loop(
     publish_as_draft: bool = True,
     publish_timeout_sec: int = 120,
     verbose: bool = False,
+    # PR #158 — Track B 지원 (chain 분기)
+    track: str = "A",
+    release_tag: str = "",
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -975,6 +1066,9 @@ def run_iterative_loop(
             "publish_as_draft": publish_as_draft,
             "publish_timeout_sec": publish_timeout_sec,
             "verbose": verbose,
+            # PR #158 — Track B 지원
+            "track": track,
+            "release_tag": release_tag,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.

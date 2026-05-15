@@ -736,36 +736,77 @@ def _run_track_b(args: argparse.Namespace) -> int:
     """Track B — 5 도메인 자동화 풀체인.
 
     PR #150 Phase 4: PhaseTracker 로 단계 진행 표시.
-    PR #155 (2026-05-15): Vision QA 자동 감지 분기 신설. ``detect_artifact_category``
-        가 "gui" 산출 (tkinter/PyQt/PySide/wx/kivy import 또는 .exe 만 있음) 으로
-        판정하면 Track A 와 동일한 ``_run_vision_qa_full`` + qa_feedback_loop 평가
-        파이프라인 적용. CLI / library / external_dependent 는 자동 skip.
-        ``--no-vision-qa`` 강제 skip 그대로 적용. Retry 는 Track A 전용 (Track B
-        는 자체 ``enable_qa_loop`` 가 있어 *2중 retry* 회피).
+    PR #155 (2026-05-15): Vision QA 자동 감지 분기 신설.
+    PR #158 (2026-05-15): ``--auto-iterate`` 시 ``run_iterative_loop(track="B")``
+        호출 분기. iterative_loop 의 ``_node_run_chain`` 이 state.track="B" 면
+        ``run_automate_workflow`` 호출 후 ``_adapt_automate_to_chain_result`` 로
+        WorkflowResult-like duck type 변환 → Gap Analyst / Convergence Judge /
+        Retrospective / Curator 모두 동일하게 작동.
     """
-    from src.workflows.automate_workflow import run_automate_workflow
-
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
-    total_phases = 1  # automate_workflow (필수)
+    total_phases = 1  # automate_workflow 또는 iterative_loop (필수)
     if args.build and not args.no_vision_qa:
         total_phases += 2  # vision_qa + qa_feedback_loop (gui 분기일 때만 실 호출)
     tracker = PhaseTracker(total=total_phases)
 
-    tracker.start("automate_workflow (5 도메인 자동화 chain + build/release)")
-    result = run_automate_workflow(
-        args.request,
-        outputs_dir=outputs_dir,
-        verbose=args.verbose,
-        enable_qa_loop=args.build,
-        enable_build=args.build,
-        enable_release=args.release,
-        repo_url=args.repo,
-        release_tag=args.tag,
-        publish_as_draft=True,
-    )
-    tracker.end(summary=f"saved_dir={getattr(result, 'saved_dir', None)}")
+    iterative_summary: Optional[str] = None
+    if args.auto_iterate:
+        # PR #158 — 자기 진화 루프 진입 (Track B opt-in)
+        from src.workflows.iterative_loop import run_iterative_loop
+
+        tracker.start(
+            f"iterative_loop track=B (max_iter={args.max_iterations}, "
+            "recall→kickoff→automate→sandbox→gap→judge→retro→curate)"
+        )
+        outcome = run_iterative_loop(
+            args.request,
+            outputs_dir=outputs_dir,
+            max_iterations=args.max_iterations,
+            verbose=args.verbose,
+            track="B",
+            enable_build_branch=args.build,  # Track B QA loop + build 트리거
+            enable_executor=args.build,
+            enable_release_branch=args.release,
+            enable_publish=args.release,
+            publish_as_draft=True,
+            repo_url=args.repo,
+            release_tag=args.tag,
+        )
+        chain = outcome.final_chain_result
+        verdict_str = getattr(outcome.verdict, "value", str(outcome.verdict))
+        iterative_summary = (
+            f"verdict={verdict_str} iterations={outcome.iterations_run}/"
+            f"{args.max_iterations}"
+        )
+        if chain is None:
+            # 안전망: LoopOutcome.final_chain_result=None → dummy 폴백
+            result = SimpleNamespace(
+                saved_dir=outputs_dir,
+                saved_code_files=[],
+                executor_result=None,
+                publish_result=None,
+            )
+        else:
+            result = chain
+        tracker.end(summary=iterative_summary)
+    else:
+        from src.workflows.automate_workflow import run_automate_workflow
+
+        tracker.start("automate_workflow (5 도메인 자동화 chain + build/release)")
+        result = run_automate_workflow(
+            args.request,
+            outputs_dir=outputs_dir,
+            verbose=args.verbose,
+            enable_qa_loop=args.build,
+            enable_build=args.build,
+            enable_release=args.release,
+            repo_url=args.repo,
+            release_tag=args.tag,
+            publish_as_draft=True,
+        )
+        tracker.end(summary=f"saved_dir={getattr(result, 'saved_dir', None)}")
 
     elapsed = (datetime.now() - start).total_seconds()
     executor = getattr(result, "executor_result", None)
@@ -811,11 +852,12 @@ def _run_track_b(args: argparse.Namespace) -> int:
     _print_result_summary(
         "B",
         elapsed,
-        result.saved_dir or outputs_dir,
+        getattr(result, "saved_dir", None) or outputs_dir,
         exe_path,
         release_url,
         vision_summary,
         qa_verdict_summary,
+        iterative_summary,
     )
     return 0
 
