@@ -71,6 +71,11 @@ from src.agents.coordination import (
     SharedKickoffDecisions,
     run_kickoff_meeting,
 )
+from src.agents.knowledge import (
+    KnowledgeEntry,
+    curate_workflow,
+    recall_past_entries,
+)
 from src.agents.c_level import (
     DEFAULT_MAX_ITERATIONS,
     NO_BUDGET_GATE,
@@ -144,6 +149,11 @@ class LoopOutcome:
     feedback_history: list[str] = field(default_factory=list)
     iteration_artifacts: list[Path] = field(default_factory=list)
     budget_remaining_at_end: int = NO_BUDGET_GATE
+    # PR #140 Phase 3 — Knowledge / RAG wiring (본인 비전 통찰 6, D-1)
+    recalled_entries: list[KnowledgeEntry] = field(default_factory=list)
+    curated_entry: Optional[KnowledgeEntry] = None
+    curated_entry_path: Optional[Path] = None
+    curated_index_path: Optional[Path] = None
 
 
 class _LoopState(TypedDict, total=False):
@@ -176,6 +186,13 @@ class _LoopState(TypedDict, total=False):
 
     # PR #138 Phase 1 full — Meeting Facilitator 산출 (1회만, kickoff 회의 결과)
     shared_kickoff_decisions: Any  # SharedKickoffDecisions | None
+
+    # PR #140 Phase 3 — Knowledge / RAG wiring (1회만)
+    knowledge_index_dir: str  # outputs_dir / knowledge_index 의 Path.as_posix()
+    recalled_entries: list[Any]  # list[KnowledgeEntry] — recall_past_entries 산출
+    curated_entry: Any  # KnowledgeEntry | None — curate_workflow 산출
+    curated_entry_path: str  # workflow_dir/knowledge_entry.yaml Path.as_posix(), "" 가능
+    curated_index_path: str  # knowledge_index_dir/<workflow_id>.yaml, "" 가능
 
     # 매 iteration 마다 갱신
     iteration: int
@@ -344,6 +361,97 @@ def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
         "feedback_history": [],
         "iteration_artifacts": [],
         "gap_report_raw": "",
+    }
+
+
+def _node_recall_past_knowledge(state: _LoopState) -> dict[str, Any]:
+    """PR #140 Phase 3 — RAG Searcher recall (본인 비전 통찰 6, D-1).
+
+    워크플로 진입 시 1회만 실행. ``outputs/knowledge_index/`` 의 과거 entry 들에서
+    현재 사용자 요청과 관련 높은 top-3 을 ``recalled_entries`` 로 state 에 저장 →
+    Meeting Facilitator 의 spec_summary 또는 후속 task description 에 컨텍스트로
+    주입 가능.
+
+    인덱스 디렉터리 부재 시 빈 리스트 — 첫 빌드는 학습 자료 없이 진행.
+    """
+    outputs_dir = (
+        Path(state["outputs_dir"]) if state.get("outputs_dir") else DEFAULT_OUTPUTS_DIR
+    )
+    index_dir = outputs_dir / "knowledge_index"
+
+    try:
+        entries = recall_past_entries(
+            user_request=state["user_request"],
+            knowledge_index_dir=index_dir,
+            top_n=3,
+        )
+    except Exception:  # noqa: BLE001 — recall 실패는 워크플로 차단 X
+        entries = []
+
+    return {
+        "knowledge_index_dir": index_dir.as_posix(),
+        "recalled_entries": entries,
+    }
+
+
+def _node_curate_knowledge(state: _LoopState) -> dict[str, Any]:
+    """PR #140 Phase 3 — Knowledge Curator 색인 (본인 비전 통찰 6, D-1).
+
+    워크플로 종료 시 1회만 실행 (finalize 또는 escalate 직전). 본 빌드의
+    ``workflow_dir`` 산출물을 ``KnowledgeEntry`` 로 변환 → 분산 + 중앙 인덱스 저장.
+    다음 빌드 진입 시 ``_node_recall_past_knowledge`` 가 이 entry 들에서 검색.
+
+    BLOCKED 종결도 색인 — partial-output 태그로 향후 결함 패턴 학습.
+    """
+    chain_result: Optional[WorkflowResult] = state.get("chain_result")
+    if chain_result is None or chain_result.saved_dir is None:
+        return {
+            "curated_entry": None,
+            "curated_entry_path": "",
+            "curated_index_path": "",
+        }
+
+    workflow_dir = Path(chain_result.saved_dir)
+    index_dir = (
+        Path(state["knowledge_index_dir"])
+        if state.get("knowledge_index_dir")
+        else (
+            Path(state["outputs_dir"]) / "knowledge_index"
+            if state.get("outputs_dir")
+            else DEFAULT_OUTPUTS_DIR / "knowledge_index"
+        )
+    )
+
+    # judge 결과에서 qa_verdict_hint 추출 — APPROVED / NEEDS_REVISION
+    decision: Optional[JudgmentDecision] = state.get("decision")
+    qa_hint: Optional[str] = None
+    if decision is not None:
+        verdict_str = getattr(decision, "verdict", None)
+        if verdict_str is not None:
+            name = getattr(verdict_str, "name", str(verdict_str)).upper()
+            if name == "COMPLETE":
+                qa_hint = "APPROVED"
+            elif name == "BLOCKED":
+                qa_hint = "NEEDS_REVISION"
+
+    try:
+        entry, dist_path, idx_path = curate_workflow(
+            workflow_dir=workflow_dir,
+            user_request=state["user_request"],
+            knowledge_index_dir=index_dir,
+            qa_verdict_hint=qa_hint,
+        )
+    except Exception:  # noqa: BLE001 — curate 실패는 워크플로 차단 X
+        return {
+            "curated_entry": None,
+            "curated_entry_path": "",
+            "curated_index_path": "",
+        }
+
+    return {
+        "curated_entry": entry,
+        "curated_entry_path": dist_path.as_posix() if dist_path else "",
+        "curated_index_path": idx_path.as_posix() if idx_path else "",
     }
 
 
@@ -580,30 +688,38 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     """LangGraph StateGraph 인스턴스를 조립해 compiled graph 를 반환한다.
 
     구조:
-        expand_requirements → kickoff_meeting → run_chain → run_sandbox →
-            analyze_gap → judge_convergence
-                ├── COMPLETE → finalize → END
+        expand_requirements → recall_past_knowledge → kickoff_meeting → run_chain →
+            run_sandbox → analyze_gap → judge_convergence
+                ├── COMPLETE → curate_knowledge → finalize → END
                 ├── IMPROVE_NEEDED → prepare_feedback → run_chain (loop)
-                └── BLOCKED → escalate → END
+                └── BLOCKED → curate_knowledge → escalate → END
 
     PR #138 Phase 1 full (2026-05-15, 본인 비전 통찰 6):
         ``kickoff_meeting`` 노드 신설. expand_requirements 직후 1회만 실행되어
         Meeting Facilitator 가 SharedKickoffDecisions 산출. iteration 재진입은
         ``prepare_feedback → run_chain`` 직진이라 kickoff 재실행 없음.
+
+    PR #140 Phase 3 (2026-05-15, 본인 비전 통찰 6 D-1):
+        ``recall_past_knowledge`` 신설 — 진입 시 RAG Searcher 가 과거 entry 검색.
+        ``curate_knowledge`` 신설 — 종결 시 Knowledge Curator 가 본 빌드 색인 →
+        다음 빌드 진입 시 recall. *진짜 자기 진화* 의 첫 cycle.
     """
     g = StateGraph(_LoopState)
     g.add_node("expand_requirements", _node_expand_requirements)
+    g.add_node("recall_past_knowledge", _node_recall_past_knowledge)  # PR #140 신규
     g.add_node("kickoff_meeting", _node_kickoff_meeting)  # PR #138 full 신규
     g.add_node("run_chain", _node_run_chain)
     g.add_node("run_sandbox", _node_run_sandbox)  # Phase 3 신규
     g.add_node("analyze_gap", _node_analyze_gap)
     g.add_node("judge_convergence", _node_judge_convergence)
     g.add_node("prepare_feedback", _node_prepare_feedback)
+    g.add_node("curate_knowledge", _node_curate_knowledge)  # PR #140 신규
     g.add_node("finalize", _node_finalize)
     g.add_node("escalate", _node_escalate)
 
     g.set_entry_point("expand_requirements")
-    g.add_edge("expand_requirements", "kickoff_meeting")  # PR #138 full
+    g.add_edge("expand_requirements", "recall_past_knowledge")  # PR #140
+    g.add_edge("recall_past_knowledge", "kickoff_meeting")      # PR #140
     g.add_edge("kickoff_meeting", "run_chain")            # PR #138 full
     g.add_edge("run_chain", "run_sandbox")        # Phase 3
     g.add_edge("run_sandbox", "analyze_gap")      # Phase 3
@@ -612,11 +728,18 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
         "judge_convergence",
         _route_after_judge,
         {
-            "finalize": "finalize",
+            "finalize": "curate_knowledge",        # PR #140 — finalize 전 색인
             "prepare_feedback": "prepare_feedback",
-            "escalate": "escalate",
+            "escalate": "curate_knowledge_blocked",  # PR #140 — escalate 전 색인
         },
     )
+    # curate_knowledge 노드 1개 + 두 종결 경로 (LangGraph 가 동일 노드 multi-edge 허용
+    # 안 함 → conditional edge 의 매핑으로만 분기 표현). 실제로는 하나의 노드를
+    # 두 경로 모두 거치게 하기 위해, curate_knowledge 의 다음 단계를 또 분기.
+    # 단순화: curate_knowledge 만 통과 후 finalize/escalate 결정은 별도 router.
+    g.add_node("curate_knowledge_blocked", _node_curate_knowledge)  # alias 노드
+    g.add_edge("curate_knowledge", "finalize")
+    g.add_edge("curate_knowledge_blocked", "escalate")
     g.add_edge("prepare_feedback", "run_chain")  # 루프 재진입
     g.add_edge("finalize", END)
     g.add_edge("escalate", END)
@@ -740,6 +863,8 @@ def run_iterative_loop(
         decision: JudgmentDecision = final_state["decision"]
         gap: GapReport = final_state.get("gap_report") or GapReport()
 
+        curated_entry_path_str = final_state.get("curated_entry_path", "")
+        curated_index_path_str = final_state.get("curated_index_path", "")
         return LoopOutcome(
             user_request=user_request,
             verdict=decision.verdict,
@@ -754,6 +879,10 @@ def run_iterative_loop(
             feedback_history=list(final_state.get("feedback_history", [])),
             iteration_artifacts=[Path(p) for p in final_state.get("iteration_artifacts", [])],
             budget_remaining_at_end=final_state.get("budget_tokens_remaining", NO_BUDGET_GATE),
+            recalled_entries=list(final_state.get("recalled_entries", []) or []),
+            curated_entry=final_state.get("curated_entry"),
+            curated_entry_path=Path(curated_entry_path_str) if curated_entry_path_str else None,
+            curated_index_path=Path(curated_index_path_str) if curated_index_path_str else None,
         )
 
     finally:

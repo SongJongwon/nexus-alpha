@@ -129,9 +129,14 @@ def test_graph_routes_expand_to_kickoff_then_chain() -> None:
         if src is not None and tgt is not None:
             edge_pairs.add((src, tgt))
 
-    assert ("expand_requirements", "kickoff_meeting") in edge_pairs, (
-        "expand_requirements → kickoff_meeting edge 누락"
-    )
+    # PR #140 Phase 3 (2026-05-15): recall_past_knowledge 가 expand → kickoff 사이에
+    # 삽입됨. 진입 chain 의 정확한 순서는 `expand → recall → kickoff → run_chain`.
+    # 이 assertion 은 *kickoff_meeting 이 진입 흐름의 일부* 인지 확인 — 직전 노드는
+    # 시대(Phase)에 따라 expand 또는 recall.
+    assert (
+        ("expand_requirements", "kickoff_meeting") in edge_pairs
+        or ("recall_past_knowledge", "kickoff_meeting") in edge_pairs
+    ), "kickoff_meeting 진입 edge 누락 — PR #138 full / PR #140 둘 다 회귀"
     assert ("kickoff_meeting", "run_chain") in edge_pairs, (
         "kickoff_meeting → run_chain edge 누락"
     )
