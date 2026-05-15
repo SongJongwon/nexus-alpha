@@ -638,18 +638,68 @@ def _run_track_a(args: argparse.Namespace) -> int:
     return 0
 
 
+def _detect_track_b_gui_artifact(
+    saved_code_files, exe_path: Optional[Path]
+) -> bool:
+    """Track B 산출이 GUI 인지 ``detect_artifact_category`` 휴리스틱으로 판정.
+
+    PR #155 (Track B Vision QA wiring): Track B 산출 대부분이 CLI 스크립트라
+    Vision QA 불필요. GUI 분기만 자동 트리거하기 위해 본 helper 가 entry source
+    파일 + exe 둘 다를 ``qa_feedback_loop.detect_artifact_category`` 에 전달 →
+    ``"gui"`` 결과일 때만 True 반환.
+
+    Args:
+        saved_code_files: ``AutomateWorkflowResult.saved_code_files`` (list[Path]).
+            첫 .py 를 entry 휴리스틱 입력으로 사용.
+        exe_path: 빌드된 .exe 경로 (없으면 None).
+
+    Returns:
+        True if 카테고리 == "gui", else False.
+    """
+    try:
+        from src.workflows.qa_feedback_loop import detect_artifact_category
+    except ImportError:
+        return False
+    entry_script: Optional[Path] = None
+    if saved_code_files:
+        non_test = [
+            p for p in saved_code_files
+            if not Path(p).name.startswith("test_")
+        ]
+        candidates = non_test or list(saved_code_files)
+        if candidates:
+            entry_script = Path(candidates[0])
+    try:
+        category = detect_artifact_category(
+            target_script=entry_script,
+            target_exe=exe_path,
+        )
+    except Exception:  # noqa: BLE001 — 휴리스틱 실패는 Vision QA skip
+        return False
+    return category == "gui"
+
+
 def _run_track_b(args: argparse.Namespace) -> int:
     """Track B — 5 도메인 자동화 풀체인.
 
-    PR #150 Phase 4: PhaseTracker 로 단계 진행 표시 (Vision QA wiring 은 Track A
-    전용 — Track B 산출은 자동화 스크립트 위주라 GUI 검증 부적합).
+    PR #150 Phase 4: PhaseTracker 로 단계 진행 표시.
+    PR #155 (2026-05-15): Vision QA 자동 감지 분기 신설. ``detect_artifact_category``
+        가 "gui" 산출 (tkinter/PyQt/PySide/wx/kivy import 또는 .exe 만 있음) 으로
+        판정하면 Track A 와 동일한 ``_run_vision_qa_full`` + qa_feedback_loop 평가
+        파이프라인 적용. CLI / library / external_dependent 는 자동 skip.
+        ``--no-vision-qa`` 강제 skip 그대로 적용. Retry 는 Track A 전용 (Track B
+        는 자체 ``enable_qa_loop`` 가 있어 *2중 retry* 회피).
     """
     from src.workflows.automate_workflow import run_automate_workflow
 
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
-    tracker = PhaseTracker(total=1)
+    total_phases = 1  # automate_workflow (필수)
+    if args.build and not args.no_vision_qa:
+        total_phases += 2  # vision_qa + qa_feedback_loop (gui 분기일 때만 실 호출)
+    tracker = PhaseTracker(total=total_phases)
+
     tracker.start("automate_workflow (5 도메인 자동화 chain + build/release)")
     result = run_automate_workflow(
         args.request,
@@ -671,7 +721,49 @@ def _run_track_b(args: argparse.Namespace) -> int:
     publish = getattr(result, "publish_result", None)
     if publish:
         release_url = getattr(publish, "release_url", None)
-    _print_result_summary("B", elapsed, result.saved_dir or outputs_dir, exe_path, release_url)
+
+    # PR #155 — GUI 산출 분기에서만 Vision QA 자동 호출 (Track A 와 동일 helper 재사용).
+    vision_summary: Optional[str] = None
+    qa_verdict_summary: Optional[str] = None
+    is_gui_artifact = (
+        args.build
+        and not args.no_vision_qa
+        and exe_path is not None
+        and exe_path.exists()
+        and _detect_track_b_gui_artifact(
+            getattr(result, "saved_code_files", []) or [], exe_path
+        )
+    )
+    if is_gui_artifact:
+        tracker.start("vision_qa (Track B GUI 산출 — 자동 감지)")
+        vision_result = _run_vision_qa_full(exe_path, outputs_dir)
+        if vision_result is not None:
+            vision_summary = vision_result.summary_line()
+            tracker.end(summary=vision_summary)
+            tracker.start("qa_feedback_loop (Vision QA verdict 합산)")
+            qa_verdict_summary, _ = _evaluate_vision_qa_via_feedback_loop(
+                vision_result,
+                retry_count=0,
+                max_retries=0,  # Track B 는 retry 비활성 — 자체 qa_loop 가 있음
+            )
+            tracker.end(summary=qa_verdict_summary)
+        else:
+            vision_summary = "(Vision QA skip — gui_test_executor 호출 불가)"
+            tracker.end(summary=vision_summary)
+            tracker.set_total(tracker.current_index)
+    else:
+        # GUI 아님 / build 비활성 / --no-vision-qa → 잔여 단계 분모 축소
+        tracker.set_total(tracker.current_index)
+
+    _print_result_summary(
+        "B",
+        elapsed,
+        result.saved_dir or outputs_dir,
+        exe_path,
+        release_url,
+        vision_summary,
+        qa_verdict_summary,
+    )
     return 0
 
 
