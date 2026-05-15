@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout (full history for retroactive scan)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # depth=0 = 전체 history 스캔. 새 leak 뿐 아니라 미발견 과거 leak 도 검출.
           fetch-depth: 0
