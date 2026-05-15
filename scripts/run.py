@@ -500,11 +500,45 @@ def _retry_engineer_with_vision_feedback(
         print(f"  ⚠️  retry build 실패: {exc!r}", file=sys.stderr)
         return None
 
+    # PR #160b — retry build .exe 미생성 시 실 원인 surface (이전 PR #151 단순 'retry skip' fail-silent).
+    # 가능한 원인:
+    #   1. executor_result=None — build_workflow 가 enable_executor=True 임에도 executor 호출 자체 skip
+    #      (보통 entry .py 미탐지 or workflow_dir 부재). 진단: build_result 의 다른 필드 조사
+    #   2. executor_result.success=False — PyInstaller 실행했으나 실패 (exit_code≠0).
+    #      ExecuteResult 에 ``error_message`` / ``stderr_tail`` 등 있으면 surface
+    #   3. executor_result.exe_path=None — 빌드 시도했으나 결과물 추출 실패
     executor = getattr(build_result, "executor_result", None)
-    if not (executor and getattr(executor, "exe_path", None)):
-        print("  ⚠️  retry build .exe 미생성", file=sys.stderr)
+    if executor is None:
+        platform_test = getattr(build_result, "platform_test_report", "") or ""
+        platform_summary = platform_test[:200].replace("\n", " ") if platform_test else ""
+        print(
+            f"  ⚠️  retry build .exe 미생성 — executor_result=None "
+            f"(build_workflow 가 PyInstaller 호출 안 함, entry .py 미탐지 가능). "
+            f"platform_test={platform_summary!r}",
+            file=sys.stderr,
+        )
         return None
-    return Path(executor.exe_path)
+    exe_path_attr = getattr(executor, "exe_path", None)
+    if exe_path_attr is None:
+        success_attr = getattr(executor, "success", False)
+        err_msg = getattr(executor, "error_message", "") or ""
+        stderr_tail = getattr(executor, "stderr_tail", "") or ""
+        print(
+            f"  ⚠️  retry build .exe 미생성 — executor.exe_path=None "
+            f"(success={success_attr}, error={err_msg!r}, "
+            f"stderr_tail={stderr_tail[:160]!r})",
+            file=sys.stderr,
+        )
+        return None
+    exe_path_obj = Path(exe_path_attr)
+    if not exe_path_obj.exists():
+        print(
+            f"  ⚠️  retry build .exe 경로 존재 X — {exe_path_obj} "
+            "(PyInstaller success=True 보고했으나 디스크에 파일 없음)",
+            file=sys.stderr,
+        )
+        return None
+    return exe_path_obj
 
 
 # ---------------------------------------------------------------------------
