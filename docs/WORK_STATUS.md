@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-18 (PR #162 + PR #163 머지 — E2E 결함 fix 후 자기 진화 paradigm production default 완성 — `--auto-iterate` 기본 ON + opt-out + 비용 안내 banner)
+> **마지막 업데이트**: 2026-05-18 (PR #162 + #163 + #167 머지 + dependabot 4건 정리 (anyio/pandas/langgraph/langchain 머지 + rich close) — 자기 진화 paradigm production default 완성 + dep 보류 누적 청소)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -27,12 +27,24 @@
 > - 본 세션 이후: 기본 ON, 명시 OFF (`--no-auto-iterate`) 또는 비용 안내 banner Enter 거절 시 회피 가능
 > - 사용자 도달 마지막 갭 정리 — 인프라 (본부 10 + iterative_loop + RAG + Vision QA) 완비 + production default 화
 >
+> ## ✅ dependabot 4+1건 정리 완료 (본 세션, 2026-05-18 마무리)
+>
+> | PR | 변경 | 결정 | 머지 commit |
+> |----|------|------|-----------|
+> | #140 rich >=13 → >=15 | major | ❌ **close** (instructor 가 rich<15 영구 제약) | — |
+> | #162 anyio >=4.0 → >=4.13 | minor | ✅ merge | `c2da2f6` |
+> | #141 pandas >=2 → >=3.0.3 | major | ✅ merge (production import 0건) | `ac625b7` |
+> | #142 langgraph >=0.2 → >=1.2 | major (0→1) | ✅ merge (StateGraph+END 최소 표면적) | `868922d` |
+> | #163 langchain >=0.3 → >=1.3.1 | major (0→1) | ✅ merge (transitive 영향만) | `2052d02` |
+>
+> 향후 dep 의사결정 패턴 — *production import grep* + *breaking change 영향 위치* + *CI pytest pass* 3 단계 검증 표준. **다음 세션 PM 본인 PC E2E 가 통합 production 검증** (auto-iterate 기본 ON + 새 dep 4건 적용 상태).
+>
 > ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail 4건 — 보류 누적 |
-> | **2** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
+> | **1** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
+> | **2** | **dep 4건 통합 E2E 검증** | M (~30min) | HIGH | auto-iterate 기본 ON + langgraph 1.2 + langchain 1.3.1 + pandas 3 + anyio 4.13 적용 후 본인 PC E2E PASS 확인 |
 > | **3** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON 완성 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
 > | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 >
