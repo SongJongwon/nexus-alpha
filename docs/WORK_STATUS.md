@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-18 (PR #162/#163/#167/#168/#169 머지 + dependabot 4건 정리 + **dep 4건 통합 E2E PASS 24.64min** + **PR #170 — fail-silent Track B 잔재 fix + 영구 마스킹 실 결함 unmask** — 자기 진화 paradigm production default 완성 + dep 보류 누적 청소 + 통합 라이브 검증 + PR #81 이래 영구 마스킹된 Track B code_qa ImportError 정정)
+> **마지막 업데이트**: 2026-05-18 (PR #162~#172 머지 + dep 4건 통합 E2E PASS 24.64min + **PR #172 — Track B 도메인 분류 fail-HARD fix + Track B E2E 8.60min PASS** — PR #170 + #172 라이브 동시 검증 + Scrape.exe 45.23MB 산출 + PR #81 이래 첫 Track B code_qa 실 동작)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -16,9 +16,9 @@
 > | #162 (GH #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) — Build-but-Forget 마지막 잔재 정리 | E2E 결함 fix (verdict + UI) |
 > | **#163** (GH #166) | **`04a2bf3`** | **`--auto-iterate` default=True + `--no-auto-iterate` opt-out + `_confirm_auto_iterate_cost` 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적)** | **자기 진화 paradigm production default** |
 >
-> **pytest 누적**: 1272 → **1325** (+53, 회귀 0). dep 4건 통합 업그레이드 후에도 무회귀
-> **누적 머지 PR**: 161 → **170** (코어 5건 + dependabot 4건 + docs 2건 — 본 세션 11건 — 단일 세션 신기록)
-> **E2E 라이브 검증 누적**: 4회 (마지막 2026-05-18 13:47 **24.64min PASS** — dep 4건 통합 검증, App.exe 10.69MB, ~19% 단축)
+> **pytest 누적**: 1272 → **1342** (+70, 회귀 0). dep 4건 통합 업그레이드 후에도 무회귀
+> **누적 머지 PR**: 161 → **172** (코어 6건 + dependabot 4건 + docs 3+건 — 본 세션 단일 세션 신기록 갱신)
+> **E2E 라이브 검증 누적**: 5회 (Track A: 10:43 30.41min PASS / 13:47 **24.64min PASS dep 통합** / Track B: 16:38 0초 ValueError / **17:04 8.60min PASS PR #170+#172 동시 라이브 검증** — Scrape.exe 45.23MB)
 >
 > ## 🚀 자기 진화 paradigm 의 *production default* 완성 (PR #163)
 >
@@ -71,16 +71,44 @@
 > 2. `CodeQASkipped` duck-type 진단 보존 dataclass + `_run_code_qa_with_skip_reason` 헬퍼
 > 3. `_adapt_automate_to_chain_result` 4 케이스 분기 (None / no summary_line / 예외 / 빈 문자열)
 >
+> ## 🛡️ PR #172 — Track B 도메인 분류 fail-HARD fix + Track B E2E 8.60min PASS (2026-05-18 17:04)
+>
+> | 항목 | 내용 |
+> |------|------|
+> | 머지 commit | `047a74a` |
+> | 발견 | PM E2E 라이브 검증 — `--request "네이버 쇼핑 크롤러" --track B` 가 즉시 `ValueError` (전체 run 중단) |
+> | Root-cause | `_DOMAIN_KEYWORDS[WEB_SCRAPING]` 에 "크롤러" 누락 + UNKNOWN → fail-HARD raise |
+> | pytest | 1325 → **1342** (+17, 회귀 0) |
+>
+> **⚠️ Self-correction** — 어제 Phase 7 sprint 에서 `_llm_classify_domain` 을 "LOW — graceful fallback, skip" 으로 분류한 것은 *잘못된 판단*. 실제는 fail-HARD. **PM E2E 라이브 검증으로 정정 도달** — 통찰 3 (반복 E2E 가치) 의 추가 확증.
+>
+> **처방 (A + B 결합)**:
+> 1. 한국어 동의어 키워드 확장: 크롤러 / 스크레이퍼 / 스크레이핑 / 수집기
+> 2. `_resolve_track_b_domain` 헬퍼 + `UNKNOWN` → `WEB_SCRAPING` graceful fallback + stderr 진단 (PR #160a / PR #170 진단 surface 패턴 일관성)
+> 3. ~CLI `--forced-domain`~ — 별도 PR (다음 세션)
+>
+> **Track B E2E 2차 시도 라이브 검증** (17:04, 8.60min):
+> - ✅ Track B 진입 (이전엔 0초 ValueError, 본 PR 후 8.60min 완주)
+> - ✅ 도메인 분류 web_scraping
+> - ✅ pytest_author + code_qa 실 실행 (`knowledge_entry.yaml: qa_verdict: NEEDS_REVISION` — PR #170 간접 evidence)
+> - ✅ PyInstaller exit=0, Scrape.exe **45.23 MB** (Playwright 포함)
+> - ⚠️ `verdict=BLOCKED` (Gap Analyst 추가 개선 필요 판정, max_iterations=1 한계)
+> - ⚠️ retrospective 모든 섹션 빈 응답 (Retrospective Lead LLM 응답 부재 가능)
+>
+> 산출: [outputs/alpha_run_20260518_170422/](../outputs/alpha_run_20260518_170422/).
+>
 > ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18 갱신)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **Track B + enable_qa_loop=True E2E 라이브 검증** | M (~30min) | HIGH | PR #170 라이브 효과 — PR #81 이래 단 한 번도 실행 안 됐던 Track B code_qa 가 *진짜* 동작하는지 검증 |
-> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON + dep 통합 + Track B QA loop *진짜* 동작 확정 후 결정 가능 |
-> | **3** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
+> | **1** | **Track B BLOCKED verdict 원인 + retrospective 빈 응답 진단** | M (~1h) | M | max_iterations=3 으로 IMPROVE→COMPLETE 가능한지 + Retrospective Lead LLM 응답 부재 root-cause |
+> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 완료 — Telemetry fallback 우선 검토 |
+> | **3** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override 안전망 |
+> | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 >
-> > ~~dep 4건 통합 E2E 검증~~ — 본 세션 13:47 완료 PASS (session_log §Phase 6)
-> > ~~fail-silent 코드 전반 검색~~ — **본 세션 Phase 7 완료** (PR #170 — 잔재 fix + 영구 마스킹 결함 unmask)
+> > ~~dep 4건 통합 E2E 검증~~ — Phase 6 완료
+> > ~~fail-silent 코드 전반 검색~~ — Phase 7 완료 (PR #170)
+> > ~~Track B + enable_qa_loop=True E2E 라이브 검증~~ — **Phase 8 완료** (E2E 8.60min PASS — PR #170 + PR #172 동시 라이브 검증)
 >
 > ### auto-iterate 기본 ON 후 사용자 시나리오
 >
