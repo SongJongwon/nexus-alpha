@@ -1,13 +1,50 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-15 (PR #150~#160 **11 PR 머지** — Phase 1~4 완성 + iterative_loop production wire + E2E 발견 결함 fix — Track A/B 모두 자기 진화 cycle 지원, 다음 단계 E2E 재검증)
+> **마지막 업데이트**: 2026-05-18 (PR #162 (GitHub #164) 단일 머지 — E2E 재검증 발견 결함 2건 fix — verdict-reflects-build + 결과 패널 SKIPPED 진단 — Build-but-Forget anti-pattern 마지막 잔재 정리, 다음 단계 E2E 재재검증)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
-> 1. **[docs/progress/session_log_20260515.md](progress/session_log_20260515.md)** — 본 세션 (11 PR 머지, pytest 1129 → 1272 / +143, 회귀 0) — 마지막 섹션 "내일 재개 순서" 가 가이드
-> 2. **[docs/insights/agent_collaboration_paradigm_shift.md](insights/agent_collaboration_paradigm_shift.md)** — 본질적 통찰 5 (north star, 변하지 않음)
-> 3. **[docs/progress/session_log_20260514.md](progress/session_log_20260514.md)** — 직전 세션 (본부 10 완비)
+> 1. **[docs/progress/session_log_20260518.md](progress/session_log_20260518.md)** — 본 세션 (PR #162 단일 머지, pytest 1272 → 1288 / +16, 회귀 0) — 마지막 섹션 "다음 세션 재개 순서" 가 가이드
+> 2. **[docs/progress/session_log_20260515.md](progress/session_log_20260515.md)** — 직전 세션 (11 PR 머지)
+> 3. **[docs/insights/agent_collaboration_paradigm_shift.md](insights/agent_collaboration_paradigm_shift.md)** — 본질적 통찰 5 (north star, 변하지 않음)
 > 4. **메모리** — `MEMORY.md` + `project_paradigm_shift_pointer.md` (자동 로드됨)
+>
+> ## 🎯 2026-05-18 세션 — PR #162 (GitHub #164) 단일 머지 요약
+>
+> | PR | 머지 commit | 효과 | 분야 |
+> |----|-----------|------|------|
+> | **#162** (GH #164) | **`205feb5`** | **`BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) — Build-but-Forget 마지막 잔재 정리** | **E2E 결함 fix (verdict + UI)** |
+>
+> **pytest 누적**: 1272 → **1288** (+16, 회귀 0)
+> **누적 머지 PR**: 161 → **162** (GitHub #164)
+> **E2E 재검증 결과** (PM 본인 PC, ~31min): `verdict=COMPLETE iterations=1/1` 완주 + 결과 패널 Iterate 라인 정상 / Vision/QA loop 라인 미표시 → 진단 결과: **PR #160a 효과/회귀 X, LLM 산출 결함** (test_calculator.py 만 산출 → PyInstaller SKIPPED exit=-7) → *추가 결함 2건* 노출 → PR #162 bundled fix
+>
+> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18)
+>
+> | # | 작업 | 비용 | 가치 | 비고 |
+> |---|------|------|------|------|
+> | **1** | **E2E 재재검증** (`--auto-iterate --max-iterations 1`, 요청 명시) | M (~25min, PM 본인 PC) | VERY HIGH | PR #160a+b 라이브 효과 측정 + 본 PR SKIPPED 경로 비발동 확인 |
+> | **2** | **PR — `--auto-iterate` 기본 ON 전환** | S (~1h) | VERY HIGH | E2E PASS 후 즉시. 기본 ON + `--no-auto-iterate` opt-out flag |
+> | **3** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail 4건 |
+> | **4** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep (같은 anti-pattern 의 다른 위치) |
+>
+> ### E2E 재재검증 명령 (#1)
+>
+> ```powershell
+> .venv\Scripts\python.exe scripts\run.py --request "GUI 계산기 — tkinter, app.py entry" --track A --build --auto-iterate --max-iterations 1
+> ```
+>
+> **기대 (본 PR #162 후)**:
+>
+> | 시나리오 | iterative_loop verdict | 결과 패널 .exe 라인 |
+> |---------|------------------------|-------------------|
+> | `.exe` 정상 산출 | `COMPLETE iterations=1/1` | `📦 .exe : <path> (<size> MB)` (변화 없음) |
+> | `.exe` SKIPPED (이전 본 케이스) | `BLOCKED iterations=1/1` (BUILD_FAILED) | `📦 .exe : SKIPPED — exit=-7 reason=적합한 entry .py 파일 없음 ...` |
+> | build 비활성 | `COMPLETE` (build 무관) | `📦 .exe : (build 미실행 — enable_executor=False)` |
+>
+> ---
+>
+> ## 🔍 이전 (2026-05-15) 11 PR 머지 보존 — 단일 세션 신기록
 >
 > ## 🎯 2026-05-15 세션 — 11 PR 머지 요약 (단일 세션 신기록)
 >
