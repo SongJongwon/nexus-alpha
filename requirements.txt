@@ -18,7 +18,7 @@ langchain-anthropic>=0.2.0
 # Claude Code MAX 구독을 경유해 Claude를 호출하는 Anthropic 공식 SDK
 claude-agent-sdk>=0.1.60
 # 비동기 런타임 추상화(asyncio/trio 공통 API)
-anyio>=4.0.0
+anyio>=4.13.0
 
 # 모니터링
 # AI 에이전트 호출 추적 및 모니터링
