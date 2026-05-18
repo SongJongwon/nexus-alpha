@@ -316,7 +316,9 @@ class AutomateWorkflowResult:
         pytest_suite: Pytest Author 산출 (PR #81 — enable_qa_loop=True 시).
             devops 도메인 또는 enable_qa_loop=False 시 빈 문자열.
         code_qa_result: code_qa 실행 결과 (PR #81 — enable_qa_loop=True 시).
-            None 이면 미실행 (devops / disabled / qa_feedback_loop 미가용).
+            None 이면 미실행 (devops / disabled). 호출은 시도됐으나 실패한 경우
+            (qa_feedback_loop 미가용 / run_code_qa 예외) 에는 ``CodeQASkipped`` (PR #170)
+            를 반환 — duck-type 호환 (``success=False`` + ``summary_line()`` + ``skip_reason``).
             duck-typed: ``success: bool`` + ``summary_line() -> str`` 만 보장.
     """
 
@@ -902,6 +904,53 @@ def _inject_track_b_entry_filename_directive(
     )
 
 
+@dataclass(frozen=True)
+class CodeQASkipped:
+    """code_qa 호출 자체 실패 — duck-type 호환 sentinel (PR #170).
+
+    ``CodeQAResult`` 의 ``success`` + ``summary_line()`` 만 보장하면 caller (특히
+    ``_adapt_automate_to_chain_result`` / 결과 패널) 가 진단 메시지를 표시할 수 있다.
+    ``skip_reason`` 은 *왜* 실행되지 못 했는지 (ImportError / 예외 type+msg) 보존.
+
+    PR #160a 의 ``vision_unavailable`` property 패턴과 동일 — *환경 부재 / 실 실패*
+    구분을 caller 까지 propagate 해서 fail-silent 차단.
+    """
+
+    skip_reason: str
+    success: bool = False
+
+    def summary_line(self) -> str:
+        return f"[CODE_QA SKIPPED] {self.skip_reason}"
+
+
+def _run_code_qa_with_skip_reason(saved_dir: Path) -> Any:
+    """``run_code_qa`` 호출 + 실패 분기별 진단 정보 보존 (PR #170).
+
+    Returns:
+        ``CodeQAResult`` (성공/실패 무관 — ``run_code_qa`` 정상 응답) 또는
+        ``CodeQASkipped`` (호출 자체 실패: ImportError / 예외 발생).
+
+    Why:
+        2026-05-18 fail-silent 검색 — 이전 분기는 단일 ``None`` 반환 → caller 가
+        어느 원인 인지 미보존. *그리고* import 경로 자체가 잘못돼서
+        (``src.workflows.qa_feedback_loop`` 에는 ``run_code_qa`` 미정의 — 실 정의 위치는
+        ``src.agents.qa.code_qa_executor``) PR #81 이래로 ImportError 분기가 *영원히* hit
+        → Track B + enable_qa_loop=True 시 실 code_qa 단 한 번도 실행 안 됨. fail-silent
+        가 본 결함을 *마스킹* 한 정확한 사례. 본 helper 는 import 경로 정정 + 진단 보존
+        (PR #160a Vision QA + PR #162 결과 패널과 같은 패턴).
+    """
+    try:
+        from src.agents.qa.code_qa_executor import run_code_qa
+    except ImportError as exc:
+        return CodeQASkipped(
+            skip_reason=f"code_qa_executor 미가용 (ImportError: {exc})"
+        )
+    try:
+        return run_code_qa(saved_dir / "code")
+    except Exception as exc:  # noqa: BLE001 — 모든 예외 surface (caller 진단용)
+        return CodeQASkipped(skip_reason=f"{type(exc).__name__}: {exc}")
+
+
 def _run_track_b_qa_loop(
     domain: AutomationDomain,
     code_task: Task,
@@ -978,18 +1027,8 @@ def _run_track_b_qa_loop(
             saved_code_files.append(p)
             seen.add(p.resolve())
 
-    # code_qa 실행 — 모듈 미가용 (PR #42 미머지 환경) 시 None 반환
-    code_qa_result: Any = None
-    try:
-        from src.workflows.qa_feedback_loop import run_code_qa  # type: ignore[attr-defined]
-    except ImportError:
-        return pytest_suite_text, None
-    try:
-        code_qa_result = run_code_qa(saved_dir / "code")
-    except Exception:
-        # code_qa 실 실행 자체 실패 — 산출 보존 + None 반환 (silent failure)
-        return pytest_suite_text, None
-
+    # code_qa 실행 — PR #170: 실패 분기별 진단 보존 (CodeQASkipped duck-type 반환)
+    code_qa_result = _run_code_qa_with_skip_reason(saved_dir)
     return pytest_suite_text, code_qa_result
 
 
