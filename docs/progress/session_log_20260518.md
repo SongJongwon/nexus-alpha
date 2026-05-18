@@ -1,4 +1,4 @@
-# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환 + dependabot 4건 정리 + dep 통합 E2E PASS + fail-silent Track B 영구 마스킹 결함 unmask + Track B 도메인 fail-HARD fix + Track B E2E 라이브 검증)
+# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환 + dependabot 4건 정리 + dep 통합 E2E PASS + fail-silent Track B 영구 마스킹 결함 unmask + Track B 도메인 fail-HARD fix + Track B E2E 라이브 검증 + BLOCKED UX + Retrospective 진단 surface)
 
 > 본 세션은 (1) PR #160a+b 라이브 검증 목적 E2E 재검증에서 발견한 *추가 2 결함* 을
 > 단일 PR (#162, GitHub #164) bundled fix 로 처방 (Build-but-Forget anti-pattern
@@ -16,9 +16,10 @@
 | **dependabot 정리 (5건)** | `c2da2f6` / `ac625b7` / `868922d` / `2052d02` | **anyio >=4.13 / pandas >=3.0.3 / langgraph >=1.2 / langchain >=1.3.1 머지** + **rich >=15 close** (instructor sub-dep 영구 제약) | (req-only) |
 | **#170** (GH #170) | **`2f3279d`** | **fail-silent Track B 잔재 fix + 영구 마스킹된 실 결함 unmask** — import 경로 정정 (`src.workflows.qa_feedback_loop` → `src.agents.qa.code_qa_executor`) + `CodeQASkipped` duck-type 진단 보존 + `_adapt_automate_to_chain_result` 4 케이스 분기 | **1325** (+16) |
 | **#172** (GH #172) | **`047a74a`** | **Track B 도메인 분류 fail-HARD fix** — 한국어 동의어 키워드 확장 (크롤러/스크레이퍼/스크레이핑/수집기) + `_resolve_track_b_domain` 헬퍼 + UNKNOWN → WEB_SCRAPING graceful fallback + stderr 진단. PM E2E 라이브 검증으로 self-correction 도달 (어제 LOW 분류 → 실제 fail-HARD) | **1342** (+17) |
+| **#174** (GH #174) | **`d47f334`** | **BLOCKED UX 개선 + Retrospective 진단 surface (fail-silent 5번째 변형 정리)** — `format_iterative_summary` 헬퍼 + `_format_blocked_partial_hint` (4 cause 별 안내) + `run_retrospective` 3 시나리오 진단 surface (LLM Exception / JSON parse 실패 / 빈 list well fallback). PR #160a/#170/#172 진단 surface 패턴 정확 연장 | **1354** (+12) |
 
-**pytest 누적**: 1272 → **1342** (+70, 회귀 0) — PR #162 +16 / PR #163 +21 / PR #170 +16 / **PR #172 +17**
-**누적 머지 PR (본 세션)**: 161 → **172** (코어 6건 + dependabot 4건 + docs 2~3건 — 단일 세션 신기록 갱신)
+**pytest 누적**: 1272 → **1354** (+82, 회귀 0) — PR #162 +16 / PR #163 +21 / PR #170 +16 / PR #172 +17 / **PR #174 +12**
+**누적 머지 PR (본 세션)**: 161 → **174** (코어 7건 + dependabot 4건 + docs 3~4건 — 단일 세션 신기록 갱신)
 **E2E 라이브 검증 누적 (본 세션)**: 3회 → **5회** (Track A: 10:43 30.41min PASS / 13:47 **24.64min PASS** dep 통합 / Track B: 16:38 ValueError 즉시 중단 / 17:04 **8.60min PASS** PR #170+#172 동시 라이브 검증)
 
 ## E2E 재검증 결과 (2026-05-18 09:01, ~31min)
@@ -317,6 +318,41 @@ PR #170 효과 확인 자체 불가.
 3. **self-correction 패턴 확정** — fail-silent sprint 의 LOW 분류 → PM E2E 가 fail-HARD 로 정정 (라이브 검증의 *반복적 ROI*)
 4. **BLOCKED verdict + 빈 retrospective 신규 sprint 후보** — Track B 자기 진화 cycle 의 max_iterations / Retrospective Lead LLM 응답 부재 진단 필요
 
+### Phase 9 — BLOCKED UX + Retrospective 진단 surface (PR #174, GitHub #174)
+
+Phase 8 (Track B E2E 17:04, 8.60min PASS) 산출 분석으로 발견된 2 결함:
+
+**결함 A — BLOCKED verdict UX (결함 아닌 정상 동작, UX 갭)**:
+- Root-cause: `judge_convergence` Rule 4 — `must_fix > 0 + iter=max=1 → BLOCKED(ITERATION_CAP)`
+- 1 iter 만 돌면 LLM 산출이 perfect 안 되는 *자연스러운* 결과
+- PR #162 `_apply_build_failure_override` 발동 X (.exe 정상 산출)
+- UX 갭: PM 입장 ".exe 산출 있는데 BLOCKED" → 부정적 인상 + 다음 행동 미보임. blocked_cause 미표시
+
+**결함 B — Retrospective 빈 응답 (fail-silent 5번째 변형)**:
+- `retrospective.md` 4 섹션 모두 "(없음)" → `run_retrospective` 4 list 모두 빈
+- Root-cause 3 후보 (재현 필요): LLM Exception / JSON parse 실패 / 정상 응답이지만 빈 list
+- 이전 분기는 *어느* 시나리오인지 진단 정보 미보존 — PR #160a/#170/#172 패턴의 5번째 변형
+
+**PR #174 처방 (단일 PR, A + B 결합)**:
+
+| Fix | 변경 |
+|-----|------|
+| A. `format_iterative_summary` 헬퍼 + `_format_blocked_partial_hint` | LoopOutcome 입력 → `verdict=BLOCKED(<cause>) iterations=N/M — <partial hint>` 형식. 4 cause 별 안내 (ITERATION_CAP / BUILD_FAILED / BUDGET_EXHAUSTED / STAGNATION). [scripts/run.py](../../scripts/run.py) Track A + Track B caller 모두 호출 |
+| B. `run_retrospective` 3 시나리오 진단 surface | LLM Exception → `wrong[0]` 에 type+msg / JSON parse 실패 → raw response 일부 surface / 정상 응답 + 빈 list → `well[0]` 에 LLM 판단 fallback. PR #160a (`vision_unavailable`) / PR #170 (`CodeQASkipped`) / PR #172 (`_resolve_track_b_domain`) 진단 surface 패턴 정확 연장 |
+
+회귀 테스트 12 신규 + 기존 1 정정 ([test_pr174_blocked_ux_retro_diag.py](../../src/tests/test_pr174_blocked_ux_retro_diag.py)):
+- format_iterative_summary 5 분기 + PM E2E 회귀 case + ITERATION_CAP partial hint
+- run_retrospective 4 시나리오 (Exception / parse 실패 / 빈 list fallback / 정상 응답 passthrough)
+- pytest 환경 skip 분기 회귀 차단
+- file-text — scripts/run.py 가 Track A/B 양쪽 호출
+- 기존 `test_run_retrospective_survives_llm_exception` 정정 (빈 list → 진단 surface)
+
+머지 commit `d47f334`. **pytest 1342 → 1354** (+12, 회귀 0).
+
+**이전 → 이후 결과 패널 변경 예시**:
+- 이전: `verdict=BLOCKED iterations=1/1`
+- 이후: `verdict=BLOCKED(ITERATION_CAP) iterations=1/1 — partial output 산출 완료, --max-iterations 늘려 추가 개선 가능`
+
 ## 핵심 통찰 (이번 세션)
 
 ### 1. "Build-but-Forget" anti-pattern 의 *마지막* 잔재 — verdict 차원
@@ -349,6 +385,7 @@ PR #170 은 그 처방이 *실 production 결함*을 발견 가능하게 만든�
 | 결과 패널 .exe `if x:` else 무성 | 사용자 자가 디버깅 불가 | ✅ PR #162 |
 | **Track B code_qa import 경로 잘못 + ImportError 단일 None 반환** | **영구 마스킹된 실 결함** | ✅ **PR #170** |
 | **Track B 도메인 분류 UNKNOWN → ValueError fail-HARD** | **PM E2E self-correction 으로 발견 (Phase 7 LOW 분류 정정)** | ✅ **PR #172** |
+| **Retrospective LLM 응답 분기 — 3 시나리오 (Exception/JSON parse/빈 list) 진단 미보존** | **5번째 변형 — Phase 8 산출 분석에서 발견** | ✅ **PR #174** |
 
 ### 3. E2E 라이브 검증의 *반복* 가치
 
@@ -422,20 +459,22 @@ production wire + PR #160a+b + #162 결함 fix 까지 *인프라* 만 완성. �
 - ✅ **dependabot 4건 정리 + 통합 E2E PASS** (anyio 4.13 / pandas 3.0.3 / langgraph 1.2 / langchain 1.3.1 — 머지 + venv 업그레이드 + pytest 1309 회귀 0 + E2E 24.64min PASS)
 - ✅ **fail-silent Track B 영구 마스킹 결함 unmask** (PR #170 — import 경로 정정 + CodeQASkipped 진단 보존 + 4 케이스 분기, pytest 1325 회귀 0)
 - ✅ **Track B 도메인 fail-HARD fix + Track B E2E 라이브 검증 PASS** (PR #172 — 한국어 동의어 + graceful fallback, E2E 8.60min, Scrape.exe 45.23MB, PR #170 간접 evidence 확인)
+- ✅ **BLOCKED UX 개선 + Retrospective 진단 surface** (PR #174 — format_iterative_summary + 3 시나리오 진단, fail-silent 5번째 변형 정리, pytest 1354 회귀 0)
 - ✅ E2E 라이브 검증 5회 누적 (2026-05-15 36.49min / 09:01 31.03min build SKIPPED / 10:43 30.41min PASS / 13:47 **24.64min PASS dep 통합** / 16:38 0초 ValueError / **17:04 8.60min PASS Track B 라이브**)
 
 ### 다음 세션 재개 순서 — PM 지시 (갱신)
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** | **Track B BLOCKED verdict 원인 + retrospective 빈 응답 진단** | M (~1h) | M | max_iterations=3 으로 IMPROVE→COMPLETE 가능한지 + Retrospective Lead LLM 응답 부재 root-cause |
-| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 완료 — Telemetry fallback 우선 검토 |
+| **1** | **Track B E2E 재검증** (PR #174 라이브 효과) | M (~30min) | HIGH | BLOCKED 결과 패널 partial hint 라이브 + retrospective 진단 메시지가 *어느 시나리오* 인지 surface 확인 → 다음 fix 결정 가능 |
+| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 + 진단 surface 완료 — Telemetry fallback 우선 검토 |
 | **3** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override — fallback default 가 의도 위배 시 안전망 |
 | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 
 > ~~dependabot 4건 검증~~ — 본 세션 Phase 6 완료
 > ~~fail-silent 코드 전반 검색~~ — 본 세션 Phase 7 완료 (PR #170)
-> ~~Track B + enable_qa_loop=True E2E 라이브 검증~~ — **본 세션 Phase 8 완료** (E2E 8.60min PASS — PR #170 + PR #172 동시 라이브 검증)
+> ~~Track B + enable_qa_loop=True E2E 라이브 검증~~ — 본 세션 Phase 8 완료 (E2E 8.60min PASS — PR #170 + PR #172 동시 라이브 검증)
+> ~~Track B BLOCKED verdict 원인 + retrospective 빈 응답 진단~~ — **본 세션 Phase 9 완료** (PR #174 — fail-silent 5번째 변형 정리)
 
 ### auto-iterate 기본 ON 후 사용자 시나리오
 

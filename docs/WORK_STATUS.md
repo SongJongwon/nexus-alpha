@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-18 (PR #162~#172 머지 + dep 4건 통합 E2E PASS 24.64min + **PR #172 — Track B 도메인 분류 fail-HARD fix + Track B E2E 8.60min PASS** — PR #170 + #172 라이브 동시 검증 + Scrape.exe 45.23MB 산출 + PR #81 이래 첫 Track B code_qa 실 동작)
+> **마지막 업데이트**: 2026-05-18 (PR #162~#174 머지 + Track B E2E 8.60min PASS + **PR #174 — BLOCKED UX 개선 + Retrospective 진단 surface** — fail-silent 5번째 변형 정리, format_iterative_summary 헬퍼 + 3 시나리오 진단, 다음 E2E 에서 retrospective root-cause 명확 surface 예정)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -16,8 +16,8 @@
 > | #162 (GH #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) — Build-but-Forget 마지막 잔재 정리 | E2E 결함 fix (verdict + UI) |
 > | **#163** (GH #166) | **`04a2bf3`** | **`--auto-iterate` default=True + `--no-auto-iterate` opt-out + `_confirm_auto_iterate_cost` 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적)** | **자기 진화 paradigm production default** |
 >
-> **pytest 누적**: 1272 → **1342** (+70, 회귀 0). dep 4건 통합 업그레이드 후에도 무회귀
-> **누적 머지 PR**: 161 → **172** (코어 6건 + dependabot 4건 + docs 3+건 — 본 세션 단일 세션 신기록 갱신)
+> **pytest 누적**: 1272 → **1354** (+82, 회귀 0). dep 4건 통합 업그레이드 후에도 무회귀
+> **누적 머지 PR**: 161 → **174** (코어 7건 + dependabot 4건 + docs 3+건 — 본 세션 단일 세션 신기록 갱신)
 > **E2E 라이브 검증 누적**: 5회 (Track A: 10:43 30.41min PASS / 13:47 **24.64min PASS dep 통합** / Track B: 16:38 0초 ValueError / **17:04 8.60min PASS PR #170+#172 동시 라이브 검증** — Scrape.exe 45.23MB)
 >
 > ## 🚀 자기 진화 paradigm 의 *production default* 완성 (PR #163)
@@ -97,18 +97,37 @@
 >
 > 산출: [outputs/alpha_run_20260518_170422/](../outputs/alpha_run_20260518_170422/).
 >
+> ## 🛡️ PR #174 — BLOCKED UX + Retrospective 진단 surface (2026-05-18 17:38)
+>
+> | 항목 | 내용 |
+> |------|------|
+> | 머지 commit | `d47f334` |
+> | 발견 | Phase 8 E2E (17:04, 8.60min PASS) 산출 분석 — BLOCKED UX 갭 + retrospective.md 빈 응답 |
+> | pytest | 1342 → **1354** (+12, 회귀 0) |
+>
+> **진단 결과**:
+> - 결함 A (BLOCKED UX) — `judge_convergence` Rule 4 정상 동작 (must_fix>0 + iter=max=1 → ITERATION_CAP). 결함 아닌 **UX 갭** (.exe 산출 있는데 BLOCKED 만 보임)
+> - 결함 B (Retrospective 빈 응답) — 3 시나리오 후보 (LLM Exception / JSON parse 실패 / 정상이지만 빈 list) 모두 진단 정보 미보존. **fail-silent 5번째 변형**
+>
+> **처방 (단일 PR, A + B 결합)**:
+> 1. `format_iterative_summary` 헬퍼 + `_format_blocked_partial_hint` — 4 cause 별 partial output 안내 (ITERATION_CAP / BUILD_FAILED / BUDGET_EXHAUSTED / STAGNATION). scripts/run.py Track A + Track B 양쪽 caller 호출
+> 2. `run_retrospective` 3 시나리오 진단 surface — PR #160a (`vision_unavailable`) / PR #170 (`CodeQASkipped`) / PR #172 (`_resolve_track_b_domain`) 패턴 정확 연장
+>
+> 회귀 테스트 12 신규 + 기존 1 정정 (test_run_retrospective_survives_llm_exception 의 빈 list 기대 → 진단 surface).
+>
 > ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18 갱신)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **Track B BLOCKED verdict 원인 + retrospective 빈 응답 진단** | M (~1h) | M | max_iterations=3 으로 IMPROVE→COMPLETE 가능한지 + Retrospective Lead LLM 응답 부재 root-cause |
-> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 완료 — Telemetry fallback 우선 검토 |
+> | **1** | **Track B E2E 재검증** (PR #174 라이브 효과) | M (~30min) | HIGH | BLOCKED 결과 패널 partial hint 라이브 + retrospective 진단 메시지가 *어느 시나리오* 인지 surface 확인 → 다음 fix 결정 가능 |
+> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 + 진단 surface 완료 — Telemetry fallback 우선 검토 |
 > | **3** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override 안전망 |
 > | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 >
 > > ~~dep 4건 통합 E2E 검증~~ — Phase 6 완료
 > > ~~fail-silent 코드 전반 검색~~ — Phase 7 완료 (PR #170)
-> > ~~Track B + enable_qa_loop=True E2E 라이브 검증~~ — **Phase 8 완료** (E2E 8.60min PASS — PR #170 + PR #172 동시 라이브 검증)
+> > ~~Track B + enable_qa_loop=True E2E 라이브 검증~~ — Phase 8 완료 (E2E 8.60min PASS — PR #170 + PR #172 동시 라이브 검증)
+> > ~~Track B BLOCKED verdict 원인 + retrospective 빈 응답 진단~~ — **Phase 9 완료** (PR #174 — fail-silent 5번째 변형 정리)
 >
 > ### auto-iterate 기본 ON 후 사용자 시나리오
 >
