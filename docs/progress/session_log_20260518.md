@@ -1,10 +1,10 @@
-# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환 + dependabot 4건 정리)
+# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환 + dependabot 4건 정리 + dep 통합 E2E PASS)
 
 > 본 세션은 (1) PR #160a+b 라이브 검증 목적 E2E 재검증에서 발견한 *추가 2 결함* 을
 > 단일 PR (#162, GitHub #164) bundled fix 로 처방 (Build-but-Forget anti-pattern
 > 마지막 잔재 정리) + (2) PR #160a+b + #162 *라이브 PASS* 후 PR #163 (GitHub #166)
 > 로 `--auto-iterate` **기본 ON 전환** — 자기 진화 paradigm 의 production default
-> 완성 + (3) 보류 누적 dependabot 4건 (#140 rich / #141 pandas / #142 langgraph / #163 langchain) + 신규 1건 (#162 anyio) **순차 정리** — rich close (instructor sub-dep 제약) + 4건 머지.
+> 완성 + (3) 보류 누적 dependabot 4건 (#140 rich / #141 pandas / #142 langgraph / #163 langchain) + 신규 1건 (#162 anyio) **순차 정리** — rich close (instructor sub-dep 제약) + 4건 머지 + (4) **dep 4건 통합 E2E 라이브 검증 PASS** (24.64min, 이전 30.41min 대비 ~19% 단축, 회귀 0).
 
 ## TL;DR
 
@@ -17,6 +17,7 @@
 
 **pytest 누적**: 1272 → **1309** (+37, 회귀 0)
 **누적 머지 PR (본 세션)**: 161 → **167** + dependabot 4건 (GitHub #164/#165/#166/#167 + #141/#142/#162/#163)
+**E2E 라이브 검증 누적 (본 세션)**: 3회 → **4회** (10:43 30.41min PASS / 13:47 **24.64min PASS** — dep 4건 통합 적용 후, ~19% 단축, 회귀 0)
 
 ## E2E 재검증 결과 (2026-05-18 09:01, ~31min)
 
@@ -190,6 +191,36 @@ The conflict is caused by:
 
 머지 순서: anyio (가장 안전) → pandas (production import 0) → langgraph (코어, 최소 표면적) → langchain (transitive 영향 우세).
 
+### Phase 6 — dep 4건 통합 E2E 라이브 검증 (2026-05-18 13:47, 24.64min, PASS)
+
+dependabot 4건 머지 직후 PM 지시: "auto-iterate ON + 새 dep 본인 PC PASS 확인". 본인 PC venv 의
+설치 상태가 main 의 requirements 보다 *뒤처져* 있음을 1차 점검 시 발견 — pandas 3.0.2 /
+langgraph 1.1.6 / langchain 1.2.15 (모두 미달). 다음 단계 순서로 진행:
+
+| # | 단계 | 결과 |
+|---|------|------|
+| 1 | `pip install --upgrade --upgrade-strategy eager -r requirements.txt` | 성공 — pandas 3.0.2→3.0.3 / langgraph 1.1.6→1.2.0 / langchain 1.2.15→1.3.1 / langchain-core 1.2.31→**1.4.0** / langchain-anthropic 1.4.0→1.4.3 / anthropic 0.x→0.102.0 등 transitive 다수 |
+| 2 | `pytest -q -x` (전체 회귀) | **1309 passed, 35.99s, 회귀 0** — dep 4건 + 그 transitive 동반 업그레이드 후 회귀 없음 |
+| 3 | E2E 본인 PC 실행 (`--request "GUI 계산기 — tkinter, app.py entry" --track A --build --max-iterations 1 --non-interactive`) | **PASS, 24.64min** — 이전 PASS (10:43 30.41min) 대비 ~5.77min (~19%) 단축 |
+
+**E2E 결과 패널** ([outputs/alpha_run_20260518_134706](../../outputs/alpha_run_20260518_134706/)):
+
+| 항목 | 결과 |
+|------|------|
+| `[1/4] iterative_loop` | **1475.0s** (이전 1821.3s, ↓ 346s), `verdict=COMPLETE iterations=1/1` |
+| `[2/4] vision_qa` | `[GUI_TEST SKIPPED] Vision API 미평가 — ANTHROPIC_API_KEY 미설정. screenshot 정상 캡처, qa_feedback_loop SKIPPED` ✅ PR #160a 분기 라이브 |
+| `[3/4] qa_feedback_loop` | `[QA_LOOP PASS] retry=0/1, failed=0, skipped=1` ✅ PR #160a false RETRY 차단 라이브 |
+| 결과 패널 라인 | `📁 outputs` + `📦 .exe (10.69 MB)` + `🔄 Iterate` + `👁️ Vision` + `🔁 QA loop` 모두 표시 ✅ PR #162 결과 패널 라이브 |
+| auto-iterate banner | 정상 표시 + `(non-interactive 모드 — 자동 확인)` 자동 confirm ✅ PR #163 production default 라이브 |
+| 산출 .exe | `App.exe` **10.69 MB** (이전 Calculator.exe 10.70 MB — 거의 동일) ✅ |
+
+**검증 의의**:
+1. dep 4건 (anyio 4.13 / pandas 3.0.3 / langgraph 1.2 / langchain 1.3.1) production **무회귀** — 단위 테스트 (1309) + 통합 E2E 양쪽 모두 PASS
+2. langgraph 1.2 / langchain 1.3.1 **major bump (0→1) 안전** — 사전 dependency 사용 표면적 분석 (StateGraph + END 2 imports / 사실상 transitive 만 사용) 의 가설 확증
+3. iterative_loop **~19% 단축** — langgraph 1.2 의 그래프 실행 개선 또는 LLM 응답 variance 가능. *명확한 회귀 0* + *체감 개선*. 다음 E2E 에서 재측정 시 baseline 으로 사용
+4. PR #163 production default (`--auto-iterate` 기본 ON + non-interactive 자동 confirm) **라이브 동작 확정**
+5. *통합* (4 dep + auto-iterate default + PR #160a+b + PR #162) 가 *동일 워크플로* 에서 충돌 없이 동작 — 본 세션 머지된 모든 PR 의 production-ready 라이브 검증 완료
+
 ## 핵심 통찰 (이번 세션)
 
 ### 1. "Build-but-Forget" anti-pattern 의 *마지막* 잔재 — verdict 차원
@@ -281,16 +312,18 @@ production wire + PR #160a+b + #162 결함 fix 까지 *인프라* 만 완성. �
 - ✅ Phase 1~4 모두 완성 + iterative_loop production wire (Track A/B)
 - ✅ E2E 발견 결함 4건 fix 완료 (PR #160a+b Vision QA false-FAIL + retry build 진단 / PR #162 verdict-reflects-build + 결과 패널 SKIPPED 진단)
 - ✅ **자기 진화 paradigm production default 완성** (PR #163 — auto-iterate 기본 ON + opt-out flag + 비용 안내 banner + max_iterations 5→3)
-- ✅ E2E 라이브 검증 3회 누적 (2026-05-15 36.49min / 2026-05-18 09:01 31.03min build SKIPPED / 2026-05-18 10:43 30.41min PASS)
+- ✅ **dependabot 4건 정리 + 통합 E2E PASS** (anyio 4.13 / pandas 3.0.3 / langgraph 1.2 / langchain 1.3.1 — 머지 + venv 업그레이드 + pytest 1309 회귀 0 + E2E 24.64min PASS)
+- ✅ E2E 라이브 검증 4회 누적 (2026-05-15 36.49min / 2026-05-18 09:01 31.03min build SKIPPED / 2026-05-18 10:43 30.41min PASS / **2026-05-18 13:47 24.64min PASS — dep 4건 통합 검증**)
 
-### 다음 세션 재개 순서 — PM 지시
+### 다음 세션 재개 순서 — PM 지시 (갱신)
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail 4건 — 보류 누적 |
-| **2** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
-| **3** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON 완성 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
-| **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 가 기본 wiring 완료 — 추가 항목 PM 협의 필요 |
+| **1** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
+| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON + dep 4건 PASS 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
+| **3** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 가 기본 wiring 완료 — 추가 항목 PM 협의 필요 |
+
+> ~~dependabot 4건 검증~~ — **본 세션 마감 시점 완료** (Phase 6 참조)
 
 ### auto-iterate 기본 ON 후 사용자 시나리오
 
