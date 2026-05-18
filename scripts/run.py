@@ -626,11 +626,9 @@ def _run_track_a(args: argparse.Namespace) -> int:
             repo_url=args.repo,
         )
         result = outcome.final_chain_result
-        verdict_str = getattr(outcome.verdict, "value", str(outcome.verdict))
-        iterative_summary = (
-            f"verdict={verdict_str} iterations={outcome.iterations_run}/"
-            f"{args.max_iterations}"
-        )
+        # PR #174 — BLOCKED UX 개선 (blocked_cause + partial output 안내)
+        from src.workflows.iterative_loop import format_iterative_summary  # noqa: PLC0415
+        iterative_summary = format_iterative_summary(outcome, args.max_iterations)
         if result is None:
             # 안전망: 어떤 이유로든 chain_result 부재 → downstream 가 .saved_dir 등 접근 시
             # AttributeError 위험. dummy result-like namespace 로 폴백.
@@ -842,11 +840,9 @@ def _run_track_b(args: argparse.Namespace) -> int:
             release_tag=args.tag,
         )
         chain = outcome.final_chain_result
-        verdict_str = getattr(outcome.verdict, "value", str(outcome.verdict))
-        iterative_summary = (
-            f"verdict={verdict_str} iterations={outcome.iterations_run}/"
-            f"{args.max_iterations}"
-        )
+        # PR #174 — BLOCKED UX 개선 (Track B 동일 포맷 — blocked_cause + partial hint)
+        from src.workflows.iterative_loop import format_iterative_summary  # noqa: PLC0415
+        iterative_summary = format_iterative_summary(outcome, args.max_iterations)
         if chain is None:
             # 안전망: LoopOutcome.final_chain_result=None → dummy 폴백
             result = SimpleNamespace(

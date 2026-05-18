@@ -280,14 +280,36 @@ def run_retrospective(
             ),
             delta_block="\n".join(f"- {d}" for d in deltas) if deltas else "(없음)",
         )
+        # PR #174 — 3 시나리오 진단 surface (fail-silent 5번째 변형 정리)
+        llm_error_reason: Optional[str] = None
         try:
             response = llm_call(prompt)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — 모든 예외 surface (PR #160a/#170/#172 패턴)
             response = ""
+            llm_error_reason = f"{type(exc).__name__}: {exc}"
         parsed = _parse_retrospective_json(response or "")
         well = parsed.get("what_went_well", [])
         wrong = parsed.get("what_went_wrong", [])
         lessons = parsed.get("lessons_learned", [])
+
+        # 진단 분기 1 — LLM 호출 자체 실패 (response 빈 문자열 + 예외)
+        if llm_error_reason is not None:
+            if not wrong:
+                wrong = [f"Retrospective LLM 호출 실패 ({llm_error_reason})"]
+            if not lessons:
+                lessons = ["LLM API 안정성 점검 필요 (다음 빌드 회고 fallback 진입)"]
+        # 진단 분기 2 — response 받았지만 JSON parsing 실패
+        elif response and not parsed:
+            raw_preview = response.strip()[:120]
+            if len(response.strip()) > 120:
+                raw_preview += "..."
+            if not wrong:
+                wrong = [f"Retrospective JSON parse 실패 — raw: {raw_preview!r}"]
+            if not lessons:
+                lessons = ["LLM 응답 JSON 형식 강제 prompt 개선 필요"]
+        # 진단 분기 3 — 정상 응답 + parse OK 인데 4 list 모두 빈 list
+        elif response and parsed and not (well or wrong or lessons):
+            well = ["LLM 정상 응답 — 회고 항목 없음 판단 (재현 시 prompt 개선 검토)"]
 
     # delta 가 자동 검출됐는데 LLM 이 wrong 에 반영 안 했다면, wrong 에 자동 추가
     if deltas and not wrong:
