@@ -110,10 +110,15 @@ _DOMAIN_KEYWORDS: dict[AutomationDomain, tuple[_DomainKeyword, ...]] = {
     AutomationDomain.WEB_SCRAPING: (
         # STRONG (도구·도메인 고유)
         ("크롤링", 3, False), ("스크래핑", 3, False), ("스크래퍼", 3, False),
+        # PR #172 — 한국어 동의어 누락 보완 ("크롤러" 누락 → "네이버 쇼핑 크롤러" 분류 실패 사례)
+        ("크롤러", 3, False),
+        ("스크레이퍼", 3, False), ("스크레이핑", 3, False),
         ("playwright", 3, False), ("selenium", 3, False), ("beautifulsoup", 3, False),
         # MEDIUM
         ("웹사이트", 2, False), ("웹페이지", 2, False), ("수집해", 2, False),
         ("긁어", 2, False),
+        # PR #172 — "수집기" / "수집" 동의어 추가
+        ("수집기", 2, False),
         ("scrape", 2, False), ("crawl", 2, False),
         # WEAK (짧은 영어 — 단어 경계)
         ("requests", 2, True),
@@ -231,6 +236,47 @@ def detect_automation_domain(
         if llm_choice is not None:
             return llm_choice
     return AutomationDomain.UNKNOWN
+
+
+def _resolve_track_b_domain(
+    user_request: str,
+    forced_domain: Optional[AutomationDomain] = None,
+    *,
+    fallback_domain: AutomationDomain = AutomationDomain.WEB_SCRAPING,
+) -> AutomationDomain:
+    """Track B 도메인 결정 — graceful fallback 포함 (PR #172).
+
+    이전 (PR #172 이전) 의 ``run_automate_workflow`` 진입부는 ``detect_automation_domain``
+    가 ``UNKNOWN`` 을 반환하면 ``ValueError`` 를 raise 하는 fail-HARD 분기 → 사용자가
+    "네이버 쇼핑 크롤러" 같은 명확히 web_scraping 의도의 요청도 키워드 사전 갭만으로
+    *전체 run 중단*. 본 helper 는:
+
+    1. ``forced_domain`` 명시 → 그대로 사용 (휴리스틱 우회)
+    2. 휴리스틱 정상 도메인 감지 → 그대로 사용
+    3. ``UNKNOWN`` → ``fallback_domain`` (default WEB_SCRAPING) 으로 graceful 진행
+       + ``sys.stderr`` 에 진단 메시지 + ``forced_domain`` 안내
+
+    fail-silent 아님 — *진단 정보 surface* (PR #160a vision_unavailable / PR #170
+    CodeQASkipped 패턴과 일관성).
+
+    Returns:
+        결정된 ``AutomationDomain`` — ``UNKNOWN`` 절대 반환 X (fallback 보장).
+    """
+    domain = forced_domain or detect_automation_domain(user_request)
+    if domain is AutomationDomain.UNKNOWN:
+        print(
+            f"[Track B] ⚠️  domain 자동 감지 실패 — '{user_request}' 에 매칭된 "
+            f"도메인 키워드 없음 (web_scraping / desktop_automation / api_integration / "
+            f"data_parser / devops).",
+            file=sys.stderr,
+        )
+        print(
+            f"[Track B] ↩️  fallback: {fallback_domain.value} (기본). 다른 도메인 의도 "
+            f"였으면 더 구체적인 요청 또는 ``forced_domain=`` 파라미터 사용.",
+            file=sys.stderr,
+        )
+        domain = fallback_domain
+    return domain
 
 
 def _llm_classify_domain(
@@ -1430,7 +1476,9 @@ def run_automate_workflow(
         (enable_build=True 시) executor_result.
 
     Raises:
-        ValueError: 휴리스틱이 UNKNOWN 을 반환했고 ``forced_domain`` 도 None 인 경우.
+        (PR #172) 휴리스틱이 ``UNKNOWN`` 을 반환해도 ``ValueError`` 를 raise 하지
+        않음 — ``_resolve_track_b_domain`` 이 ``web_scraping`` 으로 graceful fallback +
+        ``sys.stderr`` 진단 메시지. 명시적 도메인 강제는 ``forced_domain=`` 사용.
 
     Note:
         본 함수는 LLM 호출 1~2건 (도메인 task + (옵션) pytest_author task) +
@@ -1450,13 +1498,10 @@ def run_automate_workflow(
     )
 
     try:
-        domain = forced_domain or detect_automation_domain(user_request)
-        if domain is AutomationDomain.UNKNOWN:
-            raise ValueError(
-                "Track B 자동화 도메인을 결정할 수 없습니다 "
-                "(web_scraping / desktop_automation / api_integration / data_parser / "
-                "devops). 더 구체적인 요청 또는 forced_domain= 파라미터를 명시해 주세요."
-            )
+        # PR #172 — fail-HARD 대신 graceful fallback (helper 가 UNKNOWN 시 web_scraping
+        # default + 진단 메시지). 이전 fail-HARD 는 "네이버 쇼핑 크롤러" 처럼 명확한
+        # web_scraping 의도의 요청도 키워드 갭만으로 전체 run 중단시키는 결함.
+        domain = _resolve_track_b_domain(user_request, forced_domain)
 
         factory = _DOMAIN_TO_FACTORY[domain]
         agent = factory(verbose=verbose)

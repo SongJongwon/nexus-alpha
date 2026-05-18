@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.workflows.automate_workflow import (
     AutomationDomain,
     _DOMAIN_TO_FACTORY,
@@ -151,18 +153,34 @@ def test_extract_no_blocks_returns_empty(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. run_automate_workflow — UNKNOWN 시 ValueError
+# 4. run_automate_workflow — UNKNOWN 시 graceful fallback (PR #172)
 # ---------------------------------------------------------------------------
 
 
-def test_run_automate_workflow_raises_on_unknown_without_forced_domain() -> None:
-    """휴리스틱 UNKNOWN + forced_domain None → ValueError (명시적 에러)."""
-    import pytest
+def test_run_automate_workflow_unknown_falls_back_gracefully(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """PR #172 — 휴리스틱 UNKNOWN 시 ``ValueError`` 가 아닌 graceful fallback.
 
-    from src.workflows.automate_workflow import run_automate_workflow
+    이전 (PR #172 이전) 은 ``ValueError`` raise 로 전체 run 중단 → PM E2E 라이브
+    검증에서 "네이버 쇼핑 크롤러" 가 키워드 갭만으로 fail-HARD 한 사례 발견.
+    본 PR 부터 ``UNKNOWN`` → ``WEB_SCRAPING`` fallback + ``sys.stderr`` 진단.
+    """
+    from src.workflows.automate_workflow import (
+        AutomationDomain,
+        run_automate_workflow,
+    )
 
-    with pytest.raises(ValueError, match="자동화 도메인을 결정할 수 없습니다"):
-        run_automate_workflow("ambiguous request", verbose=False)
+    result = run_automate_workflow(
+        "ambiguous request",
+        outputs_dir=tmp_path,
+        verbose=False,
+    )
+    # ``ValueError`` 미발생 — graceful 진행
+    assert result.detected_domain is AutomationDomain.WEB_SCRAPING
+    err = capsys.readouterr().err
+    assert "domain 자동 감지 실패" in err
+    assert "fallback" in err
 
 
 def test_run_automate_workflow_with_forced_domain_runs_via_fake_provider(
