@@ -613,15 +613,26 @@ def _adapt_automate_to_chain_result(automate_result: Any) -> Any:
     ``code_qa_result`` (qa_review 대신) 만 가짐. 본 어댑터가 그 mapping 을 수행 →
     iterative_loop 가 Track A/B 무관하게 동작 가능.
     """
+    # PR #170 — 4 케이스 차별화 진단 (이전: 모든 falsy 케이스 단일 fallback 메시지)
     qa_review = ""
     code_qa = getattr(automate_result, "code_qa_result", None)
-    if code_qa is not None and hasattr(code_qa, "summary_line"):
+    if code_qa is None:
+        qa_review = "(no QA review — Track B 자동화 산출)"
+    elif not hasattr(code_qa, "summary_line"):
+        qa_review = (
+            f"(no QA review — code_qa type={type(code_qa).__name__} "
+            f"has no summary_line)"
+        )
+    else:
         try:
             qa_review = code_qa.summary_line()
-        except Exception:  # noqa: BLE001
-            qa_review = ""
+        except Exception as exc:  # noqa: BLE001 — 예외 type+msg surface (caller 진단)
+            qa_review = (
+                f"(no QA review — summary_line 호출 실패: "
+                f"{type(exc).__name__}: {exc})"
+            )
     if not qa_review:
-        qa_review = "(no QA review — Track B 자동화 산출)"
+        qa_review = "(no QA review — summary_line 빈 문자열)"
 
     from types import SimpleNamespace
 
