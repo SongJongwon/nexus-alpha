@@ -55,11 +55,17 @@ class Verdict(str, Enum):
 
 
 class BlockedCause(str, Enum):
-    """BLOCKED 판정 시 세부 원인. 우선순위: STAGNATION > BUDGET > ITER_CAP.
+    """BLOCKED 판정 시 세부 원인. 우선순위: BUILD_FAILED > STAGNATION > BUDGET > ITER_CAP.
 
     NONE 은 verdict != BLOCKED 일 때 채워지는 sentinel.
+
+    PR #162 (2026-05-18): ``BUILD_FAILED`` 추가. Gap Analyst 가 COMPLETE 로 판정해도
+    PyInstaller .exe 산출이 실패 (entry 미탐지 / pip install 실패 / 정적 검증 실패 등)
+    한 경우, 실 결과가 사용자 손에 도달 불가하므로 BLOCKED 로 override. judge 노드의
+    ``_apply_build_failure_override`` 가 적용.
     """
 
+    BUILD_FAILED = "BUILD_FAILED"
     STAGNATION = "STAGNATION"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     ITERATION_CAP = "ITERATION_CAP"

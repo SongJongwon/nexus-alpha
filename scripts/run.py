@@ -206,6 +206,32 @@ class PhaseTracker:
         return (datetime.now() - self.session_start).total_seconds()
 
 
+def _format_build_skipped_line(executor_result: Any) -> Optional[str]:
+    """PR #162 (2026-05-18) — exe_path 부재 시 결과 패널에 출력할 SKIPPED 메시지.
+
+    이유 (2026-05-18 E2E 발견): ``_print_result_summary`` 가 ``exe_path=None`` 일 때
+    아무 라인도 출력 안 했음 → PM 입장 "왜 Vision/QA 가 없지?" 디버깅 불가
+    (build 가 SKIPPED 됐는지, vision-qa 가 비활성인지 구분 X). 본 헬퍼가 진단 진입점.
+
+    분기:
+        - ``executor_result is None``       → ``"(build 미실행 — enable_executor=False)"``
+        - ``executor_result.success is False`` (SKIPPED 또는 FAIL)
+                                            → ``"SKIPPED — exit=<N> reason=<error 1줄>"``
+        - 그 외 (success=True 인데 exe_path=None 등 비정상)
+                                            → ``"(.exe 산출 메타 부재 — executor_result 점검)"``
+    """
+    if executor_result is None:
+        return "(build 미실행 — enable_executor=False)"
+    success = getattr(executor_result, "success", True)
+    if not success:
+        exit_code = getattr(executor_result, "exit_code", "?")
+        error_msg = getattr(executor_result, "error_message", None) or "unknown"
+        first_line = error_msg.splitlines()[0] if error_msg else "unknown"
+        return f"SKIPPED — exit={exit_code} reason={first_line}"
+    # success=True 인데 exe_path 가 부재한 이상한 케이스
+    return "(.exe 산출 메타 부재 — executor_result 점검)"
+
+
 def _print_result_summary(
     track: str,
     elapsed_sec: float,
@@ -215,6 +241,7 @@ def _print_result_summary(
     vision_qa_summary: Optional[str] = None,
     qa_verdict_summary: Optional[str] = None,
     iterative_summary: Optional[str] = None,
+    executor_result: Any = None,
 ) -> None:
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
@@ -227,6 +254,11 @@ def _print_result_summary(
         print(f"  📦 .exe    : {exe_path} ({size_mb:.2f} MB)")
     elif exe_path:
         print(f"  📦 .exe (예상): {exe_path} — 생성 안 됨")
+    else:
+        # PR #162 — exe_path=None 일 때 SKIPPED reason 진단 표시
+        skipped_line = _format_build_skipped_line(executor_result)
+        if skipped_line:
+            print(f"  📦 .exe    : {skipped_line}")
     if iterative_summary:
         print(f"  🔄 Iterate: {iterative_summary}")
     if vision_qa_summary:
@@ -721,6 +753,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
     _print_result_summary(
         "A", elapsed, outputs_dir, exe_path, release_url,
         vision_summary, qa_verdict_summary, iterative_summary,
+        executor_result=getattr(result, "executor_result", None),
     )
     return 0
 
@@ -892,6 +925,7 @@ def _run_track_b(args: argparse.Namespace) -> int:
         vision_summary,
         qa_verdict_summary,
         iterative_summary,
+        executor_result=getattr(result, "executor_result", None),
     )
     return 0
 
