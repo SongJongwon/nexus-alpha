@@ -818,8 +818,70 @@ def _node_analyze_gap(state: _LoopState) -> dict[str, Any]:
     }
 
 
+def _apply_build_failure_override(
+    decision: JudgmentDecision,
+    chain_result: Any,
+) -> JudgmentDecision:
+    """PR #162 (2026-05-18) — PyInstaller build 실패 시 verdict 를 BLOCKED 로 override.
+
+    이유 (2026-05-18 E2E 발견):
+        ``judge_convergence`` 는 Gap Analyst 의 GapReport 만 입력으로 받음 → LLM 산출
+        코드/QA review 가 "잘 됨" 이면 verdict=COMPLETE. 그러나 PyInstaller .exe 산출이
+        실패한 경우 (entry 미탐지 -7, pip install 실패 -4, pre-validation 실패 -5,
+        attribute 검증 실패 -6) **사용자 손에 도달 가능한 산출물이 없음** → COMPLETE
+        는 *사용자 관점 거짓*. 본 override 가 deterministic 으로 BLOCKED 로 변환.
+
+    적용 조건 (모두 충족):
+        - ``decision.verdict == Verdict.COMPLETE`` (Judge 가 ok 라 한 케이스만)
+          → IMPROVE_NEEDED 면 다음 iteration 가서 재시도 가능 → 그대로 둠.
+          → BLOCKED 면 이미 차단된 상태 → cause 우선순위 유지.
+        - ``chain_result`` 가 not None
+        - ``chain_result.executor_result`` 가 not None (build 시도됨)
+        - ``executor_result.success`` 가 False OR ``executor_result.exe_path`` 가 None
+
+    Returns:
+        새 JudgmentDecision (override 시) 또는 원본 (해당 사항 없음).
+    """
+    if decision.verdict != Verdict.COMPLETE:
+        return decision
+    if chain_result is None:
+        return decision
+    executor_result = getattr(chain_result, "executor_result", None)
+    if executor_result is None:
+        # build 비활성 또는 build 단계 미진입 — override 대상 아님
+        return decision
+    success = getattr(executor_result, "success", True)
+    exe_path = getattr(executor_result, "exe_path", None)
+    if success and exe_path is not None:
+        # build 성공 — override 불필요
+        return decision
+
+    # build 시도됐는데 실패 → BLOCKED(BUILD_FAILED) 로 override
+    exit_code = getattr(executor_result, "exit_code", "?")
+    error_msg = getattr(executor_result, "error_message", None) or "unknown"
+    error_first_line = error_msg.splitlines()[0] if error_msg else "unknown"
+    return JudgmentDecision(
+        verdict=Verdict.BLOCKED,
+        blocked_cause=BlockedCause.BUILD_FAILED,
+        reason=(
+            f"PyInstaller .exe 산출 실패 — Gap Analyst 는 COMPLETE 판정했으나 build "
+            f"단계가 차단됨 (exit={exit_code}): {error_first_line}"
+        ),
+        next_action=(
+            "executor_result.error_message 의 진단 메시지를 따라 LLM 산출 코드 또는 "
+            "자연어 요청을 보정 후 재실행. 사용자 손에 도달 가능한 .exe 가 없으므로 "
+            "COMPLETE 로 종료하지 않음."
+        ),
+        must_fix_count=decision.must_fix_count,
+    )
+
+
 def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
-    """결정표 호출 (LLM 무관). budget 도 함께 차감."""
+    """결정표 호출 (LLM 무관). budget 도 함께 차감.
+
+    PR #162 (2026-05-18): build 실패 시 verdict override 추가 — ``_apply_build_failure_override``
+    참조. Gap Analyst 가 COMPLETE 라 해도 PyInstaller .exe 산출 실패면 BLOCKED(BUILD_FAILED).
+    """
     gap: GapReport = state["gap_report"]
     budget = state.get("budget_tokens_remaining", NO_BUDGET_GATE)
 
@@ -832,6 +894,8 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
         budget_tokens_remaining=budget,
     )
+    # PR #162 — build 실패 시 BLOCKED override
+    decision = _apply_build_failure_override(decision, state.get("chain_result"))
     return {
         "decision": decision,
         "budget_tokens_remaining": budget,
