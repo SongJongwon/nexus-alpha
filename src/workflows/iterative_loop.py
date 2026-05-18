@@ -164,6 +164,50 @@ class LoopOutcome:
     retrospective_md_path: Optional[Path] = None
 
 
+def _format_blocked_partial_hint(cause: BlockedCause) -> str:
+    """BLOCKED 별 partial output / next action 안내 (PR #174).
+
+    PR #174 — BLOCKED 결과 패널 UX. blocked_cause 별로 사용자가 다음 행동을 알 수
+    있도록 partial output 안내 + 재시도 옵션 surface.
+    """
+    if cause == BlockedCause.ITERATION_CAP:
+        return " — partial output 산출 완료, --max-iterations 늘려 추가 개선 가능"
+    if cause == BlockedCause.BUILD_FAILED:
+        return " — .exe 산출 실패 (build 실패 — 04_executor_result.md 확인)"
+    if cause == BlockedCause.BUDGET_EXHAUSTED:
+        return " — 토큰 예산 소진 (--budget-tokens 늘려 재시도 가능)"
+    if cause == BlockedCause.STAGNATION:
+        return " — 진행 정체 (2 iter 연속 gap 변화 없음 — 요구사항 모호 가능)"
+    return ""
+
+
+def format_iterative_summary(outcome: LoopOutcome, max_iterations: int) -> str:
+    """결과 패널 Iterate 라인 — verdict + blocked_cause + partial output 안내 (PR #174).
+
+    이전 (PR #174 이전):
+        ``verdict=BLOCKED iterations=1/1`` — PM 입장 .exe 산출 있는데 BLOCKED 만 보임
+        → 부정적 인상 + 다음 행동 미보임.
+
+    본 PR 이후:
+        ``verdict=BLOCKED(ITERATION_CAP) iterations=1/1 — partial output 산출 완료,
+        --max-iterations 늘려 추가 개선 가능``
+
+    Args:
+        outcome: ``LoopOutcome`` — verdict / blocked_cause / iterations_run 사용.
+        max_iterations: CLI ``--max-iterations`` 값 (분모 표시용).
+
+    Returns:
+        결과 패널 Iterate 라인용 한 줄 문자열.
+    """
+    verdict_str = getattr(outcome.verdict, "value", str(outcome.verdict))
+    iterations = f"iterations={outcome.iterations_run}/{max_iterations}"
+    if outcome.verdict == Verdict.BLOCKED:
+        cause_str = getattr(outcome.blocked_cause, "value", str(outcome.blocked_cause))
+        partial_hint = _format_blocked_partial_hint(outcome.blocked_cause)
+        return f"verdict=BLOCKED({cause_str}) {iterations}{partial_hint}"
+    return f"verdict={verdict_str} {iterations}"
+
+
 class _LoopState(TypedDict, total=False):
     """LangGraph 가 노드 사이에서 전달하는 상태 컨테이너.
 

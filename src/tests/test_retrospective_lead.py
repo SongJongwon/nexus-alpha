@@ -250,7 +250,7 @@ def test_run_retrospective_uses_injected_llm() -> None:
 
 
 def test_run_retrospective_survives_llm_exception() -> None:
-    """LLM 예외 시 결정론 골격만 반환 — 워크플로 차단 X."""
+    """LLM 예외 시 워크플로 차단 X — PR #174: 진단 메시지 surface (fail-silent 5번째 변형 정리)."""
 
     def boom(prompt: str) -> str:
         raise RuntimeError("LLM down")
@@ -260,9 +260,12 @@ def test_run_retrospective_survives_llm_exception() -> None:
         chain_result=_FakeChain("ok"), llm_call=boom,
     )
     assert report.workflow_id == "w"
-    # well/wrong/lessons 빈 채로 정상 반환
-    assert report.what_went_well == []
-    assert report.what_went_wrong == []
+    # PR #174 — 예외 시 결정론 골격만 X, *진단 메시지* surface
+    assert report.what_went_wrong  # 진단 메시지 채워짐
+    assert "Retrospective LLM 호출 실패" in report.what_went_wrong[0]
+    assert "RuntimeError" in report.what_went_wrong[0]
+    assert "LLM down" in report.what_went_wrong[0]
+    assert report.lessons_learned  # 안정성 점검 안내
 
 
 def test_run_retrospective_handles_no_chain_result() -> None:
