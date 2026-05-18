@@ -993,6 +993,46 @@ def _prompt_build(input_fn=input) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# auto-iterate 비용 안내 banner — PR #163 (2026-05-18, 기본 ON 전환 처방)
+# ---------------------------------------------------------------------------
+# 1 iter 당 LLM call 비용 추정 (4-agent chain + sandbox + gap + judge + retro +
+# curate). 베이스라인 — 본인 PC E2E 측정 (~30min / iter, Sonnet 4.6 기준 ~$5).
+# 추정값은 *최악* 시나리오 안내용이므로 보수적으로 잡음.
+_AUTO_ITERATE_MIN_PER_ITER: int = 25  # 평균 ~25min/iter (E2E 측정 30.41min/1iter 보수)
+_AUTO_ITERATE_USD_PER_ITER: int = 5   # Sonnet 4.6 기준 ~$5/iter (Opus 시 ~3배)
+
+
+def _confirm_auto_iterate_cost(args, input_fn=input) -> bool:
+    """auto-iterate 진입 직전 비용 안내 + Enter 대기 (PR #163).
+
+    기본 ON 전환에 따라 *명시 opt-in 이 아닌* 사용자도 자기 진화 cycle 에 진입.
+    PM 입장 큰 비용 부담 (최악 max_iter * ~25min, ~$5/iter) 을 *진입 전* 보여주고
+    명시 confirm 받기. non-interactive 모드는 안내만 출력 (자동 confirm).
+
+    Returns:
+        True 면 계속 진행, False 면 사용자 중단 (Ctrl-C / EOF / 'n' 답변).
+    """
+    n = max(1, getattr(args, "max_iterations", 3))
+    worst_min = n * _AUTO_ITERATE_MIN_PER_ITER
+    worst_usd = n * _AUTO_ITERATE_USD_PER_ITER
+    print()
+    print("  ⚡ auto-iterate 활성 (PR #163 — 기본 ON, --no-auto-iterate 로 OFF)")
+    print(
+        f"     max_iterations = {n} → 최악 ~{worst_min}min, ~${worst_usd} "
+        "(Convergence Judge 가 COMPLETE/BLOCKED 판정하면 조기 종료)"
+    )
+    print("     iter 당 cycle: recall→kickoff→chain→sandbox→gap→judge→retro→curate")
+    if getattr(args, "non_interactive", False):
+        print("     (non-interactive 모드 — 자동 확인)")
+        return True
+    try:
+        choice = input_fn("  계속 [Enter 로 진행 / Ctrl-C 또는 'n' 으로 중단]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return choice not in ("n", "no")
+
+
+# ---------------------------------------------------------------------------
 # argparse
 # ---------------------------------------------------------------------------
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -1052,19 +1092,28 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--auto-iterate", action="store_true", default=False,
+        "--auto-iterate", dest="auto_iterate", action="store_true", default=True,
         help=(
-            "PR #157 — Track A 진입을 run_iterative_loop (자기 진화 루프) 로 전환. "
-            "기본 OFF (backward compat — 1회 실행). 켜면 Convergence Judge 가 COMPLETE/"
-            "BLOCKED 판정할 때까지 최대 5 iteration (recall→kickoff→chain→sandbox→gap→"
-            "judge→retrospective→curate cycle). 비용 주의 — iter 당 ~25min × 최대 5회."
+            "PR #163 (2026-05-18) — 기본 ON 으로 전환. Track A/B 진입을 "
+            "run_iterative_loop (자기 진화 루프) 로 사용. Convergence Judge 가 "
+            "COMPLETE/BLOCKED 판정할 때까지 최대 --max-iterations 회 "
+            "(recall→kickoff→chain→sandbox→gap→judge→retrospective→curate cycle). "
+            "비용 주의 — iter 당 ~25min × 최대 N. 명시 OFF 는 --no-auto-iterate."
         ),
     )
     parser.add_argument(
-        "--max-iterations", type=int, default=5,
+        "--no-auto-iterate", dest="auto_iterate", action="store_false",
         help=(
-            "PR #157 — --auto-iterate 시 최대 iteration 횟수 (기본 5). 1 로 설정하면 "
-            "사실상 1회 실행 (자기 진화 없이 recall + curate cycle 만)."
+            "PR #163 — auto-iterate 명시 OFF (1회 실행, 자기 진화 cycle 없음). "
+            "CI/스크립트 자동화 등 빠른 1회 실행이 필요한 경우 사용."
+        ),
+    )
+    parser.add_argument(
+        "--max-iterations", type=int, default=3,
+        help=(
+            "PR #163 (2026-05-18) — 기본 5 → 3 으로 하향 (보수적). auto-iterate "
+            "시 최대 iteration 횟수. 1 로 설정하면 사실상 1회 실행. 사용자 대기 "
+            "시간 소지감 + 비용 폭증 회피."
         ),
     )
     return parser.parse_args(argv)
@@ -1115,6 +1164,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.repo:
         print(f"  Repo     : {args.repo}")
     print()
+
+    # 4.5. PR #163 (2026-05-18) — auto-iterate 비용 안내 banner.
+    # 기본 ON 으로 전환됨에 따라 *명시 opt-in 이 아닌 사용자* 도 자기 진화 cycle 진입 →
+    # 최악 비용을 *진입 전* 보여주고 confirm 받기. non-interactive 모드는 안내만.
+    if args.auto_iterate:
+        if not _confirm_auto_iterate_cost(args):
+            print("✗ 사용자 중단 (auto-iterate cost confirm).", file=sys.stderr)
+            return 1
 
     try:
         if args.track == "A":
