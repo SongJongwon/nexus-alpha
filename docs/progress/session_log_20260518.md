@@ -1,10 +1,10 @@
-# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환 + dependabot 4건 정리 + dep 통합 E2E PASS)
+# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환 + dependabot 4건 정리 + dep 통합 E2E PASS + fail-silent Track B 영구 마스킹 결함 unmask)
 
 > 본 세션은 (1) PR #160a+b 라이브 검증 목적 E2E 재검증에서 발견한 *추가 2 결함* 을
 > 단일 PR (#162, GitHub #164) bundled fix 로 처방 (Build-but-Forget anti-pattern
 > 마지막 잔재 정리) + (2) PR #160a+b + #162 *라이브 PASS* 후 PR #163 (GitHub #166)
 > 로 `--auto-iterate` **기본 ON 전환** — 자기 진화 paradigm 의 production default
-> 완성 + (3) 보류 누적 dependabot 4건 (#140 rich / #141 pandas / #142 langgraph / #163 langchain) + 신규 1건 (#162 anyio) **순차 정리** — rich close (instructor sub-dep 제약) + 4건 머지 + (4) **dep 4건 통합 E2E 라이브 검증 PASS** (24.64min, 이전 30.41min 대비 ~19% 단축, 회귀 0).
+> 완성 + (3) 보류 누적 dependabot 4건 (#140 rich / #141 pandas / #142 langgraph / #163 langchain) + 신규 1건 (#162 anyio) **순차 정리** — rich close (instructor sub-dep 제약) + 4건 머지 + (4) **dep 4건 통합 E2E 라이브 검증 PASS** (24.64min, 이전 30.41min 대비 ~19% 단축, 회귀 0) + (5) **fail-silent 코드 전반 검색 sprint** → Track B 자동화 경로의 잔재 fix 작업 중 **PR #81 이래 영구 마스킹된 실 production 결함 unmask** (PR #170 GitHub #170, `from src.workflows.qa_feedback_loop import run_code_qa` 영원히 ImportError → Track B + enable_qa_loop=True 가 *실제로* 동작 안 했음. 본 PR 부터 *진짜* 동작).
 
 ## TL;DR
 
@@ -14,9 +14,10 @@
 | #163 (GH #166) | `04a2bf3` | `--auto-iterate` default=True + `--no-auto-iterate` opt-out + 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적) | 1309 (+21) |
 | GH #167 | `eff1c31` | docs (PR #163 세션 1차 보존) | 1309 (+0) |
 | **dependabot 정리 (5건)** | `c2da2f6` / `ac625b7` / `868922d` / `2052d02` | **anyio >=4.13 / pandas >=3.0.3 / langgraph >=1.2 / langchain >=1.3.1 머지** + **rich >=15 close** (instructor sub-dep 영구 제약) | (req-only) |
+| **#170** (GH #170) | **`2f3279d`** | **fail-silent Track B 잔재 fix + 영구 마스킹된 실 결함 unmask** — import 경로 정정 (`src.workflows.qa_feedback_loop` → `src.agents.qa.code_qa_executor`) + `CodeQASkipped` duck-type 진단 보존 + `_adapt_automate_to_chain_result` 4 케이스 분기 | **1325** (+16) |
 
-**pytest 누적**: 1272 → **1309** (+37, 회귀 0)
-**누적 머지 PR (본 세션)**: 161 → **167** + dependabot 4건 (GitHub #164/#165/#166/#167 + #141/#142/#162/#163)
+**pytest 누적**: 1272 → **1325** (+53, 회귀 0) — PR #162 +16 / PR #163 +21 / **PR #170 +16**
+**누적 머지 PR (본 세션)**: 161 → **170** (코어 5건 + dependabot 4건 + docs 2건 — 단일 세션 11건, 신기록 갱신)
 **E2E 라이브 검증 누적 (본 세션)**: 3회 → **4회** (10:43 30.41min PASS / 13:47 **24.64min PASS** — dep 4건 통합 적용 후, ~19% 단축, 회귀 0)
 
 ## E2E 재검증 결과 (2026-05-18 09:01, ~31min)
@@ -221,6 +222,45 @@ langgraph 1.1.6 / langchain 1.2.15 (모두 미달). 다음 단계 순서로 진�
 4. PR #163 production default (`--auto-iterate` 기본 ON + non-interactive 자동 confirm) **라이브 동작 확정**
 5. *통합* (4 dep + auto-iterate default + PR #160a+b + PR #162) 가 *동일 워크플로* 에서 충돌 없이 동작 — 본 세션 머지된 모든 PR 의 production-ready 라이브 검증 완료
 
+### Phase 7 — fail-silent 코드 전반 검색 + 영구 마스킹된 실 결함 unmask (PR #170, GitHub #170)
+
+PR #160a+b/#162 처방의 *잔재* 검색 sprint. Explore agent + 직접 read 검증으로
+production path (`scripts/run.py` + `src/workflows/` + `src/agents/`) 한정 grep.
+
+**잔재 검색 결과 — 2 후보**:
+
+| # | 위치 | 시그니처 | 영향 |
+|---|------|----------|------|
+| **1** | [automate_workflow.py:983-991](../../src/workflows/automate_workflow.py#L983-L991) | A — ImportError + Exception 모두 `(text, None)` 단일 return | **MED** |
+| **2** | [iterative_loop.py:616-624](../../src/workflows/iterative_loop.py#L616-L624) | B — 모든 falsy 케이스 동일 fallback 메시지 | **MED** |
+
+후보 #1 fix 작업 중 **import 경로 자체가 잘못됨** 발견 — `from src.workflows.qa_feedback_loop import run_code_qa` 가 *항상 ImportError* 발생 (`run_code_qa` 실제 정의 위치: [src.agents.qa.code_qa_executor:444](../../src/agents/qa/code_qa_executor.py#L444)).
+
+**🔥 영구 마스킹된 실 결함**:
+- PR #81 (Track B QA loop, 2024) 이래로 ImportError 분기 *영원히 hit*
+- `_run_track_b_qa_loop` 가 `code_qa_result=None` 영구 반환
+- Track B + `enable_qa_loop=True` 여도 **실 code_qa 단 한 번도 실행 안 됨**
+- 단위 테스트는 `enable_qa_loop=False` (default) 만 검증 → 본 결함 발견 못 함
+- fail-silent 단일 None 반환이 *진단 정보 미보존* → 결함이 *영원히* 가려짐
+
+→ fail-silent anti-pattern 의 *가장 치명적 사례*. PR #160a+b/#162 처방 패턴의
+*교과서적 evidence* — 진단 가시화가 *실 production 결함* 을 발견 가능하게 만든다.
+
+**PR #170 처방 (3건 + test 16)**:
+
+| Fix | 변경 |
+|-----|------|
+| A. import 경로 정정 | `from src.workflows.qa_feedback_loop import run_code_qa` → `from src.agents.qa.code_qa_executor import run_code_qa`. PR #81 이래 단 한 번도 실행 안 됐던 Track B code_qa 가 본 PR 부터 *실 동작*. |
+| B. `CodeQASkipped` dataclass + `_run_code_qa_with_skip_reason` 헬퍼 | frozen dataclass, `success=False` + `skip_reason: str` + `summary_line()` (CodeQAResult duck-type 호환, caller 변경 0). ImportError → `code_qa_executor 미가용 (ImportError: ...)` / 그 외 Exception → `<type>: <msg>` surface / 정상 응답 → pass-through. PR #160a 의 `vision_unavailable` property 패턴과 일관성. |
+| C. `_adapt_automate_to_chain_result` 4 케이스 분기 | 모든 falsy 케이스 동일 fallback → `code_qa=None` (기존 호환) / `summary_line` attr 없음 (type surface) / 예외 (type+msg surface) / 빈 문자열 (별도 fallback) 4개 메시지 차별화. |
+
+**회귀 테스트 16** ([test_pr170_fail_silent_track_b_residue.py](../../src/tests/test_pr170_fail_silent_track_b_residue.py)):
+- CodeQASkipped 4: frozen / success default / summary_line 형식 / duck-type compat
+- `_run_code_qa_with_skip_reason` 6: ⭐ **import 경로 정정 회귀 차단** / ⭐ **legacy 경로 unreachable 회귀 차단** / 정상 / ImportError / Exception / summary_line surface
+- `_adapt_automate_to_chain_result` 6: 4 분기 각각 + valid string passthrough + CodeQASkipped propagate
+
+머지 commit `2f3279d`. **pytest 1309 → 1325** (+16, 회귀 0).
+
 ## 핵심 통찰 (이번 세션)
 
 ### 1. "Build-but-Forget" anti-pattern 의 *마지막* 잔재 — verdict 차원
@@ -236,12 +276,22 @@ langgraph 1.1.6 / langchain 1.2.15 (모두 미달). 다음 단계 순서로 진�
 | **iterative_loop production 호출 0건** | PR #157/#158 wiring | ✅ |
 | **verdict 가 build 결과 미반영** | **본 세션 PR #162** | ✅ |
 
-### 2. 동일 fail-silent 패턴의 *세 번째* 변형
+### 2. 동일 fail-silent 패턴의 *세 번째* 변형 + 본 세션 4번째 변형 (PR #170)
 
 PR #160b (retry build .exe 미생성 진단 추가) 가 처방한 *fail-silent* — 1줄 안내만
 출력하고 사용자가 어느 분기 인지 알 수 없는 문제 — 의 새 변형이 본 세션 결과 패널
-에서 발견. **같은 anti-pattern 이 코드 베이스의 다른 위치에서 반복 출현** 한다는
-신호 → 단일 fix 가 아닌 *코드 전반의 fail-silent 검색* 이 별도 sprint 후보.
+에서 발견 (PR #162). **같은 anti-pattern 이 코드 베이스의 다른 위치에서 반복 출현**
+한다는 신호 → 코드 전반의 fail-silent 검색 sprint 진행 → **PR #170 에서 *영구 마스킹된
+실 production 결함* unmask**. 이는 fail-silent 의 가장 치명적 변형 — *진단 정보 없는 단일
+실패값 반환은 영구 결함을 영원히 마스킹*. PR #160a/#162 가 *진단 가시화* 차원 처방이었다면
+PR #170 은 그 처방이 *실 production 결함*을 발견 가능하게 만든다는 evidence.
+
+| 차원 | 잔재 | 정리 PR |
+|------|------|---------|
+| Vision QA 분기 미구분 | success=False 단일 반환 | ✅ PR #160a |
+| retry build .exe 미생성 1줄 안내 | 분기 미식별 | ✅ PR #160b |
+| 결과 패널 .exe `if x:` else 무성 | 사용자 자가 디버깅 불가 | ✅ PR #162 |
+| **Track B code_qa import 경로 잘못 + ImportError 단일 None 반환** | **영구 마스킹된 실 결함** | ✅ **PR #170** |
 
 ### 3. E2E 라이브 검증의 *반복* 가치
 
@@ -313,17 +363,19 @@ production wire + PR #160a+b + #162 결함 fix 까지 *인프라* 만 완성. �
 - ✅ E2E 발견 결함 4건 fix 완료 (PR #160a+b Vision QA false-FAIL + retry build 진단 / PR #162 verdict-reflects-build + 결과 패널 SKIPPED 진단)
 - ✅ **자기 진화 paradigm production default 완성** (PR #163 — auto-iterate 기본 ON + opt-out flag + 비용 안내 banner + max_iterations 5→3)
 - ✅ **dependabot 4건 정리 + 통합 E2E PASS** (anyio 4.13 / pandas 3.0.3 / langgraph 1.2 / langchain 1.3.1 — 머지 + venv 업그레이드 + pytest 1309 회귀 0 + E2E 24.64min PASS)
+- ✅ **fail-silent Track B 영구 마스킹 결함 unmask** (PR #170 — import 경로 정정 + CodeQASkipped 진단 보존 + 4 케이스 분기, pytest 1325 회귀 0)
 - ✅ E2E 라이브 검증 4회 누적 (2026-05-15 36.49min / 2026-05-18 09:01 31.03min build SKIPPED / 2026-05-18 10:43 30.41min PASS / **2026-05-18 13:47 24.64min PASS — dep 4건 통합 검증**)
 
 ### 다음 세션 재개 순서 — PM 지시 (갱신)
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
-| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON + dep 4건 PASS 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
+| **1** | **Track B + enable_qa_loop=True E2E 라이브 검증** (PR #170 라이브 효과) | M (~30min) | HIGH | PR #81 이래 단 한 번도 실행 안 됐던 Track B code_qa 가 *진짜* 동작하는지 검증 |
+| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON + dep 통합 + Track B QA loop *진짜* 동작 확정 후 결정 가능 |
 | **3** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 가 기본 wiring 완료 — 추가 항목 PM 협의 필요 |
 
-> ~~dependabot 4건 검증~~ — **본 세션 마감 시점 완료** (Phase 6 참조)
+> ~~dependabot 4건 검증~~ — 본 세션 마감 시점 완료 (Phase 6 참조)
+> ~~fail-silent 코드 전반 검색~~ — **본 세션 Phase 7 완료** (PR #170 — 잔재 fix + 영구 마스킹 결함 unmask)
 
 ### auto-iterate 기본 ON 후 사용자 시나리오
 
