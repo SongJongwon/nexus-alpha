@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-18 (PR #162 + #163 + #167 머지 + dependabot 4건 정리 (anyio/pandas/langgraph/langchain 머지 + rich close) + **dep 4건 통합 E2E PASS 24.64min** — 자기 진화 paradigm production default 완성 + dep 보류 누적 청소 + 통합 라이브 검증)
+> **마지막 업데이트**: 2026-05-18 (PR #162/#163/#167/#168/#169 머지 + dependabot 4건 정리 + **dep 4건 통합 E2E PASS 24.64min** + **PR #170 — fail-silent Track B 잔재 fix + 영구 마스킹 실 결함 unmask** — 자기 진화 paradigm production default 완성 + dep 보류 누적 청소 + 통합 라이브 검증 + PR #81 이래 영구 마스킹된 Track B code_qa ImportError 정정)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -16,9 +16,9 @@
 > | #162 (GH #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) — Build-but-Forget 마지막 잔재 정리 | E2E 결함 fix (verdict + UI) |
 > | **#163** (GH #166) | **`04a2bf3`** | **`--auto-iterate` default=True + `--no-auto-iterate` opt-out + `_confirm_auto_iterate_cost` 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적)** | **자기 진화 paradigm production default** |
 >
-> **pytest 누적**: 1272 → **1309** (+37, 회귀 0). dep 4건 통합 업그레이드 후에도 1309 회귀 0 (35.99s 재실행 검증)
-> **누적 머지 PR**: 161 → **163** (GitHub #164 + #166) + dependabot 4건 (#141/#142/#162/#163)
-> **E2E 라이브 검증 누적**: 4회 (2026-05-15 36.49min PR #150~#160 검증 / 2026-05-18 09:01 31.03min build SKIPPED → PR #162 prereq / 2026-05-18 10:43 **30.41min PASS** — Calculator.exe 10.70MB / 2026-05-18 13:47 **24.64min PASS** — dep 4건 통합 검증, App.exe 10.69MB, ~19% 단축, 회귀 0)
+> **pytest 누적**: 1272 → **1325** (+53, 회귀 0). dep 4건 통합 업그레이드 후에도 무회귀
+> **누적 머지 PR**: 161 → **170** (코어 5건 + dependabot 4건 + docs 2건 — 본 세션 11건 — 단일 세션 신기록)
+> **E2E 라이브 검증 누적**: 4회 (마지막 2026-05-18 13:47 **24.64min PASS** — dep 4건 통합 검증, App.exe 10.69MB, ~19% 단축)
 >
 > ## 🚀 자기 진화 paradigm 의 *production default* 완성 (PR #163)
 >
@@ -51,15 +51,36 @@
 >
 > → 본 세션 머지된 **모든 PR + dep 4건** 의 production-ready *라이브* 검증 완료. 산출: [outputs/alpha_run_20260518_134706/](../outputs/alpha_run_20260518_134706/).
 >
+> ## 🛡️ PR #170 — fail-silent Track B 잔재 fix + 영구 마스킹 실 결함 unmask (2026-05-18 14:42)
+>
+> | 항목 | 내용 |
+> |------|------|
+> | 머지 commit | `2f3279d` |
+> | 변경 파일 | `automate_workflow.py` + `iterative_loop.py` + `test_pr170_fail_silent_track_b_residue.py` (신규) |
+> | pytest | 1309 → **1325** (+16, 회귀 0) |
+>
+> **🔥 핵심 발견** — `from src.workflows.qa_feedback_loop import run_code_qa` 가 **항상 ImportError 발생** (`run_code_qa` 실제 정의 위치: `src.agents.qa.code_qa_executor`). PR #81 (Track B QA loop, 2024) 이래로:
+> - `_run_track_b_qa_loop` 가 `code_qa_result=None` 영구 반환
+> - Track B + `enable_qa_loop=True` 여도 **실 code_qa 단 한 번도 실행 안 됨**
+> - 단위 테스트는 enable_qa_loop=False (default) 만 검증 → 본 결함 발견 못 함
+>
+> → fail-silent anti-pattern 의 *가장 치명적 사례*. **PR #160a/#162 진단 가시화 처방이 실 production 결함 발견을 가능케 했다는 evidence**.
+>
+> **처방 3건**:
+> 1. import 경로 정정 (`src.workflows.qa_feedback_loop` → `src.agents.qa.code_qa_executor`)
+> 2. `CodeQASkipped` duck-type 진단 보존 dataclass + `_run_code_qa_with_skip_reason` 헬퍼
+> 3. `_adapt_automate_to_chain_result` 4 케이스 분기 (None / no summary_line / 예외 / 빈 문자열)
+>
 > ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18 갱신)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
-> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON + dep 통합 PASS 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
+> | **1** | **Track B + enable_qa_loop=True E2E 라이브 검증** | M (~30min) | HIGH | PR #170 라이브 효과 — PR #81 이래 단 한 번도 실행 안 됐던 Track B code_qa 가 *진짜* 동작하는지 검증 |
+> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON + dep 통합 + Track B QA loop *진짜* 동작 확정 후 결정 가능 |
 > | **3** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 >
-> > ~~dep 4건 통합 E2E 검증~~ — **본 세션 13:47 완료 PASS** (session_log §Phase 6 참조)
+> > ~~dep 4건 통합 E2E 검증~~ — 본 세션 13:47 완료 PASS (session_log §Phase 6)
+> > ~~fail-silent 코드 전반 검색~~ — **본 세션 Phase 7 완료** (PR #170 — 잔재 fix + 영구 마스킹 결함 unmask)
 >
 > ### auto-iterate 기본 ON 후 사용자 시나리오
 >
