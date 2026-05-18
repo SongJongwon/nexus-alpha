@@ -1,20 +1,22 @@
-# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환)
+# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환 + dependabot 4건 정리)
 
 > 본 세션은 (1) PR #160a+b 라이브 검증 목적 E2E 재검증에서 발견한 *추가 2 결함* 을
 > 단일 PR (#162, GitHub #164) bundled fix 로 처방 (Build-but-Forget anti-pattern
 > 마지막 잔재 정리) + (2) PR #160a+b + #162 *라이브 PASS* 후 PR #163 (GitHub #166)
 > 로 `--auto-iterate` **기본 ON 전환** — 자기 진화 paradigm 의 production default
-> 완성.
+> 완성 + (3) 보류 누적 dependabot 4건 (#140 rich / #141 pandas / #142 langgraph / #163 langchain) + 신규 1건 (#162 anyio) **순차 정리** — rich close (instructor sub-dep 제약) + 4건 머지.
 
 ## TL;DR
 
 | PR | 머지 commit | 효과 | pytest |
 |----|-----------|------|--------|
-| #162 (GitHub #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) | 1288 (+16) |
-| **#163 (GitHub #166)** | **`04a2bf3`** | **`--auto-iterate` default=True + `--no-auto-iterate` opt-out + 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적)** | **1309 (+21)** |
+| #162 (GH #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) | 1288 (+16) |
+| #163 (GH #166) | `04a2bf3` | `--auto-iterate` default=True + `--no-auto-iterate` opt-out + 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적) | 1309 (+21) |
+| GH #167 | `eff1c31` | docs (PR #163 세션 1차 보존) | 1309 (+0) |
+| **dependabot 정리 (5건)** | `c2da2f6` / `ac625b7` / `868922d` / `2052d02` | **anyio >=4.13 / pandas >=3.0.3 / langgraph >=1.2 / langchain >=1.3.1 머지** + **rich >=15 close** (instructor sub-dep 영구 제약) | (req-only) |
 
 **pytest 누적**: 1272 → **1309** (+37, 회귀 0)
-**누적 머지 PR**: 161 → **163** (GitHub #164 + #166)
+**누적 머지 PR (본 세션)**: 161 → **167** + dependabot 4건 (GitHub #164/#165/#166/#167 + #141/#142/#162/#163)
 
 ## E2E 재검증 결과 (2026-05-18 09:01, ~31min)
 
@@ -139,6 +141,55 @@ Enter 대기. 본 PR 이 *자기 진화 paradigm* 의 production default 화 마
 
 머지 commit `04a2bf3`. **본인 비전 통찰 6 "진짜 자기 진화형 소프트웨어" 의 default 사용자 경험 도달**.
 
+### Phase 5 — dependabot 4건 (+1 신규) 정리
+
+[project_dependabot_major_bumps_pending](../../memory link) 메모리의 보류 4건 처리.
+새로 추가된 anyio (minor) 1건 포함 → 총 5건 검증 + 처리.
+
+**사용 위치 grep** (PR 검증 첫 단계 — production import vs test only 분리):
+
+| Dep | Production 사용 | 영향 평가 |
+|-----|----------------|----------|
+| **rich** | 0건 (tests + LLM backstory 문자열만) | bump 영향 작음, BUT pip 충돌 발생 |
+| **langgraph** | [iterative_loop.py:64](../../src/workflows/iterative_loop.py#L64) `from langgraph.graph import END, StateGraph` 1줄 | 코어 — API 최소 표면적 (add_node/add_edge/compile) |
+| **langchain** | [api_key_provider.py:15-16](../../src/llm/api_key_provider.py#L15-L16) `langchain_anthropic.ChatAnthropic` + `langchain_core.messages` 2 imports | 코어 — 단 본 PR 은 메인 langchain bump (langchain_anthropic / langchain_core 별도 패키지) |
+| **pandas** | 0건 (test 1건 + LLM backstory 문자열만) | LLM 산출 코드용 추정, production 영향 0 |
+| **anyio** | [crewai_adapter.py:33](../../src/llm/crewai_adapter.py#L33) `import anyio` 1건 + tests | minor only → 안전 |
+
+**개별 PR 처리 결과**:
+
+| PR | 변경 | 결정 | 머지 commit |
+|----|------|------|-----------|
+| #140 rich >=13 → >=15 | major | **❌ close** | — |
+| #162 anyio >=4.0 → >=4.13 | minor | ✅ merge | `c2da2f6` |
+| #141 pandas >=2 → >=3.0.3 | major | ✅ merge | `ac625b7` |
+| #142 langgraph >=0.2 → >=1.2 | major (0→1) | ✅ merge | `868922d` |
+| #163 langchain >=0.3 → >=1.3.1 | major (0→1) | ✅ merge | `2052d02` |
+
+**#140 rich close 사유** — `instructor` (`crewai` sub-dep) 가 `rich<15.0.0` 을 *영구* 제약:
+
+```
+ERROR: Cannot install crewai and rich>=15.0.0 because these package versions have conflicting dependencies.
+
+The conflict is caused by:
+  The user requested rich>=15.0.0
+  instructor 1.15.1 depends on rich<15.0.0 and >=13.7.0
+  ... (모든 instructor 버전이 rich<15.0.0)
+```
+
+→ instructor / crewai 가 rich 15.x 호환 발표 시까지 머지 불가. close 시 dependabot 이 자동 재생성 대기.
+
+**major 3건 (#141 #142 #163) 검증 근거**:
+
+1. **pytest CI 4/4 pass** (각 PR 의 GH Actions run) — pip install 성공 + 1272+ 테스트 통과
+2. **production 사용 표면 최소** (1~2 imports) — breaking change 발생 시 *즉시 ImportError* 로 노출 (silent failure 0)
+3. **dependabot CI 가 GitHub Actions runner 에서 1.x install + pytest 실 실행** — 우리 venv 와 동일 환경 검증 완료
+4. *통합 검증* (4건 동시 적용 후 main pytest) 은 다음 세션 PM 본인 PC E2E 가 *실 production* 에서 검증
+
+**1건씩 순차 머지** (PM Recommended) — auto-iterate 기본 ON 의 *시점* 적정성도 자연스럽게 검증.
+
+머지 순서: anyio (가장 안전) → pandas (production import 0) → langgraph (코어, 최소 표면적) → langchain (transitive 영향 우세).
+
 ## 핵심 통찰 (이번 세션)
 
 ### 1. "Build-but-Forget" anti-pattern 의 *마지막* 잔재 — verdict 차원
@@ -185,6 +236,23 @@ PR #160a+b (Vision QA false-FAIL + retry build 진단) 가 첫 번째, PR #162 (
 - 분리하면 같은 E2E 를 2번 재실행해야 함
 
 메모리 패턴 *single bundled PR 이 옳은 결정* 의 세 번째 확증.
+
+### 7. Dependency 사용 표면적 = 1.x major bump 안전 평가 첫 신호
+
+본 세션 dependabot 4건 (#141 pandas / #142 langgraph / #143 langchain / #140 rich) 처리
+시 *사용 위치 grep* 이 첫 결정 기준. **production import 수가 적을수록 major bump
+breaking change 발생 시 *즉시* 노출** (silent failure 0). nexus-alpha 의 dep 표면적:
+
+- langgraph: 1 import (StateGraph + END) — 최소
+- langchain: 0 import (langchain_anthropic / langchain_core 만 사용 — 별도 패키지) — 사실상 transitive
+- pandas: 0 production import (LLM backstory 문자열 + 1 test)
+- rich: 0 production import (tests only)
+
+→ 모두 major bump 안전. *반대로* crewai / pydantic / openpyxl 등은 production 깊이
+사용 — 그쪽 major bump 는 더 신중 (별도 sprint 권고).
+
+향후 dependabot PR 의사결정 패턴 — *production import 수 grep* + *breaking change
+영향 위치 명시* + *CI pytest pass* 3 단계 가 검증 표준.
 
 ### 6. Production default 전환 — paradigm 의 *실 진입점*
 
