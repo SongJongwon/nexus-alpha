@@ -193,15 +193,16 @@ def test_argparse_has_max_iterations_flag() -> None:
     assert "--max-iterations" in text
 
 
-def test_auto_iterate_defaults_to_false(run_mod) -> None:
-    """기본 OFF — backward compat (1회 실행 유지)."""
+def test_auto_iterate_defaults_to_true(run_mod) -> None:
+    """기본 ON — PR #163 (2026-05-18) 전환. 명시 OFF 는 --no-auto-iterate."""
     args = run_mod._parse_args(["--request", "x", "--non-interactive"])
-    assert args.auto_iterate is False
+    assert args.auto_iterate is True
 
 
-def test_max_iterations_defaults_to_5(run_mod) -> None:
+def test_max_iterations_defaults_to_3(run_mod) -> None:
+    """기본 3 — PR #163 (2026-05-18) 보수적 하향 (이전 5)."""
     args = run_mod._parse_args(["--request", "x", "--non-interactive"])
-    assert args.max_iterations == 5
+    assert args.max_iterations == 3
 
 
 def test_auto_iterate_can_be_enabled(run_mod) -> None:
