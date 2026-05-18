@@ -1,18 +1,20 @@
-# 📝 세션 로그 — 2026-05-18 (E2E 재검증 발견 결함 fix — verdict-reflects-build + 결과 패널 SKIPPED 진단)
+# 📝 세션 로그 — 2026-05-18 (E2E 재검증 결함 fix + 자기 진화 paradigm production default 전환)
 
-> 본 세션은 PR #160a+b 라이브 검증 목적의 E2E 재검증에서 발견한 *추가 2 결함* 을
-> 단일 PR (#162, GitHub #164) bundled fix 로 처방. Build-but-Forget anti-pattern
-> 의 마지막 잔재 — verdict 가 *코드 산출* 만 보고 *PyInstaller .exe 산출* 을 무시
-> 하는 갭 + 결과 패널 fail-silent — 둘 다 정리.
+> 본 세션은 (1) PR #160a+b 라이브 검증 목적 E2E 재검증에서 발견한 *추가 2 결함* 을
+> 단일 PR (#162, GitHub #164) bundled fix 로 처방 (Build-but-Forget anti-pattern
+> 마지막 잔재 정리) + (2) PR #160a+b + #162 *라이브 PASS* 후 PR #163 (GitHub #166)
+> 로 `--auto-iterate` **기본 ON 전환** — 자기 진화 paradigm 의 production default
+> 완성.
 
 ## TL;DR
 
 | PR | 머지 commit | 효과 | pytest |
 |----|-----------|------|--------|
 | #162 (GitHub #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) | 1288 (+16) |
+| **#163 (GitHub #166)** | **`04a2bf3`** | **`--auto-iterate` default=True + `--no-auto-iterate` opt-out + 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적)** | **1309 (+21)** |
 
-**pytest 누적**: 1272 → **1288** (+16, 회귀 0)
-**누적 머지 PR**: 161 → **162** (GitHub #164)
+**pytest 누적**: 1272 → **1309** (+37, 회귀 0)
+**누적 머지 PR**: 161 → **163** (GitHub #164 + #166)
 
 ## E2E 재검증 결과 (2026-05-18 09:01, ~31min)
 
@@ -87,6 +89,56 @@ kwarg 전달.
 
 머지 commit `205feb5`.
 
+### Phase 3 — E2E 재재검증 PASS (2026-05-18 10:43, ~30.41min)
+
+PR #162 머지 직후 PM 본인 PC 재검증 — 요청 *명시* (`"GUI 계산기 — tkinter, app.py entry"`).
+
+| 단계 | 결과 |
+|------|------|
+| `[1/4] iterative_loop` | 1821.3s, `verdict=COMPLETE iterations=1/1` |
+| `[2/4] vision_qa` | `[GUI_TEST SKIPPED] Vision API 미평가 - ANTHROPIC_API_KEY 미설정. screenshot 정상 캡처, qa_feedback_loop 는 SKIPPED 로 처리.` ✅ PR #160a 분기 라이브 발동 |
+| `[3/4] qa_feedback_loop` | `[QA_LOOP PASS] retry=0/1, failed=0, skipped=1` ✅ false RETRY 차단 라이브 발동 |
+| 결과 패널 | `.exe` **10.70 MB** + Iterate + Vision + QA loop 모두 표시 ✅ PR #162 결과 패널 라이브 검증 |
+| Calculator 실 동작 | GUI 정상 (전자계산기 layout, 0~9 + 사칙연산 + C/Backspace/= 동작) ✅ |
+| 총 소요 | **30.41 min** (이전 31.03min 대비 비슷) |
+
+**모든 fix (PR #160a+b + PR #162) 라이브 검증 완료** — 자기 진화 cycle 의 production
+default 화 prerequisite 충족.
+
+### Phase 4 — PR #163 (GitHub #166) auto-iterate 기본 ON 전환
+
+PM confirm (Recommended): `max_iterations=3` (보수적, max ~75min/~$15) + banner +
+Enter 대기. 본 PR 이 *자기 진화 paradigm* 의 production default 화 마지막 단계.
+
+**처방 (3 변경 + 1 helper)**:
+
+| Fix | 변경 |
+|-----|------|
+| A. argparse | `--auto-iterate` default=False → True + `--no-auto-iterate` opt-out flag (action=store_false, dest 공유) |
+| B. argparse | `--max-iterations` default 5 → 3 (design doc §7-1 의 '5회 초과 = 요구 정의 자체 의심' 기준 보수적 하향) |
+| C. main() | `_confirm_auto_iterate_cost` 헬퍼 — auto_iterate=True 일 때 비용 안내 banner + Enter 대기 (non-interactive 자동 confirm) |
+| Helper | iter 당 추정 — 25min/$5 (Sonnet 4.6 기준). 최악 N=3 → 75min/$15 |
+
+**Banner 형식**:
+
+```
+  ⚡ auto-iterate 활성 (PR #163 — 기본 ON, --no-auto-iterate 로 OFF)
+     max_iterations = 3 → 최악 ~75min, ~$15 (Convergence Judge 가 ... 조기 종료)
+     iter 당 cycle: recall→kickoff→chain→sandbox→gap→judge→retro→curate
+  계속 [Enter 로 진행 / Ctrl-C 또는 'n' 으로 중단]:
+```
+
+**회귀 테스트 21** + PR #157 정정 2건 (default 가정 변경의 자연스러운 결과):
+- argparse 기본값 + 명시 flag 회귀 차단 (3)
+- `--no-auto-iterate` opt-out — dest 공유 마지막 wins 포함 (3)
+- 비용 추정 정확성 (3, scale + clamp)
+- interactive 분기 (Enter / 'n' / 'no' / Ctrl-C / EOF) (5)
+- non-interactive 자동 confirm (1)
+- main() 통합 — 중단 / opt-out / confirmed 3 분기 (3)
+- file-text — argparse default 변경 명시 (3)
+
+머지 commit `04a2bf3`. **본인 비전 통찰 6 "진짜 자기 진화형 소프트웨어" 의 default 사용자 경험 도달**.
+
 ## 핵심 통찰 (이번 세션)
 
 ### 1. "Build-but-Forget" anti-pattern 의 *마지막* 잔재 — verdict 차원
@@ -134,11 +186,23 @@ PR #160a+b (Vision QA false-FAIL + retry build 진단) 가 첫 번째, PR #162 (
 
 메모리 패턴 *single bundled PR 이 옳은 결정* 의 세 번째 확증.
 
+### 6. Production default 전환 — paradigm 의 *실 진입점*
+
+이전 세션 [insights/agent_collaboration_paradigm_shift.md](../insights/agent_collaboration_paradigm_shift.md)
+의 통찰 6 ("진짜 자기 진화형 소프트웨어") 비전은 PR #146~#149 본부 10 완비 + PR #157/#158
+production wire + PR #160a+b + #162 결함 fix 까지 *인프라* 만 완성. 사용자 도달 마지막
+1m 는 *기본 ON* — opt-in 인 동안은 PM 외 사용자가 자기 진화 cycle 경험 0. PR #163 가
+그 마지막 1m 정리.
+
+자기 진화 paradigm 의 *production default* 화 = "AI 가상 기업 비전" 의 *기본 동작* 화.
+이전 v3/v4 의 1회 실행 (sequential pipeline) → v5 의 자기 진화 cycle 이 default 가
+됨으로써, 본인 비전 통찰 6 의 *실 진입* 이 도달.
+
 ## 다음 세션 컨텍스트 복원 가이드 (3분 안)
 
 ### 읽을 순서
 
-1. **본 session_log** (`docs/progress/session_log_20260518.md`) — PR #162 (GitHub #164) 단일 머지 + 결함 진단
+1. **본 session_log** (`docs/progress/session_log_20260518.md`) — PR #162 + PR #163 머지 + 결함 진단 + auto-iterate 기본 ON 전환
 2. **[docs/progress/session_log_20260515.md](session_log_20260515.md)** — 직전 세션 (11 PR 머지 + E2E 발견)
 3. **[docs/insights/agent_collaboration_paradigm_shift.md](../insights/agent_collaboration_paradigm_shift.md)** — 본질적 통찰 5 (north star, 변하지 않음)
 4. **[docs/WORK_STATUS.md](../WORK_STATUS.md)** — 갱신된 다음 작업 우선순위
@@ -148,44 +212,53 @@ PR #160a+b (Vision QA false-FAIL + retry build 진단) 가 첫 번째, PR #162 (
 
 - ✅ Phase 1~4 모두 완성 + iterative_loop production wire (Track A/B)
 - ✅ E2E 발견 결함 4건 fix 완료 (PR #160a+b Vision QA false-FAIL + retry build 진단 / PR #162 verdict-reflects-build + 결과 패널 SKIPPED 진단)
-- ⏳ **다음 단계: E2E 재재검증** — 요청 명시 ("GUI 계산기 — tkinter, app.py entry") → .exe 정상 산출 → PR #160a+b 라이브 효과 측정 + 본 PR SKIPPED 경로 비발동 확인
+- ✅ **자기 진화 paradigm production default 완성** (PR #163 — auto-iterate 기본 ON + opt-out flag + 비용 안내 banner + max_iterations 5→3)
+- ✅ E2E 라이브 검증 3회 누적 (2026-05-15 36.49min / 2026-05-18 09:01 31.03min build SKIPPED / 2026-05-18 10:43 30.41min PASS)
 
 ### 다음 세션 재개 순서 — PM 지시
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** | **E2E 재재검증** (`--auto-iterate --max-iterations 1`, 요청 명시) | M (~25min, PM 본인 PC) | VERY HIGH | PR #160a+b 라이브 효과 측정 + 본 PR SKIPPED 경로 비발동 확인 |
-| **2** | **PR (auto-iterate 기본 ON 전환)** | S (~1h) | VERY HIGH | E2E PASS 후 즉시. 기본 ON + `--no-auto-iterate` opt-out flag |
-| **3** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail 4건 |
-| **4** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep |
+| **1** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail 4건 — 보류 누적 |
+| **2** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
+| **3** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON 완성 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
+| **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 가 기본 wiring 완료 — 추가 항목 PM 협의 필요 |
 
-### E2E 재재검증 명령 (#1)
+### auto-iterate 기본 ON 후 사용자 시나리오
 
+기본 호출 (auto-iterate 활성):
 ```powershell
-.venv\Scripts\python.exe scripts\run.py --request "GUI 계산기 — tkinter, app.py entry" --track A --build --auto-iterate --max-iterations 1
+.venv\Scripts\python.exe scripts\run.py --request "계산기 만들어줘" --track A --build
 ```
+→ banner 표시 (`max_iterations = 3, 최악 ~75min, ~$15`) + Enter 대기 → 자기 진화 cycle 진입
 
-**기대 결과 (본 세션 후)**:
+빠른 1회 실행 (opt-out):
+```powershell
+.venv\Scripts\python.exe scripts\run.py --request "계산기 만들어줘" --track A --build --no-auto-iterate
+```
+→ 기존 1회 실행 (자기 진화 cycle 없음)
 
-| 시나리오 | iterative_loop verdict | 결과 패널 .exe 라인 |
-|---------|------------------------|-------------------|
-| `.exe` 정상 산출 | `COMPLETE iterations=1/1` | `📦 .exe : <path> (<size> MB)` (변화 없음) |
-| `.exe` SKIPPED (이전 본 케이스) | `BLOCKED iterations=1/1` (BUILD_FAILED) | `📦 .exe : SKIPPED — exit=-7 reason=적합한 entry .py 파일 없음 ...` |
-| build 비활성 | `COMPLETE` (build 무관) | `📦 .exe : (build 미실행 — enable_executor=False)` |
+CI / 스크립트 자동화 (non-interactive):
+```powershell
+.venv\Scripts\python.exe scripts\run.py --request "..." --non-interactive --track A --build
+```
+→ banner 안내만 + 자동 confirm
 
 ### 결정 보류 (PM 판단 — 다음 세션)
 
-1. **auto-iterate 기본 ON 의 `max_iterations` 기본값** — 5 (max 2시간) 보수적으로 2-3 으로?
-2. **dependabot 4건 시점** — auto-iterate 기본 ON 전 / 후?
-3. **fail-silent 코드 전반 검색** — 별도 sprint or auto-iterate ON 후?
-4. **베타 cohort 5명 ($250 budget)** — auto-iterate 기본 ON 후 결정?
+1. **dependabot 4건 시점** — 다음 세션 우선 작업 / Sprint 다음 / 보류 연장?
+2. **fail-silent 코드 전반 검색** — 별도 sprint or 다음 세션?
+3. **베타 cohort 5명 ($250 budget)** — Telemetry fallback 우선 / 동시 진행?
+4. **Track B Vision QA 추가 wiring 범위** — PR #155 자동 감지 완료. PM 의 *추가* 의도 명확화?
 
 ---
 
 **관련 산출물 (본 세션)**:
 - [docs/progress/session_log_20260515.md](session_log_20260515.md) — 직전 세션 (11 PR 머지)
 - [docs/insights/agent_collaboration_paradigm_shift.md](../insights/agent_collaboration_paradigm_shift.md) — 본질적 통찰 5
-- GitHub PR #164 — `gh pr view 164` 또는 https://github.com/SongJongwon/nexus-alpha/pull/164
+- GitHub PR #164 — https://github.com/SongJongwon/nexus-alpha/pull/164 (verdict-reflects-build + 결과 패널 SKIPPED 진단)
+- GitHub PR #166 — https://github.com/SongJongwon/nexus-alpha/pull/166 (auto-iterate 기본 ON 전환)
 
 **메모리 갱신 위치**:
-- `project_paradigm_shift_pointer.md` — PR #162 entry 추가 + Build-but-Forget 마지막 잔재 정리 반영
+- `project_paradigm_shift_pointer.md` — PR #162 + PR #163 entry 추가 + Build-but-Forget 마지막 잔재 정리 + production default 완성 반영
+- `MEMORY.md` — Paradigm shift pointer description 갱신

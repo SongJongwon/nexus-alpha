@@ -1,46 +1,59 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-18 (PR #162 (GitHub #164) 단일 머지 — E2E 재검증 발견 결함 2건 fix — verdict-reflects-build + 결과 패널 SKIPPED 진단 — Build-but-Forget anti-pattern 마지막 잔재 정리, 다음 단계 E2E 재재검증)
+> **마지막 업데이트**: 2026-05-18 (PR #162 + PR #163 머지 — E2E 결함 fix 후 자기 진화 paradigm production default 완성 — `--auto-iterate` 기본 ON + opt-out + 비용 안내 banner)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
-> 1. **[docs/progress/session_log_20260518.md](progress/session_log_20260518.md)** — 본 세션 (PR #162 단일 머지, pytest 1272 → 1288 / +16, 회귀 0) — 마지막 섹션 "다음 세션 재개 순서" 가 가이드
+> 1. **[docs/progress/session_log_20260518.md](progress/session_log_20260518.md)** — 본 세션 (PR #162 + #163, pytest 1272 → 1309 / +37, 회귀 0) — 마지막 섹션 "다음 세션 재개 순서" 가 가이드
 > 2. **[docs/progress/session_log_20260515.md](progress/session_log_20260515.md)** — 직전 세션 (11 PR 머지)
 > 3. **[docs/insights/agent_collaboration_paradigm_shift.md](insights/agent_collaboration_paradigm_shift.md)** — 본질적 통찰 5 (north star, 변하지 않음)
 > 4. **메모리** — `MEMORY.md` + `project_paradigm_shift_pointer.md` (자동 로드됨)
 >
-> ## 🎯 2026-05-18 세션 — PR #162 (GitHub #164) 단일 머지 요약
+> ## 🎯 2026-05-18 세션 — 2 PR 머지 요약
 >
 > | PR | 머지 commit | 효과 | 분야 |
 > |----|-----------|------|------|
-> | **#162** (GH #164) | **`205feb5`** | **`BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) — Build-but-Forget 마지막 잔재 정리** | **E2E 결함 fix (verdict + UI)** |
+> | #162 (GH #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) — Build-but-Forget 마지막 잔재 정리 | E2E 결함 fix (verdict + UI) |
+> | **#163** (GH #166) | **`04a2bf3`** | **`--auto-iterate` default=True + `--no-auto-iterate` opt-out + `_confirm_auto_iterate_cost` 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적)** | **자기 진화 paradigm production default** |
 >
-> **pytest 누적**: 1272 → **1288** (+16, 회귀 0)
-> **누적 머지 PR**: 161 → **162** (GitHub #164)
-> **E2E 재검증 결과** (PM 본인 PC, ~31min): `verdict=COMPLETE iterations=1/1` 완주 + 결과 패널 Iterate 라인 정상 / Vision/QA loop 라인 미표시 → 진단 결과: **PR #160a 효과/회귀 X, LLM 산출 결함** (test_calculator.py 만 산출 → PyInstaller SKIPPED exit=-7) → *추가 결함 2건* 노출 → PR #162 bundled fix
+> **pytest 누적**: 1272 → **1309** (+37, 회귀 0)
+> **누적 머지 PR**: 161 → **163** (GitHub #164 + #166)
+> **E2E 라이브 검증 누적**: 3회 (2026-05-15 36.49min PR #150~#160 검증 / 2026-05-18 09:01 31.03min build SKIPPED → PR #162 prereq / 2026-05-18 10:43 **30.41min PASS** — Calculator.exe 10.70MB + GUI 동작 + 모든 fix 라이브 발동 확인)
+>
+> ## 🚀 자기 진화 paradigm 의 *production default* 완성 (PR #163)
+>
+> 본인 비전 통찰 6 "진짜 자기 진화형 소프트웨어" 비전의 *마지막 1m* 도달:
+> - 이전: opt-in (`--auto-iterate` 명시 사용자만 cycle 진입) → PM 외 사용자 경험 0
+> - 본 세션 이후: 기본 ON, 명시 OFF (`--no-auto-iterate`) 또는 비용 안내 banner Enter 거절 시 회피 가능
+> - 사용자 도달 마지막 갭 정리 — 인프라 (본부 10 + iterative_loop + RAG + Vision QA) 완비 + production default 화
 >
 > ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **E2E 재재검증** (`--auto-iterate --max-iterations 1`, 요청 명시) | M (~25min, PM 본인 PC) | VERY HIGH | PR #160a+b 라이브 효과 측정 + 본 PR SKIPPED 경로 비발동 확인 |
-> | **2** | **PR — `--auto-iterate` 기본 ON 전환** | S (~1h) | VERY HIGH | E2E PASS 후 즉시. 기본 ON + `--no-auto-iterate` opt-out flag |
-> | **3** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail 4건 |
-> | **4** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep (같은 anti-pattern 의 다른 위치) |
+> | **1** | **dependabot 4건 (#140~#143) 검증** | L (~2-4h) | M | langchain/langgraph/pandas 1.x + rich CI fail 4건 — 보류 누적 |
+> | **2** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
+> | **3** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON 완성 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
+> | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 >
-> ### E2E 재재검증 명령 (#1)
+> ### auto-iterate 기본 ON 후 사용자 시나리오
 >
+> **기본 호출 (자기 진화 cycle 진입)**:
 > ```powershell
-> .venv\Scripts\python.exe scripts\run.py --request "GUI 계산기 — tkinter, app.py entry" --track A --build --auto-iterate --max-iterations 1
+> .venv\Scripts\python.exe scripts\run.py --request "계산기 만들어줘" --track A --build
+> ```
+> → banner 표시 (`max_iterations = 3, 최악 ~75min, ~$15`) + Enter 대기 → cycle 진입
+>
+> **빠른 1회 실행 (opt-out)**:
+> ```powershell
+> .venv\Scripts\python.exe scripts\run.py --request "계산기 만들어줘" --track A --build --no-auto-iterate
 > ```
 >
-> **기대 (본 PR #162 후)**:
->
-> | 시나리오 | iterative_loop verdict | 결과 패널 .exe 라인 |
-> |---------|------------------------|-------------------|
-> | `.exe` 정상 산출 | `COMPLETE iterations=1/1` | `📦 .exe : <path> (<size> MB)` (변화 없음) |
-> | `.exe` SKIPPED (이전 본 케이스) | `BLOCKED iterations=1/1` (BUILD_FAILED) | `📦 .exe : SKIPPED — exit=-7 reason=적합한 entry .py 파일 없음 ...` |
-> | build 비활성 | `COMPLETE` (build 무관) | `📦 .exe : (build 미실행 — enable_executor=False)` |
+> **CI / 자동화 (non-interactive)**:
+> ```powershell
+> .venv\Scripts\python.exe scripts\run.py --request "..." --non-interactive --track A --build
+> ```
+> → banner 안내만 + 자동 confirm
 >
 > ---
 >
