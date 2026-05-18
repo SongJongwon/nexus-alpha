@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-18 (PR #162 + #163 + #167 머지 + dependabot 4건 정리 (anyio/pandas/langgraph/langchain 머지 + rich close) — 자기 진화 paradigm production default 완성 + dep 보류 누적 청소)
+> **마지막 업데이트**: 2026-05-18 (PR #162 + #163 + #167 머지 + dependabot 4건 정리 (anyio/pandas/langgraph/langchain 머지 + rich close) + **dep 4건 통합 E2E PASS 24.64min** — 자기 진화 paradigm production default 완성 + dep 보류 누적 청소 + 통합 라이브 검증)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -16,9 +16,9 @@
 > | #162 (GH #164) | `205feb5` | `BlockedCause.BUILD_FAILED` + `_apply_build_failure_override` (verdict-reflects-build) + `_format_build_skipped_line` (결과 패널 .exe SKIPPED 진단) — Build-but-Forget 마지막 잔재 정리 | E2E 결함 fix (verdict + UI) |
 > | **#163** (GH #166) | **`04a2bf3`** | **`--auto-iterate` default=True + `--no-auto-iterate` opt-out + `_confirm_auto_iterate_cost` 비용 안내 banner (Enter 대기) + `max_iterations` 5→3 (보수적)** | **자기 진화 paradigm production default** |
 >
-> **pytest 누적**: 1272 → **1309** (+37, 회귀 0)
-> **누적 머지 PR**: 161 → **163** (GitHub #164 + #166)
-> **E2E 라이브 검증 누적**: 3회 (2026-05-15 36.49min PR #150~#160 검증 / 2026-05-18 09:01 31.03min build SKIPPED → PR #162 prereq / 2026-05-18 10:43 **30.41min PASS** — Calculator.exe 10.70MB + GUI 동작 + 모든 fix 라이브 발동 확인)
+> **pytest 누적**: 1272 → **1309** (+37, 회귀 0). dep 4건 통합 업그레이드 후에도 1309 회귀 0 (35.99s 재실행 검증)
+> **누적 머지 PR**: 161 → **163** (GitHub #164 + #166) + dependabot 4건 (#141/#142/#162/#163)
+> **E2E 라이브 검증 누적**: 4회 (2026-05-15 36.49min PR #150~#160 검증 / 2026-05-18 09:01 31.03min build SKIPPED → PR #162 prereq / 2026-05-18 10:43 **30.41min PASS** — Calculator.exe 10.70MB / 2026-05-18 13:47 **24.64min PASS** — dep 4건 통합 검증, App.exe 10.69MB, ~19% 단축, 회귀 0)
 >
 > ## 🚀 자기 진화 paradigm 의 *production default* 완성 (PR #163)
 >
@@ -37,16 +37,29 @@
 > | #142 langgraph >=0.2 → >=1.2 | major (0→1) | ✅ merge (StateGraph+END 최소 표면적) | `868922d` |
 > | #163 langchain >=0.3 → >=1.3.1 | major (0→1) | ✅ merge (transitive 영향만) | `2052d02` |
 >
-> 향후 dep 의사결정 패턴 — *production import grep* + *breaking change 영향 위치* + *CI pytest pass* 3 단계 검증 표준. **다음 세션 PM 본인 PC E2E 가 통합 production 검증** (auto-iterate 기본 ON + 새 dep 4건 적용 상태).
+> 향후 dep 의사결정 패턴 — *production import grep* + *breaking change 영향 위치* + *CI pytest pass* 3 단계 검증 표준. **본 세션 13:47 통합 E2E PASS 24.64min** (auto-iterate 기본 ON + 새 dep 4건 적용 상태, App.exe 10.69MB, 회귀 0, ~19% 단축).
 >
-> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18)
+> ## ✅ dep 4건 통합 E2E PASS (2026-05-18 13:47, 24.64min)
+>
+> | 단계 | 결과 |
+> |------|------|
+> | venv 업그레이드 (`pip install --upgrade --upgrade-strategy eager -r requirements.txt`) | pandas 3.0.2→**3.0.3** / langgraph 1.1.6→**1.2.0** / langchain 1.2.15→**1.3.1** / langchain-core 1.2.31→**1.4.0** / langchain-anthropic 1.4.0→1.4.3 / anyio 4.13.0 (유지) + transitive (anthropic 0.102.0, pydantic 2.12.5 등) |
+> | pytest 회귀 | **1309 passed, 35.99s, 회귀 0** — dep 4건 + transitive 동반 업그레이드 후에도 무회귀 |
+> | E2E 결과 | iterative_loop 1475s `COMPLETE iter=1/1` / vision_qa `SKIPPED` (정상 분기) / qa_feedback_loop `PASS retry=0/1 failed=0 skipped=1` / **App.exe 10.69MB** / 결과 패널 5 라인 모두 표시 |
+> | 비교 | 이전 PASS (10:43, 30.41min) 대비 **~5.77min (~19%) 단축** — langgraph 1.2 / LLM variance 가능, 회귀 0 확정 |
+> | 검증된 PR | PR #160a (Vision SKIPPED + false RETRY 차단) + PR #162 (결과 패널 모든 라인) + PR #163 (auto-iterate 기본 ON banner + non-interactive 자동 confirm) + dep 4건 통합 |
+>
+> → 본 세션 머지된 **모든 PR + dep 4건** 의 production-ready *라이브* 검증 완료. 산출: [outputs/alpha_run_20260518_134706/](../outputs/alpha_run_20260518_134706/).
+>
+> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-18 갱신)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
 > | **1** | **fail-silent 코드 전반 검색** | M (~2h) | M | PR #160b/#162 처방 패턴의 잔재 grep — 같은 anti-pattern 의 다른 위치 |
-> | **2** | **dep 4건 통합 E2E 검증** | M (~30min) | HIGH | auto-iterate 기본 ON + langgraph 1.2 + langchain 1.3.1 + pandas 3 + anyio 4.13 적용 후 본인 PC E2E PASS 확인 |
-> | **3** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON 완성 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
-> | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
+> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | auto-iterate 기본 ON + dep 통합 PASS 후 결정 가능 — Telemetry fallback (Sprint 다음) 우선 검토 |
+> | **3** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
+>
+> > ~~dep 4건 통합 E2E 검증~~ — **본 세션 13:47 완료 PASS** (session_log §Phase 6 참조)
 >
 > ### auto-iterate 기본 ON 후 사용자 시나리오
 >
