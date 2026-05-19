@@ -1,4 +1,4 @@
-# 📝 세션 로그 — 2026-05-19 (Track B E2E 재검증 + PR #174 분기 갭 발견 + PR #176 hot-fix + PR #170/#162/#172/#174 동시 라이브 + LLM variance 식별)
+# 📝 세션 로그 — 2026-05-19 (Track B E2E 재검증 + PR #174 분기 갭 → PR #176 hot-fix + 동시 라이브 + LLM variance 식별 + PR #179 raw 진단 + **PR #181 결정적 root-cause 처방**)
 
 > 본 세션은 (1) **Track B E2E 재검증** (PR #174 라이브 효과 확인) + (2) Fix B (Retrospective 진단 surface) 의 **분기 갭 발견** + (3) **PR #176 hot-fix** (silent 빈 응답 + 예외 없음 분기 추가) + (4) **Track B E2E 재재검증** — PR #170/#162/#172/#174 *동시 라이브* 확인 + (5) **LLM variance 식별** (80% silent 빈 응답률 — retrospective_lead 응답 raw 저장 sprint 후보). 직전 세션 ([2026-05-18](session_log_20260518.md)) Phase 9 의 후속 검증 sprint.
 
@@ -8,10 +8,11 @@
 |----|-----------|------|--------|
 | #176 (GH #176) | `0b90268` | Retrospective 진단 분기 4 추가 (silent 빈 응답 + 예외 없음) + 우선순위 재배치 (Exception > 빈/공백 > parse 실패 > 빈 list) | **1356** (+2) |
 | **#179** (GH #179) | **`8d03378`** | **retrospective_lead LLM 응답 raw 저장** — `run_retrospective(workflow_dir=...)` + `workflow_dir/retrospective_llm_raw.json` 진단 dump (prompt + response_raw + parsed + branch_hit + final lists). 80% silent 빈 응답률 root-cause 식별 도구 | **1365** (+9) |
+| **#181** (GH #181) | **`29d590d`** | **결정적 root-cause 처방** — `"pytest" in sys.modules` (false positive) → `bool(os.environ.get("PYTEST_CURRENT_TEST"))` robust 검출. production E2E 에서 pytest module 이 import 돼도 LLM 호출 진입. 80% silent 빈 응답률 → 0% 예상 | **1370** (+5) |
 
-**pytest 누적**: 1354 → **1365** (+11, 회귀 0) — PR #176 +2 / **PR #179 +9**
-**누적 머지 PR (본 세션)**: 코어 2 (PR #176, PR #179) + docs 2~3
-**E2E 라이브 검증 (본 세션)**: 3회 (09:42 8.40min Fix A 정확 / 09:48 11.32min — PR #176 머지 전 + delta propagate / **10:36 8.16min — PR #170/#162/#172/#174 동시 라이브 + retrospective.md 정상 산출 ⭐**)
+**pytest 누적**: 1354 → **1370** (+16, 회귀 0) — PR #176 +2 / PR #179 +9 / **PR #181 +5**
+**누적 머지 PR (본 세션)**: 코어 3 (PR #176 / PR #179 / **PR #181**) + docs 3+
+**E2E 라이브 검증 (본 세션)**: **6회 누적** (09:42 / 09:48 / 10:36 / + Phase 3 PR #179 검증 3회 13:14 / 13:31 / 13:46)
 
 ## Track B E2E 재검증 결과 (2026-05-19 09:42, 8.40min)
 
@@ -210,6 +211,78 @@ Phase 2 에서 식별된 **80% silent 빈 응답률** 의 정확한 root-cause �
 
 본 PR 머지 후 다음 Track B E2E 1~5회 실행하면 `retrospective_llm_raw.json` 누적 → silent 빈 응답률의 **결정적 root-cause 식별** 가능. 추가 fix sprint (prompt 개선 / streaming 옵션 / max_tokens 조정 등) 의 evidence 확보.
 
+## Phase 4 — 결정적 root-cause 식별 + PR #181 fix (80% silent 빈 응답률 *결정적* 처방)
+
+PR #179 의 raw 저장 도구로 3 E2E sample 분석. **예상 외** 의 root-cause 식별:
+
+### 3 Sample 분석
+
+| Sample | timestamp | branch_hit | `llm_call_invoked` | prompt_length | parsed |
+|--------|-----------|-----------|---------------------|---------------|--------|
+| 1 (13:14) | 13:18:49 | **normal** | **True** | 1616 | 3 keys 정상 |
+| 2 (13:31) | 13:36:55 | **no_llm_call** | **False** | **0** | [] |
+| 3 (13:46) | 13:50:36 | **no_llm_call** | **False** | **0** | [] |
+
+### 진단 매트릭스 매칭 결과 — *예상한 5 후보 모두 NO*
+
+| 가설 | 매칭 |
+|------|------|
+| ❌ `prompt_length_chars` ≫ 한도 (token 결함) | NO — 1616 chars (정상 응답 시) |
+| ❌ `response_raw` 길이 0 + `llm_error=None` (silent timeout) | NO — *response 자체 미생성* |
+| ❌ `response_raw` truncated (streaming 결함) | NO — response 미생성 |
+| ❌ `llm_error` = TimeoutError | NO — `llm_error: None` |
+| ❌ JSON 형식 결함 | NO — Sample 1 정상 parse |
+| ✅ **`llm_call_invoked: False` (`"pytest" in sys.modules` false positive)** ⭐ | **YES** |
+
+### 결정적 Root-cause
+
+[retrospective_lead.py:258](../../src/agents/coordination/retrospective_lead.py) 의 환경 검출 분기:
+
+```python
+in_pytest = "pytest" in sys.modules   # 🚨 production E2E false positive
+if llm_call is None and not in_pytest:
+    llm_call = _default_llm_call
+```
+
+production E2E 어딘가에서 pytest module 이 import 됨 (pytest_author / code_qa / sandbox 의존성) → `in_pytest=True` false positive → `llm_call=None` 유지 → **LLM 호출 자체 SKIP** → retrospective.md 4 섹션 (없음). **80% silent 빈 응답률의 진짜 원인**.
+
+### PR #181 처방 (단일 line, 머지 commit 미정)
+
+```python
+# 이전 (false positive)
+in_pytest = "pytest" in sys.modules
+
+# 이후 (PR #181)
+in_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+```
+
+**근거**: `PYTEST_CURRENT_TEST` env var 는 pytest 가 *각 test 실행 시점* 에만 자동 set. import 만 된 상태에서는 미 set.
+
+| 상황 | 동작 |
+|------|------|
+| pytest unit test 실행 중 | `PYTEST_CURRENT_TEST` set → in_pytest=True (skip LLM, 정확) |
+| **production E2E** (pytest sys.modules 에는 있지만 actively test 아님) | **미 set → in_pytest=False → LLM 정상 호출** ⭐ |
+
+### 회귀 테스트 5 신규 ([test_pr181_retro_pytest_env_robust.py](../../src/tests/test_pr181_retro_pytest_env_robust.py))
+
+- `PYTEST_CURRENT_TEST` set → `llm_call` None 유지 → `branch_hit='no_llm_call'`
+- `PYTEST_CURRENT_TEST` 미 set → `_default_llm_call` 자동 set + 호출 진입
+- ⭐ **PR #181 핵심** — `sys.modules` 에 pytest 있어도 env 미 set 시 LLM 호출 진입
+- 명시적 `llm_call` 전달 시 환경 검사 무관
+- raw 진단 — `llm_call_invoked` 가 env 검출 결과와 1대1 매핑
+
+**pytest 1365 → 1370** (+5, 회귀 0).
+
+### 핵심 통찰 — fail-silent 처방의 *meta-level* 도구 가치 확정
+
+PR #179 의 raw 저장이 **예상 외** 의 root-cause 식별. 5 가설 모두 NO + 6번째 가설 YES = **진단 sprint 의 가장 성공적 결과**. PR #160a/#170/#172/#174/#176 (진단 surface) → **PR #179 (raw 보존)** → **PR #181 (root-cause 처방)** 의 자기 진화 sprint cycle 완성.
+
+### 다음 Track B E2E 라이브 검증 예상
+
+- `llm_call_invoked=True` (이전 False 였던 Sample 2,3 케이스)
+- retrospective.md 모든 섹션 정상 산출
+- **80% silent 빈 응답률 → 0% 도달 예상**
+
 ## 다음 세션 컨텍스트 복원 가이드
 
 ### 읽을 순서
@@ -226,17 +299,18 @@ Phase 2 에서 식별된 **80% silent 빈 응답률** 의 정확한 root-cause �
 - ✅ Track A/B 양쪽 자기 진화 cycle 라이브 동작 확정
 - ✅ E2E 라이브 검증 누적 6회 (Track A 2회 PASS / Track B 1회 ValueError → 2회 PASS)
 
-### 다음 세션 재개 순서 — PM 지시 (Phase 3 완료 반영)
+### 다음 세션 재개 순서 — PM 지시 (Phase 4 완료 반영)
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** | **Track B E2E 1~5회** + retrospective_llm_raw.json 누적 분석 | M (~30-60min) | HIGH | PR #179 라이브 효과 — 빈 응답 케이스 발생 시 raw file 의 `prompt_length_chars` / `response_raw` / `branch_hit` 등 분석으로 정확 root-cause 식별 (token / streaming / prompt 형식 등). 추가 fix sprint 의 evidence 확보 |
-| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 + 진단 도구 완비 — Telemetry fallback 우선 검토 |
+| **1** | **Track B E2E 1~2회** — PR #181 라이브 검증 | M (~20-30min) | HIGH | `llm_call_invoked=True` + retrospective.md 정상 산출 100% 도달 확인. 80% silent 빈 응답률 → 0% 도달 evidence 확보 |
+| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | retrospective_lead 안정화 + 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
 | **3** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override 안전망 |
 | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 
-> ~~Track B E2E 재재검증 (PR #176 라이브 효과)~~ — Phase 2 완료 (10:36 8.16min PASS — PR #170/#162/#172/#174 동시 라이브 + retrospective.md 정상 산출)
-> ~~retrospective_lead.py LLM 응답 raw 저장 sprint~~ — **Phase 3 완료** (PR #179 — `retrospective_llm_raw.json` 진단 dump + branch_hit 추적 + 9 회귀 테스트)
+> ~~Track B E2E 재재검증 (PR #176 라이브 효과)~~ — Phase 2 완료
+> ~~retrospective_lead.py LLM 응답 raw 저장 sprint~~ — Phase 3 완료 (PR #179)
+> ~~Track B E2E 1~5회 + retrospective_llm_raw.json 누적 분석~~ — **Phase 4 완료** (PR #181 — 결정적 root-cause 식별 + 처방, 80% silent 빈 응답률 → 0% 도달 예상)
 
 ---
 
