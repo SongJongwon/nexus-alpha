@@ -1,4 +1,4 @@
-# 📝 세션 로그 — 2026-05-19 (Track B E2E 재검증 + PR #174 분기 갭 → PR #176 hot-fix + 동시 라이브 + LLM variance 식별 + PR #179 raw 진단 + PR #181 결정적 root-cause 처방 + Phase 5 라이브 검증 80% → 0% 도달 ⭐ + **PR #184 CLI --forced-domain (3중 안전망 완비)**)
+# 📝 세션 로그 — 2026-05-19 (Track B E2E 재검증 + PR #174 분기 갭 → PR #176 hot-fix + 동시 라이브 + LLM variance 식별 + PR #179 raw 진단 + PR #181 결정적 root-cause 처방 + Phase 5 라이브 검증 80% → 0% 도달 + PR #184 CLI --forced-domain 3중 안전망 + **Phase 7 데스크탑 앱 비전 보존 (Tauri)** ⭐)
 
 > 본 세션은 (1) **Track B E2E 재검증** (PR #174 라이브 효과 확인) + (2) Fix B (Retrospective 진단 surface) 의 **분기 갭 발견** + (3) **PR #176 hot-fix** (silent 빈 응답 + 예외 없음 분기 추가) + (4) **Track B E2E 재재검증** — PR #170/#162/#172/#174 *동시 라이브* 확인 + (5) **LLM variance 식별** (80% silent 빈 응답률 — retrospective_lead 응답 raw 저장 sprint 후보). 직전 세션 ([2026-05-18](session_log_20260518.md)) Phase 9 의 후속 검증 sprint.
 
@@ -12,7 +12,7 @@
 | **#184** (GH #184) | **`0cd1dbc`** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) — argparse + AutomationDomain 변환 + Track B 두 caller 전달 + Track A warning + iterative_loop chain. Track B 도메인 분류 *3중 안전망 완비* (휴리스틱 + graceful fallback + 사용자 explicit override) | **1385** (+15) |
 
 **pytest 누적**: 1354 → **1385** (+31, 회귀 0) — PR #176 +2 / PR #179 +9 / PR #181 +5 / PR #184 +15
-**누적 머지 PR (본 세션)**: **9건** = 코어 4 (PR #176 / PR #179 / PR #181 / PR #184) + docs 5 (PR #178 / PR #180 / PR #182 / PR #183 / PR #185)
+**누적 머지 PR (본 세션)**: **11건** = 코어 4 (PR #176 / PR #179 / PR #181 / PR #184) + docs 7 (PR #177 / PR #178 / PR #180 / PR #182 / PR #183 / PR #185 / PR #186)
 **E2E 라이브 검증 (본 세션)**: **7회 누적** (09:42 / 09:48 / 10:36 / Phase 3 검증 13:14 / 13:31 / 13:46 / **Phase 5 PR #181 라이브 14:21 — 100% 정상 응답 도달** ⭐)
 **silent 빈 응답률**: 80% → **0% 도달 확정** (PR #181 라이브)
 **Track B 도메인 분류**: **3중 안전망 완비** (PR #172 휴리스틱 + PR #172 graceful + PR #184 explicit override)
@@ -412,18 +412,76 @@ Phase 5 완료 후 다음 작업 우선순위 #3 으로 잡혀있던 PR #172 의
 - ✅ Track A/B 양쪽 자기 진화 cycle 라이브 동작 확정
 - ✅ E2E 라이브 검증 누적 12회 (Track A 2회 PASS / Track B 본 세션 7회 추가, Phase 5 100% 정상 응답 도달)
 
-### 다음 세션 재개 순서 — PM 지시 (Phase 6 완료 반영)
+### 다음 세션 재개 순서 — PM 지시 (Phase 7 데스크탑 앱 비전 추가 + 우선순위 재정렬)
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | retrospective_lead 안정화 + Track B 3중 안전망 + 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
-| **2** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
-| **3** | **Track B 1iter LLM 산출 품질 sprint** (선택) | M (~1-2h) | M | Phase 5 E2E retrospective wrong[0] "pytest 13건 전수 실패" — 1iter LLM 산출이 *기능 동작* 부족. max_iterations=3 default 활용 또는 prompt 강화 |
+| **1** ⭐ | **Sprint 4 — Telemetry Hook** + LangFuse fallback 정리 | M (~1주) | **VERY HIGH** | 데스크탑 앱 prerequisite + LangFuse fix 통합. `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit + LANGFUSE_BASE_URL vs LANGFUSE_HOST 이름 불일치 fix + local jsonl fallback. 기존 백엔드 동작 변경 0. |
+| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | Sprint 4 완료 후 의미 있음 — 베타가 데스크탑 앱으로 받게 됨. Telemetry 가 확보된 후 cohort 모니터링 가능 |
+| **3** | **Sprint 5 — Tauri shell + React UI 골격** | L (~1주) | HIGH | Rust shell + 부서 그리드 (placeholder) + Python sidecar spawn + event 수신. PowerShell 대체 가능한 기본 GUI. |
+| **4** | **Sprint 6 — 시각화 완성** | L (~1주) | HIGH | 픽셀 아이콘 + 펄스 + 대화 panel + iteration progress + 결과 패널. 베타 5명 배포 가능 상태. |
 
-> ~~Phase 1~5 완료~~
-> ~~CLI --forced-domain flag (PR #172 의 C 옵션)~~ — **Phase 6 완료** ⭐ (PR #184 — Track B 도메인 분류 *3중 안전망 완비*: 휴리스틱 + graceful fallback + 사용자 explicit override)
+**백로그** (Sprint 4~6 진입 전 보류):
+- Track B Vision QA 추가 wiring (PM 요청, PR #155 자동 감지 완료)
+- Track B 1iter LLM 산출 품질 sprint (Phase 5 E2E retrospective wrong[0] "pytest 13건 전수 실패" 기반)
+
+> ~~Phase 1~6 완료~~
+> ~~데스크탑 앱 비전 보존~~ — **Phase 7 완료** ⭐ ([docs/insights/desktop_app_vision.md](../insights/desktop_app_vision.md) 신설 + 메모리 `feedback_desktop_app_paradigm.md` 신설)
 
 ---
+
+## Phase 7 — 데스크탑 앱 비전 보존 (2026-05-19 세션 마감 시점)
+
+PM 의 새 비전 — **Tauri 데스크탑 앱 (Agent Office Visualizer)**. paradigm-shift 의 *마지막 차원* — 사용자 가시화. 통찰 6 (north star) 의 백엔드 완성 위에 *시각화 layer* 추가.
+
+### 비전 핵심
+- **PowerShell 탈피** → 자연어 입력창 + 부서별 색상 카드 그리드 + 픽셀 아이콘 + working 펄스 + 대화 panel
+- **본부 10 시각화** — 기획 (🔵 CTO/Analyst/Meeting Facilitator) / 개발 (🟣 Engineer/Reviewer/GUI Dev/Pytest) / 학습 (🟢 Curator/Retrospective Lead/Vision QA)
+- **자기 진화 cycle 시각화** — iteration progress (1/3 → 2/3 → 3/3) + 결과 패널 (Iterate/Vision/QA loop/.exe)
+
+### 추천 아키텍처 — Tauri 기반
+- shell: **Tauri (~10MB .exe, Rust)** — Electron (~100MB+) 대비 1/10 크기, 한국 베타 cohort 다운로드 경험 결정적
+- UI: React + Tailwind (기존 자산 + 다크모드)
+- 백엔드: **Python sidecar** (기존 `scripts/run.py` 그대로 wrap) — *백엔드 코드 수정 0*
+- 통신: WebSocket / JSON Lines tail (event stream)
+
+### 3 Sprint 분해
+
+| Sprint | 기간 | 주요 산출 |
+|--------|------|----------|
+| **Sprint 4** | ~1주 | **Telemetry Hook** + LangFuse fallback 정리 — `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit. 기존 백엔드 동작 변경 0. LangFuse `LANGFUSE_BASE_URL` vs `LANGFUSE_HOST` 이름 불일치 fix + local jsonl fallback. |
+| **Sprint 5** | ~1주 | **Tauri shell + React UI 골격** — Rust shell + 부서 그리드 (placeholder 아이콘) + Python sidecar spawn + event 수신 + 자연어 입력 → sidecar. PowerShell 대체 가능한 기본 GUI. |
+| **Sprint 6** | ~1주 | **시각화 완성** — 픽셀 아이콘 디자인 + working 펄스 애니메이션 + 대화 panel + iteration progress 시각화 + 결과 패널 + 다크 모드. 베타 cohort 5명 배포 가능 상태. |
+
+### 비전 ↔ paradigm-shift 통찰 매핑
+
+| 통찰 | 데스크탑 앱 시각화 |
+|------|-------------------|
+| 1. 위장된 협업 → 진짜 협업 | 대화 panel 의 실제 agent 간 메시지 surface |
+| 2. 에이전트 간 소통 부재 | Meeting Facilitator kickoff 합의 말풍선 |
+| 3. AI 가상 기업 비전 갭 | 부서별 색상 카드 그리드 = 조직도 시각화 |
+| 4. 분업 + 작업 공유 + 피드백 | working agent 펄스 + iteration progress |
+| **5. Observability 부재** | **본 비전의 핵심** — 매 step 가시화 (친구 PC 33min dead-screen 영원히 재현 X) |
+| 6. 진짜 자기 진화형 소프트웨어 | iteration progress (1/3 → 2/3 → 3/3) = 자기 진화 cycle 시각화 |
+
+→ **통찰 5 (Observability) 의 완전한 처방** + 다른 통찰 *시각화로 사실화*.
+
+### 우선순위 재정렬 (베타 cohort 위치 조정)
+
+- ~~#1 베타 cohort 5명 ($250 budget) 결정~~ → **Sprint 4 (Telemetry Hook) 완료 후로 이동** (베타가 데스크탑 앱으로 받게 됨이 의미 있음)
+- **#1 Sprint 4 — Telemetry Hook** + LangFuse fix (데스크탑 앱 prerequisite)
+- **#2 베타 cohort 결정** (Sprint 4 완료 시점)
+- **#3 Sprint 5 — Tauri shell 골격**
+- **#4 Sprint 6 — 시각화 완성**
+- **백로그**: Track B Vision QA 추가 wiring / Track B 1iter LLM 산출 품질 sprint
+
+### 보존 산출
+
+| File | 내용 |
+|------|------|
+| ⭐ **[docs/insights/desktop_app_vision.md](../insights/desktop_app_vision.md)** (신설) | 비전 전체 — UI 요구사항 + Tauri 추천 + 3 Sprint 분해 + 통찰 매핑 + 위험/의문 |
+| ⭐ **`feedback_desktop_app_paradigm.md`** (메모리 신설) | Why (4개) + How to apply (Sprint 4/5/6 패턴) + Tauri 결정 근거 + 부서 색상 매핑 |
+| `MEMORY.md` | 신규 포인터 추가 |
 
 ## 🏁 세션 마감 요약 (2026-05-19)
 
@@ -431,20 +489,25 @@ Phase 5 완료 후 다음 작업 우선순위 #3 으로 잡혀있던 PR #172 의
 
 | 항목 | 값 |
 |------|-----|
-| **머지 PR** | **9건** = 코어 4 (PR #176/#179/#181/**#184**) + docs 5 (PR #178/#180/#182/#183/#185) |
+| **머지 PR** | **11건** = 코어 4 (PR #176/#179/#181/**#184**) + docs 7 (PR #177/#178/#180/#182/#183/#185/#186) |
 | **pytest** | 1354 → **1385** (+31, 회귀 0) |
 | **E2E 라이브 검증** | 본 세션 **7회** 누적 (Track B) |
 | **silent 빈 응답률** | 80% → **0% 도달 확정** ⭐ |
 | **Track B 도메인 안전망** | **3중 완비** ⭐ |
+| **데스크탑 앱 비전 보존** | [docs/insights/desktop_app_vision.md](../insights/desktop_app_vision.md) + 메모리 ⭐ |
 
-### 본 세션 머지 PR 매트릭스
+### 본 세션 머지 PR 매트릭스 (11건 — 코어 4 + docs 7)
+
+**코어 4건**:
 
 | PR | 머지 commit | 차원 | 효과 |
 |----|------------|------|------|
 | **#176** | `0b90268` | **분기 갭 fix** | Retrospective 진단 분기 4 (silent 빈 응답) 추가 + 우선순위 재배치 |
 | **#179** | `8d03378` | **raw 데이터 보존** | `workflow_dir/retrospective_llm_raw.json` dump (13+ 필드, branch_hit 추적) |
-| **#181** | `29d590d` | **결정적 root-cause 처방** | `"pytest" in sys.modules` → `PYTEST_CURRENT_TEST` env var (1줄 변경) |
+| **#181** | `986a861` | **결정적 root-cause 처방** | `"pytest" in sys.modules` → `PYTEST_CURRENT_TEST` env var (1줄 변경) |
 | **#184** | `0cd1dbc` | **CLI 사용자 override** | `--forced-domain` flag (PR #172 의 C 옵션 완성, Track B 3중 안전망) |
+
+**Docs 7건**: PR #177 (E2E + #176 hot-fix) / #178 (Phase 2 E2E 3차) / #180 (Phase 3 raw) / #182 (Phase 4 root-cause) / #183 (Phase 5 라이브) / #185 (Phase 6 CLI flag) / #186 (세션 마감)
 
 ### ⭐ fail-silent 5단계 cycle 완성 (본 세션 핵심 성과)
 

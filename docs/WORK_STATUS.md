@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-19 **세션 마감** — **9 PR 머지** (코어 4 + docs 5) / pytest 1354 → **1385** (+31, 회귀 0) / **fail-silent 5단계 cycle 완성** (식별→진단→보존→처방→검증) / **Track B 도메인 3중 안전망 완비** (PR #172 + PR #184) / silent 빈 응답률 80% → 0% 도달 확정
+> **마지막 업데이트**: 2026-05-19 **세션 마감** — **11 PR 머지** (코어 4 + docs 7) / pytest 1354 → **1385** (+31, 회귀 0) / **fail-silent 5단계 cycle 완성** / **Track B 도메인 3중 안전망 완비** / **🎨 데스크탑 앱 비전 (Tauri) 보존** ⭐ — Sprint 4 (Telemetry Hook) 부터 시작
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -22,10 +22,11 @@
 > **🩺 LLM Variance 식별** — 5회 E2E 중 4회 빈 응답 / 1회 정상 응답 = **80% silent 빈 응답률**. retrospective_lead 만 silent 빈 응답 (다른 LLM 호출인 Curator 는 매번 정상 — qa_verdict 추출 OK). prompt 길이 / token / streaming 결함 가능. 다음 sprint: **LLM 응답 raw 저장** 으로 정확 root-cause 식별.
 >
 > **pytest 누적**: 1354 → **1385** (+31, 회귀 0) — PR #176 +2 / PR #179 +9 / PR #181 +5 / PR #184 +15
-> **누적 머지 PR (본 세션)**: **9건** = 코어 4 (PR #176/#179/#181/#184) + docs 5 (PR #178/#180/#182/#183/#185)
+> **누적 머지 PR (본 세션)**: **11건** = 코어 4 (PR #176/#179/#181/#184) + docs 7 (PR #177/#178/#180/#182/#183/#185/#186)
 > **E2E 라이브 검증 누적**: 5회 → **12회** (Track B 본 세션 7회 추가, Phase 5 100% 정상 응답 도달)
 > **silent 빈 응답률**: 80% → **0% 도달 확정** (PR #181 라이브 검증)
 > **Track B 도메인 분류 안전망**: **3중 완비** (PR #172 휴리스틱 + PR #172 graceful fallback + PR #184 CLI --forced-domain)
+> **🎨 새 비전 보존**: [Desktop App Vision (Tauri)](insights/desktop_app_vision.md) — paradigm-shift 의 *마지막 차원* (사용자 가시화). Sprint 4/5/6 분해.
 >
 > ## ⭐ 본 세션 핵심 성과 — fail-silent 5단계 cycle 완성
 >
@@ -148,15 +149,29 @@
 > | 3 | 정상 응답 + parse OK 인데 4 list 빈 | ✅ PR #174 (분기 4) |
 > | **4** | **response 빈/공백 + 예외 없음 (silent)** | ✅ **PR #176 (분기 2 NEW)** |
 >
-> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-19 세션 마감 시점)
+> ## 🎨 새 비전 — Desktop App (Tauri) Sprint 4/5/6
+>
+> **2026-05-19 본 세션 마감 시점 PM 추가 비전** — paradigm-shift 의 *마지막 차원* (사용자 가시화). 전체 비전: [docs/insights/desktop_app_vision.md](insights/desktop_app_vision.md).
+>
+> - **PowerShell 탈피** → 자연어 입력창 + 부서별 색상 카드 그리드 + 픽셀 아이콘 + working 펄스 + 대화 panel
+> - **추천 아키텍처**: Tauri (~10MB .exe, Rust) + React + Tailwind + Python sidecar (기존 `scripts/run.py` 그대로 wrap, 백엔드 코드 수정 0)
+> - **3 Sprint**: Telemetry Hook → Tauri shell + 골격 → 시각화 완성
+>
+> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-19 세션 마감 + 비전 보존 시점)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **베타 cohort 5명 ($250 budget) 결정** | TBD | **HIGH** ⭐ | 모든 핵심 라이브 검증 완비 (PR #181 0% 빈 응답률 + PR #184 3중 안전망) — 다음 세션 시작 작업. Telemetry fallback (LangFuse silent → local jsonl) 우선 검토 후 cohort 결정 |
-> | **2** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
-> | **3** | **Track B 1iter LLM 산출 품질 sprint** (선택) | M (~1-2h) | M | Phase 5 E2E retrospective wrong[0] "pytest 13건 전수 실패" 기반 — 1iter LLM 산출 *기능 동작* 부족. max_iterations=3 default 활용 또는 prompt 강화 |
+> | **1** ⭐ | **Sprint 4 — Telemetry Hook** + LangFuse fallback 정리 | M (~1주) | **VERY HIGH** | 데스크탑 앱 prerequisite. `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit + `LANGFUSE_BASE_URL` vs `LANGFUSE_HOST` 이름 불일치 fix + local jsonl fallback. 기존 백엔드 동작 변경 0. |
+> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | Sprint 4 완료 후 의미 있음 — 베타가 데스크탑 앱으로 받게 됨. Telemetry 확보 후 cohort 모니터링 가능 |
+> | **3** | **Sprint 5 — Tauri shell + React UI 골격** | L (~1주) | HIGH | Rust shell + 부서 그리드 (placeholder) + Python sidecar spawn + event 수신. PowerShell 대체 가능한 기본 GUI. |
+> | **4** | **Sprint 6 — 시각화 완성** | L (~1주) | HIGH | 픽셀 아이콘 + 펄스 + 대화 panel + iteration progress + 결과 패널. 베타 5명 배포 가능 상태. |
 >
-> > ~~Phase 1~6 완료~~ — 본 세션 9 PR 머지 + fail-silent 5단계 cycle 완성 + Track B 3중 안전망 완비
+> **백로그** (Sprint 4~6 진입 전 보류):
+> - Track B Vision QA 추가 wiring (PM 요청, PR #155 자동 감지 완료)
+> - Track B 1iter LLM 산출 품질 sprint (Phase 5 E2E retrospective wrong[0] "pytest 13건 전수 실패" 기반)
+>
+> > ~~Phase 1~6 완료~~ — 본 세션 11 PR 머지 + fail-silent 5단계 cycle 완성 + Track B 3중 안전망 완비
+> > ~~Phase 7 데스크탑 앱 비전 보존~~ — **완료** ⭐ (docs/insights/desktop_app_vision.md + 메모리 feedback_desktop_app_paradigm.md)
 >
 > ---
 >
