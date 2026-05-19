@@ -242,6 +242,8 @@ class _LoopState(TypedDict, total=False):
     # PR #158 — Track B 지원 (chain 분기)
     track: str  # "A" (analyze_and_implement) | "B" (automate_workflow)
     release_tag: str  # Track B run_automate_workflow 의 release_tag
+    # PR #183 — Track B 도메인 자동 분류 우회 (CLI --forced-domain)
+    forced_domain: Any  # AutomationDomain | None — Track B 전용, None 이면 휴리스틱
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -750,6 +752,8 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
             publish_as_draft=state.get("publish_as_draft", True),
             publish_timeout_sec=state.get("publish_timeout_sec", 120),
             target_platform=state.get("target_platform", "windows"),
+            # PR #183 — CLI --forced-domain 전달 (Track B 도메인 자동 분류 우회)
+            forced_domain=state.get("forced_domain"),
         )
         chain_result = _adapt_automate_to_chain_result(automate_result)
     else:
@@ -1097,6 +1101,8 @@ def run_iterative_loop(
     # PR #158 — Track B 지원 (chain 분기)
     track: str = "A",
     release_tag: str = "",
+    # PR #183 — CLI --forced-domain 전달 (Track B 도메인 자동 분류 우회)
+    forced_domain: Any = None,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -1194,6 +1200,8 @@ def run_iterative_loop(
             # PR #158 — Track B 지원
             "track": track,
             "release_tag": release_tag,
+            # PR #183 — CLI --forced-domain 전달 (Track B 도메인 자동 분류 우회)
+            "forced_domain": forced_domain,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.
