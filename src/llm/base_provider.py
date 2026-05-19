@@ -101,6 +101,31 @@ class BaseLLMProvider(ABC):
             except Exception:  # noqa: BLE001
                 pass
 
+            # PR #187 — Sprint 4 telemetry hook. Tauri 데스크탑 앱 대화 panel 용
+            # AgentMessageEvent emit. NEXUS_TELEMETRY_PATH 미 set 시 silent no-op.
+            try:
+                from src.monitoring import (  # 지연 import (순환 방지)
+                    AgentMessageEvent,
+                    ENGINEERING,
+                    get_telemetry_emitter,
+                )
+
+                emitter = get_telemetry_emitter()
+                if emitter.enabled:
+                    emitter.emit(AgentMessageEvent(
+                        agent=type(self).__name__,
+                        department=ENGINEERING,
+                        role="llm_call",
+                        prompt_preview=(prompt or "")[:240],
+                        output_preview=(output or "")[:240],
+                        model=self._model_identifier(),
+                        prompt_length=len(prompt or ""),
+                        output_length=len(output or ""),
+                        error=error,
+                    ))
+            except Exception:  # noqa: BLE001
+                pass
+
     async def stream(
         self,
         prompt: str,

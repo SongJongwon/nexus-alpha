@@ -393,6 +393,70 @@ Phase 5 완료 후 다음 작업 우선순위 #3 으로 잡혀있던 PR #172 의
 
 사용자 안전성 향상: fallback default (WEB_SCRAPING) 가 의도 위배 시 명시 override 가능. 자동화 / CI 스크립트의 *결정론 보장*.
 
+## Phase 8 — Sprint 4 Telemetry Hook + LangFuse env fix (PR #187, foundation 차원)
+
+Phase 7 (데스크탑 앱 비전 보존) 직후 PM 지시로 *데스크탑 앱 prerequisite* 인 Telemetry hook foundation 진입. **본 세션 12번째 PR 머지 — Sprint 4 의 첫 코어 작업**.
+
+### 작업 범위 (1 PR, foundation + 9 노드 emit)
+
+| # | 변경 | 위치 |
+|---|------|------|
+| 1 | **신설** `src/monitoring/telemetry.py` — `TelemetryEmitter` 싱글톤 + 4 event dataclass + `department_for_node` 매핑 + `NEXUS_TELEMETRY_PATH` env var 활성화 | 새 파일 |
+| 2 | **신설** 4 event dataclass — `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` (JSON Lines, type 필드 자동 주입) | `src/monitoring/telemetry.py` |
+| 3 | **신설** 부서 매핑 — 9 노드 + alias 4 + 종결 2 → PLANNING / ENGINEERING / LEARNING / SYSTEM (Tauri UI 부서별 색상) | `src/monitoring/telemetry.py` |
+| 4 | **fix** LangFuse env 양쪽 호환 — `_resolve_langfuse_host()` 신설. `LANGFUSE_HOST` 우선, 미 set 시 `LANGFUSE_BASE_URL` fallback. 둘 다 미 set 시 cloud 기본 | `src/monitoring/langfuse_client.py` |
+| 5 | **hook** `BaseLLMProvider.generate()` finally 블록에 `AgentMessageEvent` emit — 모든 Provider (AgentSDK/APIKey/Fake) LLM 호출 자동 캡처 | `src/llm/base_provider.py` |
+| 6 | **wrap** `_telemetry_wrap(node_name, fn)` 데코레이터 — iterative_loop 의 13 add_node 호출 모두에 적용. 비활성 시 원본 fn 그대로 (0 overhead) | `src/workflows/iterative_loop.py` |
+| 7 | **emit** `run_iterative_loop` 시작 시 `IterationProgressEvent(phase="run_start")`, 종료 시 `ResultEvent` + `IterationProgressEvent(phase="run_end")` | `src/workflows/iterative_loop.py` |
+| 8 | **flag** `scripts/run.py --emit-events <path>` — main 진입 시 `NEXUS_TELEMETRY_PATH` env var set + singleton reset. default None (기존 사용자 영향 0) | `scripts/run.py` |
+| 9 | **export** `src/monitoring/__init__.py` — 4 event 클래스 + `get_telemetry_emitter` + 부서 상수 공개 | `src/monitoring/__init__.py` |
+| 10 | **docs** `.env.example` — `NEXUS_TELEMETRY_PATH` 섹션 + `LANGFUSE_BASE_URL` alias 안내 | `.env.example` |
+
+### 회귀 테스트 15 신규 ([test_pr187_telemetry_emit.py](../../src/tests/test_pr187_telemetry_emit.py))
+
+| # | 검증 | 통과 |
+|---|------|------|
+| 1 | emit OFF default — env var 미 set 시 emitter 비활성 + emit silent no-op | ✅ |
+| 2 | emit ON — env var set + reset 후 활성, jsonl 4 줄 append + 1 run_id 통합 | ✅ |
+| 3 | 4 event type/필드 직렬화 (asdict + type 필드 자동) | ✅ |
+| 4 | department_for_node 매핑 — 13 노드 + 미매핑 SYSTEM fallback | ✅ |
+| 5 | LangFuse env 양쪽 호환 — HOST 우선 / BASE_URL fallback / 둘 다 미 set / 따옴표 strip (4 sub-test) | ✅ |
+| 6 | BaseLLMProvider.generate() finally 블록 AgentMessageEvent emit 경로 (FakeProvider async) | ✅ |
+| 7 | _telemetry_wrap — emitter 비활성 시 passthrough (0 overhead) | ✅ |
+| 8 | _telemetry_wrap — 활성 시 working → fn → done 순서 + 예외 시 error emit 후 re-raise | ✅ |
+| 9 | --emit-events flag argparse + Path resolve 경로 | ✅ |
+| 10 | begin_run / set_iteration / end_run 컨텍스트 자동 주입 (run_id + iteration) | ✅ |
+
+**pytest 1385 → 1400** (+15, 회귀 0).
+
+### 설계 핵심 — "기존 백엔드 동작 변경 0"
+
+본 PR 의 *모든* emit hook 은:
+1. **default OFF** — `NEXUS_TELEMETRY_PATH` env var 미 set 시 `emitter.enabled=False` → emit 호출이 즉시 return (이른 종료).
+2. **try/except 감싸기** — emit 실패가 메인 경로 차단 X. LangFuse client 의 silent 패턴 일관.
+3. **wrapper 패턴** — `_telemetry_wrap` 이 노드 함수 자체를 *수정하지 않고* graph builder 의 add_node 시점에만 wrap. 노드 9 + alias 4 = 13개 모두 자동 적용.
+4. **첫 emit 실패 시 disable** — file write 실패 시 stderr 1회 경고 후 disable. 폭주 방지.
+
+→ **기존 1385 test 모두 통과** = 동작 변경 0 evidence.
+
+### Tauri 데스크탑 앱 prerequisite 완성 — Sprint 5 진입 가능
+
+본 PR 으로 Tauri sidecar 가 spawn 한 `scripts/run.py --emit-events events.jsonl` 의 jsonl 을 tail → React state 갱신 가능. 부서별 색상 카드 그리드 / 대화 panel / iteration progress / 결과 패널 의 *데이터 stream* 차원 완성.
+
+다음 단계 (Sprint 5):
+- Tauri 프로젝트 생성 (Rust shell + Cargo build)
+- React + Tailwind 부서 그리드 골격
+- Python sidecar spawn + jsonl tail
+- event 수신 → state 갱신
+
+### 핵심 통찰
+
+1. **데코레이터 wrap 패턴의 가치** — 9 노드 + alias 4 = 13개 노드 함수 자체를 *수정하지 않고* graph builder 한 곳에서 일괄 wrap. 노드별 emit 코드 중복 0 + 회귀 위험 0. 향후 노드 추가 시에도 `_telemetry_wrap(name, fn)` 한 줄 적용만으로 자동 통합.
+
+2. **LangFuse env alias fix 의 *cohort 안전성*** — 일부 사용자가 `LANGFUSE_BASE_URL` 명칭 사용 시 *silent 미인식* 으로 모니터링 비활성 상태. fallback + 경고 surface 로 사용자 환경 진단 부담 해소. PR #176/#179/#181 의 fail-silent 처방 cycle 의 *환경설정 차원* 확장.
+
+3. **default OFF + env var 활성화 패턴** — Sprint 4 의 기본 원칙. flag 가 없을 때 0 cost / flag 가 있을 때만 stream 활성. LangFuse client 동일 패턴 — 모니터링 layer 의 일관된 *opt-in* 설계.
+
 ## 다음 세션 컨텍스트 복원 가이드
 
 ### 읽을 순서
@@ -412,14 +476,15 @@ Phase 5 완료 후 다음 작업 우선순위 #3 으로 잡혀있던 PR #172 의
 - ✅ Track A/B 양쪽 자기 진화 cycle 라이브 동작 확정
 - ✅ E2E 라이브 검증 누적 12회 (Track A 2회 PASS / Track B 본 세션 7회 추가, Phase 5 100% 정상 응답 도달)
 
-### 다음 세션 재개 순서 — PM 지시 (Phase 7 데스크탑 앱 비전 추가 + 우선순위 재정렬)
+### 다음 세션 재개 순서 — PM 지시 (Phase 8 Sprint 4 foundation 완료 후)
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** ⭐ | **Sprint 4 — Telemetry Hook** + LangFuse fallback 정리 | M (~1주) | **VERY HIGH** | 데스크탑 앱 prerequisite + LangFuse fix 통합. `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit + LANGFUSE_BASE_URL vs LANGFUSE_HOST 이름 불일치 fix + local jsonl fallback. 기존 백엔드 동작 변경 0. |
-| **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | Sprint 4 완료 후 의미 있음 — 베타가 데스크탑 앱으로 받게 됨. Telemetry 가 확보된 후 cohort 모니터링 가능 |
-| **3** | **Sprint 5 — Tauri shell + React UI 골격** | L (~1주) | HIGH | Rust shell + 부서 그리드 (placeholder) + Python sidecar spawn + event 수신. PowerShell 대체 가능한 기본 GUI. |
-| **4** | **Sprint 6 — 시각화 완성** | L (~1주) | HIGH | 픽셀 아이콘 + 펄스 + 대화 panel + iteration progress + 결과 패널. 베타 5명 배포 가능 상태. |
+| ~~1~~ ✅ | ~~Sprint 4 — Telemetry Hook foundation~~ | M (~1일) | **DONE** | **Phase 8 (PR #187) 완료** — 4 event emit + LangFuse env fix + 9 노드 wrap + --emit-events flag + 15 회귀 테스트. pytest 1385 → 1400. |
+| **1** ⭐ | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | Telemetry foundation 완비. 베타가 데스크탑 앱으로 받게 됨이 의미 — Sprint 5/6 의 *진행 보드*. jsonl 모니터링으로 cohort 빈 응답률 / silent failure 실시간 추적 가능. |
+| **2** | **Sprint 5 — Tauri shell + React UI 골격** | L (~1주) | HIGH | Rust shell + 부서 그리드 (placeholder) + Python sidecar spawn + jsonl tail + event 수신. PowerShell 대체 가능한 기본 GUI. |
+| **3** | **Sprint 6 — 시각화 완성** | L (~1주) | HIGH | 픽셀 아이콘 + 펄스 + 대화 panel + iteration progress + 결과 패널. 베타 5명 배포 가능 상태. |
+| 백로그 | Telemetry 노드별 emit 폴리싱 | S | MEDIUM | iteration_begin/iteration_end 정확화 (현재 run_start/run_end 만). 모든 sub-agent (Vision QA / pytest_author / curator) emit 확장. Sprint 5 진입 후 UI 요구로 자연 우선순위 확정. |
 
 **백로그** (Sprint 4~6 진입 전 보류):
 - Track B Vision QA 추가 wiring (PM 요청, PR #155 자동 감지 완료)
@@ -489,12 +554,13 @@ PM 의 새 비전 — **Tauri 데스크탑 앱 (Agent Office Visualizer)**. para
 
 | 항목 | 값 |
 |------|-----|
-| **머지 PR** | **11건** = 코어 4 (PR #176/#179/#181/**#184**) + docs 7 (PR #177/#178/#180/#182/#183/#185/#186) |
-| **pytest** | 1354 → **1385** (+31, 회귀 0) |
+| **머지 PR** | **12건** = 코어 5 (PR #176/#179/#181/**#184**/**#187**) + docs 7 (PR #177/#178/#180/#182/#183/#185/#186) |
+| **pytest** | 1354 → **1400** (+46, 회귀 0) |
 | **E2E 라이브 검증** | 본 세션 **7회** 누적 (Track B) |
 | **silent 빈 응답률** | 80% → **0% 도달 확정** ⭐ |
 | **Track B 도메인 안전망** | **3중 완비** ⭐ |
 | **데스크탑 앱 비전 보존** | [docs/insights/desktop_app_vision.md](../insights/desktop_app_vision.md) + 메모리 ⭐ |
+| **Sprint 4 Telemetry foundation** | ⭐ **완료** (PR #187) — 4 event + 부서 매핑 + 9 노드 wrap + LangFuse env fix |
 
 ### 본 세션 머지 PR 매트릭스 (11건 — 코어 4 + docs 7)
 

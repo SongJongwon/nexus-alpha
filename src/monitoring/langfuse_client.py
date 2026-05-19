@@ -7,6 +7,10 @@ LangFuse 모니터링 래퍼 (SDK v4, OpenTelemetry 기반).
 - 환경변수(`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`)가
   누락되면 콘솔에 한 번 경고를 출력하고 이후 모든 호출은 조용히 no-op이 된다.
   (모니터링 실패가 메인 기능을 절대 차단하지 않아야 한다.)
+- 호스트 환경변수 alias: `LANGFUSE_BASE_URL` (PR #187, Sprint 4). 일부 사용자가
+  `BASE_URL` 명칭을 사용한 사례 (LangFuse SDK 문서 mix) 가 silent 미인식으로
+  이어지던 결함을 해소한다. `LANGFUSE_HOST` 우선, 미 set 시 `LANGFUSE_BASE_URL`
+  fallback.
 
 SDK v4 용어:
     trace        = 최상위 span (as_type="span")
@@ -39,7 +43,7 @@ class LangFuseClient:
         self._enabled: bool = False
         self._client: Any = None
         self._current_trace: Any = None
-        self._host: str = _clean_env("LANGFUSE_HOST", "https://cloud.langfuse.com")
+        self._host: str = _resolve_langfuse_host()
 
         public_key = _clean_env("LANGFUSE_PUBLIC_KEY")
         secret_key = _clean_env("LANGFUSE_SECRET_KEY")
@@ -191,6 +195,30 @@ def _clean_env(key: str, default: str = "") -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         value = value[1:-1]
     return value
+
+
+def _resolve_langfuse_host() -> str:
+    """LangFuse 대시보드 호스트 결정.
+
+    우선순위:
+        1) ``LANGFUSE_HOST`` (정식 — LangFuse SDK 공식 명칭)
+        2) ``LANGFUSE_BASE_URL`` (alias — 일부 사용자가 사용)
+        3) 기본 cloud 엔드포인트
+
+    PR #187 — Sprint 4. 두 명칭 다른 ``.env`` 가 silent 미인식으로 이어지던 결함 해소.
+    """
+    primary = _clean_env("LANGFUSE_HOST")
+    if primary:
+        return primary
+    alias = _clean_env("LANGFUSE_BASE_URL")
+    if alias:
+        print(
+            "[LangFuse] LANGFUSE_BASE_URL 사용 감지 — 정식 명칭 LANGFUSE_HOST 권장. "
+            "본 process 에서는 LANGFUSE_BASE_URL 값으로 동작합니다.",
+            file=sys.stderr,
+        )
+        return alias
+    return "https://cloud.langfuse.com"
 
 
 def get_langfuse_client() -> LangFuseClient:

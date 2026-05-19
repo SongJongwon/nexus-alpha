@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-19 **세션 마감** — **11 PR 머지** (코어 4 + docs 7) / pytest 1354 → **1385** (+31, 회귀 0) / **fail-silent 5단계 cycle 완성** / **Track B 도메인 3중 안전망 완비** / **🎨 데스크탑 앱 비전 (Tauri) 보존** ⭐ — Sprint 4 (Telemetry Hook) 부터 시작
+> **마지막 업데이트**: 2026-05-19 **세션 마감 (Phase 8 추가)** — **12 PR 머지** (코어 5 + docs 7) / pytest 1354 → **1400** (+46, 회귀 0) / **fail-silent 5단계 cycle 완성** / **Track B 도메인 3중 안전망 완비** / **🎨 데스크탑 앱 비전 (Tauri) 보존** ⭐ / **🛰 Sprint 4 Telemetry foundation 완료** ⭐ (PR #187) — 다음 우선순위 #1: 베타 cohort 결정 + Sprint 5 (Tauri shell)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -157,14 +157,15 @@
 > - **추천 아키텍처**: Tauri (~10MB .exe, Rust) + React + Tailwind + Python sidecar (기존 `scripts/run.py` 그대로 wrap, 백엔드 코드 수정 0)
 > - **3 Sprint**: Telemetry Hook → Tauri shell + 골격 → 시각화 완성
 >
-> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-19 세션 마감 + 비전 보존 시점)
+> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (Phase 8 Sprint 4 foundation 완료 시점)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** ⭐ | **Sprint 4 — Telemetry Hook** + LangFuse fallback 정리 | M (~1주) | **VERY HIGH** | 데스크탑 앱 prerequisite. `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit + `LANGFUSE_BASE_URL` vs `LANGFUSE_HOST` 이름 불일치 fix + local jsonl fallback. 기존 백엔드 동작 변경 0. |
-> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | Sprint 4 완료 후 의미 있음 — 베타가 데스크탑 앱으로 받게 됨. Telemetry 확보 후 cohort 모니터링 가능 |
-> | **3** | **Sprint 5 — Tauri shell + React UI 골격** | L (~1주) | HIGH | Rust shell + 부서 그리드 (placeholder) + Python sidecar spawn + event 수신. PowerShell 대체 가능한 기본 GUI. |
-> | **4** | **Sprint 6 — 시각화 완성** | L (~1주) | HIGH | 픽셀 아이콘 + 펄스 + 대화 panel + iteration progress + 결과 패널. 베타 5명 배포 가능 상태. |
+> | ~~1~~ ✅ | ~~Sprint 4 — Telemetry Hook foundation~~ | M (~1일) | **DONE** | **Phase 8 (PR #187) 완료** — `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit + `LANGFUSE_BASE_URL` fallback + 9 노드 wrap + `--emit-events` flag + 15 회귀 테스트. pytest 1385 → 1400. |
+> | **1** ⭐ | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | Telemetry foundation 완비. 베타가 데스크탑 앱으로 받게 됨이 의미 — Sprint 5/6 의 *진행 보드*. jsonl 모니터링으로 cohort 빈 응답률 / silent failure 실시간 추적 가능. |
+> | **2** | **Sprint 5 — Tauri shell + React UI 골격** | L (~1주) | HIGH | Rust shell + 부서 그리드 (placeholder) + Python sidecar spawn + jsonl tail + event 수신. PowerShell 대체 가능한 기본 GUI. |
+> | **3** | **Sprint 6 — 시각화 완성** | L (~1주) | HIGH | 픽셀 아이콘 + 펄스 + 대화 panel + iteration progress + 결과 패널. 베타 5명 배포 가능 상태. |
+> | 백로그 | Telemetry 노드별 emit 폴리싱 | S | MEDIUM | iteration_begin/iteration_end 정확화 + 모든 sub-agent (Vision QA / pytest_author / curator) emit 확장. Sprint 5 진입 후 UI 요구로 자연 우선순위. |
 >
 > **백로그** (Sprint 4~6 진입 전 보류):
 > - Track B Vision QA 추가 wiring (PM 요청, PR #155 자동 감지 완료)

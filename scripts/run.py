@@ -36,6 +36,7 @@ Release 의 *전 단계* — `docs/context/next_session_context.md` §10 참고)
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -1132,6 +1133,16 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "`--track B --forced-domain web_scraping`. Track A 에서는 무시 (warning)."
         ),
     )
+    parser.add_argument(
+        "--emit-events", dest="emit_events", default=None,
+        help=(
+            "PR #187 Sprint 4 — Tauri 데스크탑 앱 prerequisite. JSON Lines 형식의 "
+            "에이전트 이벤트 stream (AgentStatusEvent / AgentMessageEvent / "
+            "IterationProgressEvent / ResultEvent) 을 지정 경로에 append. "
+            "default OFF — 기존 사용자 영향 0. 환경변수 NEXUS_TELEMETRY_PATH 와 "
+            "동등 (flag 가 env var 를 set). 예: --emit-events events.jsonl"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1141,6 +1152,20 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[list[str]] = None) -> int:
     _print_banner()
     args = _parse_args(argv)
+
+    # 0. PR #187 Sprint 4 — Telemetry hook 활성화 (가장 먼저, 이후 emit 가 누락되지 않도록).
+    # --emit-events <path> 가 명시되면 NEXUS_TELEMETRY_PATH env var 를 set. 비어 있으면 no-op.
+    # singleton 이 lazy 초기화이므로 env var 만 set 하면 이후 emit 자동 활성.
+    if getattr(args, "emit_events", None):
+        emit_path = Path(args.emit_events).expanduser().resolve()
+        os.environ["NEXUS_TELEMETRY_PATH"] = str(emit_path)
+        # 이미 초기화된 싱글톤이 있다면 (test 등) 리셋 — production main 진입 시점은 첫 진입이므로 safe.
+        try:
+            from src.monitoring import TelemetryEmitter
+            TelemetryEmitter.reset_for_tests()
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"  Telemetry: {emit_path}")
 
     # 1. 자연어 요청
     if not args.request:
