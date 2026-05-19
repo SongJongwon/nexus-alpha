@@ -33,6 +33,7 @@ PR #149 (2026-05-15, 본인 비전 통찰 6 — D-5 처방 + Phase 3 cycle 완�
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import datetime
@@ -267,7 +268,13 @@ def run_retrospective(
         shared_kickoff_decisions, chain_result, qa_review
     )
 
-    in_pytest = "pytest" in sys.modules
+    # PR #181 — robust pytest 환경 검출 (PR #179 raw 진단으로 식별된 root-cause fix).
+    # 이전 (`"pytest" in sys.modules`) 는 production E2E 어딘가에서 pytest module 이
+    # *import* 되기만 해도 True → llm_call=None 유지 → retrospective_lead 가 LLM 호출
+    # 자체 skip → retrospective.md 빈. 80% silent 빈 응답률의 결정적 root-cause.
+    # ``PYTEST_CURRENT_TEST`` env var 는 pytest 가 *각 test 실행 시점* 에만 set —
+    # import 만 한 상태에서는 미 set → production E2E 에서 정상적으로 LLM 호출 진입.
+    in_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
     if llm_call is None and not in_pytest:
         llm_call = _default_llm_call
 
