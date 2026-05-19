@@ -56,10 +56,11 @@ Phase 3 (Sandbox 통합) 추가 메모:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, TypedDict
+from typing import Any, Callable, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
@@ -1010,6 +1011,56 @@ def _route_after_judge(state: _LoopState) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Telemetry node wrapper (PR #187, Sprint 4)
+# ---------------------------------------------------------------------------
+def _telemetry_wrap(node_name: str, fn: Callable[[Any], dict[str, Any]]) -> Callable[[Any], dict[str, Any]]:
+    """LangGraph 노드 함수를 wrap 해 AgentStatusEvent (working/done/error) 를 emit.
+
+    Telemetry 가 비활성 (``NEXUS_TELEMETRY_PATH`` 미 set) 일 때는 원본 fn 을 그대로
+    호출 — 0 overhead. 활성 시:
+        - 진입 → ``agent_working``
+        - 정상 종료 → ``agent_done``
+        - 예외 발생 → ``agent_error`` 후 re-raise (원본 동작 보존)
+
+    노드 함수 자체는 *수정하지 않는다* — wrap 만 build_iterative_loop_graph 에서 적용.
+    """
+    def inner(state: dict[str, Any]) -> dict[str, Any]:
+        # 지연 import — circular dependency 회피 + monitoring 미설치 환경 보호
+        try:
+            from src.monitoring import get_telemetry_emitter
+            emitter = get_telemetry_emitter()
+        except Exception:  # noqa: BLE001
+            return fn(state)
+
+        if not emitter.enabled:
+            return fn(state)
+
+        iteration = state.get("iteration", 0) if isinstance(state, dict) else 0
+        try:
+            emitter.agent_working(node_name, detail=f"iter={iteration}")
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            result = fn(state)
+        except Exception as exc:
+            try:
+                emitter.agent_error(node_name, error_msg=repr(exc))
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+
+        try:
+            emitter.agent_done(node_name, detail=f"iter={iteration}")
+        except Exception:  # noqa: BLE001
+            pass
+        return result
+
+    inner.__name__ = f"_telemetry__{node_name}"
+    return inner
+
+
+# ---------------------------------------------------------------------------
 # Graph 조립
 # ---------------------------------------------------------------------------
 def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
@@ -1029,20 +1080,22 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
         entry summary/tags 가 *결함/성공 패턴* 으로 풍부해짐 (Phase 3 cycle 완성).
     """
     g = StateGraph(_LoopState)
-    g.add_node("expand_requirements", _node_expand_requirements)
-    g.add_node("recall_past_knowledge", _node_recall_past_knowledge)  # PR #140
-    g.add_node("kickoff_meeting", _node_kickoff_meeting)               # PR #138 full
-    g.add_node("run_chain", _node_run_chain)
-    g.add_node("run_sandbox", _node_run_sandbox)
-    g.add_node("analyze_gap", _node_analyze_gap)
-    g.add_node("judge_convergence", _node_judge_convergence)
-    g.add_node("prepare_feedback", _node_prepare_feedback)
-    g.add_node("retrospective", _node_retrospective)                   # PR #149
-    g.add_node("curate_knowledge", _node_curate_knowledge)             # PR #140
-    g.add_node("retrospective_blocked", _node_retrospective)           # PR #149 alias
-    g.add_node("curate_knowledge_blocked", _node_curate_knowledge)     # PR #140 alias
-    g.add_node("finalize", _node_finalize)
-    g.add_node("escalate", _node_escalate)
+    # PR #187 Sprint 4 — 각 노드를 _telemetry_wrap 으로 감싸 AgentStatusEvent emit.
+    # Telemetry 비활성 (default) 시 원본 fn 그대로 호출 — 0 overhead.
+    g.add_node("expand_requirements", _telemetry_wrap("expand_requirements", _node_expand_requirements))
+    g.add_node("recall_past_knowledge", _telemetry_wrap("recall_past_knowledge", _node_recall_past_knowledge))  # PR #140
+    g.add_node("kickoff_meeting", _telemetry_wrap("kickoff_meeting", _node_kickoff_meeting))                    # PR #138 full
+    g.add_node("run_chain", _telemetry_wrap("run_chain", _node_run_chain))
+    g.add_node("run_sandbox", _telemetry_wrap("run_sandbox", _node_run_sandbox))
+    g.add_node("analyze_gap", _telemetry_wrap("analyze_gap", _node_analyze_gap))
+    g.add_node("judge_convergence", _telemetry_wrap("judge_convergence", _node_judge_convergence))
+    g.add_node("prepare_feedback", _telemetry_wrap("prepare_feedback", _node_prepare_feedback))
+    g.add_node("retrospective", _telemetry_wrap("retrospective", _node_retrospective))                          # PR #149
+    g.add_node("curate_knowledge", _telemetry_wrap("curate_knowledge", _node_curate_knowledge))                 # PR #140
+    g.add_node("retrospective_blocked", _telemetry_wrap("retrospective_blocked", _node_retrospective))          # PR #149 alias
+    g.add_node("curate_knowledge_blocked", _telemetry_wrap("curate_knowledge_blocked", _node_curate_knowledge)) # PR #140 alias
+    g.add_node("finalize", _telemetry_wrap("finalize", _node_finalize))
+    g.add_node("escalate", _telemetry_wrap("escalate", _node_escalate))
 
     g.set_entry_point("expand_requirements")
     g.add_edge("expand_requirements", "recall_past_knowledge")
@@ -1172,6 +1225,26 @@ def run_iterative_loop(
         },
     )
 
+    # PR #187 Sprint 4 — Tauri 데스크탑 앱 telemetry. 비활성 (default) 시 0 overhead.
+    from src.monitoring import (
+        IterationProgressEvent,
+        ResultEvent,
+        get_telemetry_emitter,
+    )
+    telemetry = get_telemetry_emitter()
+    run_started_at = time.monotonic()
+    if telemetry.enabled:
+        telemetry.begin_run(max_iterations=max_iterations)
+        try:
+            telemetry.emit(IterationProgressEvent(
+                phase="run_start",
+                iteration=0,
+                max_iterations=max_iterations,
+                detail=user_request[:160],
+            ))
+        except Exception:  # noqa: BLE001
+            pass
+
     try:
         compiled = build_iterative_loop_graph()
         initial_state: _LoopState = {
@@ -1214,7 +1287,7 @@ def run_iterative_loop(
         curated_entry_path_str = final_state.get("curated_entry_path", "")
         curated_index_path_str = final_state.get("curated_index_path", "")
         retro_md_path_str = final_state.get("retrospective_md_path", "")
-        return LoopOutcome(
+        outcome = LoopOutcome(
             user_request=user_request,
             verdict=decision.verdict,
             blocked_cause=decision.blocked_cause,
@@ -1236,6 +1309,54 @@ def run_iterative_loop(
             retrospective_md_path=Path(retro_md_path_str) if retro_md_path_str else None,
         )
 
+        # PR #187 Sprint 4 — ResultEvent emit (결과 패널). exe path 추출은 best-effort:
+        # chain_result.executor_result.exe_path 가 표준 위치이나 환경에 따라 다를 수 있어 안전 추출.
+        if telemetry.enabled:
+            exe_path = ""
+            saved_dir = ""
+            chain = final_state.get("chain_result")
+            if chain is not None:
+                exec_res = getattr(chain, "executor_result", None)
+                if exec_res is not None:
+                    exe_path = str(getattr(exec_res, "exe_path", "") or "")
+                saved = getattr(chain, "saved_dir", None)
+                if saved:
+                    saved_dir = str(saved)
+            try:
+                summary_line = format_iterative_summary(outcome, max_iterations)
+            except Exception:  # noqa: BLE001
+                summary_line = ""
+            try:
+                telemetry.emit(ResultEvent(
+                    verdict=getattr(decision.verdict, "value", str(decision.verdict)),
+                    blocked_cause=getattr(decision.blocked_cause, "value", str(decision.blocked_cause)),
+                    iterations_run=outcome.iterations_run,
+                    max_iterations=max_iterations,
+                    exe_path=exe_path,
+                    duration_sec=round(time.monotonic() - run_started_at, 3),
+                    saved_dir=saved_dir,
+                    summary_line=summary_line,
+                ))
+            except Exception:  # noqa: BLE001
+                pass
+
+        return outcome
+
     finally:
         monitor.end_trace()
         monitor.flush()
+        # PR #187 Sprint 4 — run_end progress + run_id 정리. 예외 흐름에도 안전.
+        if telemetry.enabled:
+            try:
+                telemetry.emit(IterationProgressEvent(
+                    phase="run_end",
+                    iteration=0,
+                    max_iterations=max_iterations,
+                    detail=f"duration_sec={round(time.monotonic() - run_started_at, 3)}",
+                ))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                telemetry.end_run()
+            except Exception:  # noqa: BLE001
+                pass
