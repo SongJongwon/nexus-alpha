@@ -811,6 +811,12 @@ def _run_track_b(args: argparse.Namespace) -> int:
     outputs_dir = PROJECT_ROOT / "outputs" / f"alpha_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     start = datetime.now()
 
+    # PR #183 — --forced-domain (Track B 도메인 자동 분류 우회) str → enum 변환
+    forced_domain_enum = None
+    if getattr(args, "forced_domain", None):
+        from src.workflows.automate_workflow import AutomationDomain  # noqa: PLC0415
+        forced_domain_enum = AutomationDomain(args.forced_domain)
+
     total_phases = 1  # automate_workflow 또는 iterative_loop (필수)
     if args.build and not args.no_vision_qa:
         total_phases += 2  # vision_qa + qa_feedback_loop (gui 분기일 때만 실 호출)
@@ -838,6 +844,8 @@ def _run_track_b(args: argparse.Namespace) -> int:
             publish_as_draft=True,
             repo_url=args.repo,
             release_tag=args.tag,
+            # PR #183 — CLI --forced-domain Track B 자동 분류 우회
+            forced_domain=forced_domain_enum,
         )
         chain = outcome.final_chain_result
         # PR #174 — BLOCKED UX 개선 (Track B 동일 포맷 — blocked_cause + partial hint)
@@ -868,6 +876,8 @@ def _run_track_b(args: argparse.Namespace) -> int:
             repo_url=args.repo,
             release_tag=args.tag,
             publish_as_draft=True,
+            # PR #183 — CLI --forced-domain Track B 자동 분류 우회
+            forced_domain=forced_domain_enum,
         )
         tracker.end(summary=f"saved_dir={getattr(result, 'saved_dir', None)}")
 
@@ -1112,6 +1122,16 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "시간 소지감 + 비용 폭증 회피."
         ),
     )
+    parser.add_argument(
+        "--forced-domain", dest="forced_domain",
+        choices=["web_scraping", "desktop_automation", "api_integration", "data_parser", "devops"],
+        default=None,
+        help=(
+            "PR #183 — Track B 도메인 자동 분류 우회 (PR #172 의 C 옵션). 지정 시 "
+            "휴리스틱/LLM fallback 무시 + 해당 도메인 강제. 예: "
+            "`--track B --forced-domain web_scraping`. Track A 에서는 무시 (warning)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1139,6 +1159,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.track = detected
         else:
             args.track = _prompt_track(detected)
+
+    # 2.4. PR #183 — --forced-domain Track A warning (변환 자체는 _run_track_b 에서 수행)
+    if args.forced_domain and args.track == "A":
+        print(
+            f"[WARN] --forced-domain={args.forced_domain} 은 Track A 에서 영향 없음 (무시).",
+            file=sys.stderr,
+        )
 
     # 2.5. Build 결정 (PR #115) — --build 미지정 + 인터랙티브 모드일 때 별도 prompt.
     # Track 선택 ('a'/'b' 키) 와 Build 옵션 ('b') 입력 혼동 방지.
