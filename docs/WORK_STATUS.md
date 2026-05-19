@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-19 (Track B E2E **3회 누적** — PR #176 머지 + 재재검증 10:36 8.16min PASS + retrospective.md **정상 산출** ⭐ + PR #170/#162/#172/#174 *동시 라이브* + LLM variance 80% silent 빈 응답률 식별)
+> **마지막 업데이트**: 2026-05-19 (Phase 3 완료 — **PR #179 retrospective_llm_raw.json 진단 dump** — 80% silent 빈 응답률 root-cause 식별 도구. Track B E2E 3회 누적 + retrospective.md 정상 산출 + PR #170/#162/#172/#174 동시 라이브 + LLM variance 진단 도구 완비)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -21,8 +21,22 @@
 >
 > **🩺 LLM Variance 식별** — 5회 E2E 중 4회 빈 응답 / 1회 정상 응답 = **80% silent 빈 응답률**. retrospective_lead 만 silent 빈 응답 (다른 LLM 호출인 Curator 는 매번 정상 — qa_verdict 추출 OK). prompt 길이 / token / streaming 결함 가능. 다음 sprint: **LLM 응답 raw 저장** 으로 정확 root-cause 식별.
 >
-> **pytest 누적**: 1354 → **1356** (+2, 회귀 0)
+> **pytest 누적**: 1354 → **1365** (+11, 회귀 0) — PR #176 +2 / **PR #179 +9**
 > **E2E 라이브 검증 누적**: 5회 → **8회** (Track B 본 세션 3회 추가)
+>
+> ## 🔬 Phase 3 — PR #179 LLM 응답 raw 저장 sprint (머지 commit `8d03378`)
+>
+> Phase 2 식별 80% silent 빈 응답률 → **raw 응답 보존 도구 추가**. `run_retrospective(workflow_dir=...)` → `workflow_dir/retrospective_llm_raw.json` 진단 dump (13+ 필드).
+>
+> | raw 값 | 추정 root-cause |
+> |--------|---------------|
+> | `prompt_length_chars` ≫ 한도 | token 한도 결함 |
+> | `response_raw` 길이 0 + `llm_error=None` | provider silent timeout / streaming 결함 |
+> | `response_raw` truncated | streaming buffer 결함 |
+> | `llm_error` = TimeoutError | provider 안정성 |
+> | `parsed_keys=[]` + response 길이 > 0 | JSON 형식 결함 |
+>
+> 다음 Track B E2E 1~5회 실행 → `retrospective_llm_raw.json` 누적 → **결정적 root-cause 식별 가능** → 추가 fix sprint 의 evidence 확보.
 >
 > ## 🩺 fail-silent 5번째 변형 sub-variants 누적 완비
 >
@@ -33,16 +47,17 @@
 > | 3 | 정상 응답 + parse OK 인데 4 list 빈 | ✅ PR #174 (분기 4) |
 > | **4** | **response 빈/공백 + 예외 없음 (silent)** | ✅ **PR #176 (분기 2 NEW)** |
 >
-> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-19 Phase 2 검증 결과 반영)
+> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (Phase 3 완료 반영)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **`retrospective_lead.py` LLM 응답 raw 저장 sprint** | S~M (~30-45min) | HIGH | 80% silent 빈 응답률 root-cause 식별 — raw 응답 file 저장 + 다음 빈 응답 케이스에서 *prompt 길이 / token / streaming* 정확 진단 |
-> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
+> | **1** | **Track B E2E 1~5회 + retrospective_llm_raw.json 누적 분석** | M (~30-60min) | HIGH | PR #179 라이브 효과 — 빈 응답 케이스 발생 시 raw file 분석 → 정확 root-cause (token / streaming / 형식) 식별 → 추가 fix sprint evidence |
+> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 + 진단 도구 완비 — Telemetry fallback 우선 검토 |
 > | **3** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override 안전망 |
 > | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
 >
-> > ~~Track B E2E 재재검증 (PR #176 라이브 효과)~~ — **본 세션 Phase 2 완료** (10:36 8.16min PASS — retrospective.md 정상 산출, PR #170/#162/#172/#174 동시 라이브)
+> > ~~Track B E2E 재재검증 (PR #176 라이브 효과)~~ — Phase 2 완료 (10:36 8.16min PASS)
+> > ~~retrospective_lead.py LLM 응답 raw 저장 sprint~~ — **Phase 3 완료** (PR #179 — JSON dump + branch_hit 추적 + 9 회귀 테스트)
 >
 > ---
 >
