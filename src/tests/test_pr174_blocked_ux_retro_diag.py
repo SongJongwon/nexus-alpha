@@ -229,6 +229,53 @@ def test_retrospective_empty_lists_get_well_fallback() -> None:
     assert report.lessons_learned == []
 
 
+def test_retrospective_silent_empty_response_surfaces_diagnosis() -> None:
+    """⭐ PR #176 hot-fix 회귀 차단 — response="" *예외 없이* 반환 시 진단 surface.
+
+    2026-05-19 Track B E2E 재검증 (8.40min PASS) 에서 PR #174 의 fix B 가 *분기 갭* 으로
+    인해 라이브 미발동 — retrospective.md 여전히 4 섹션 (없음). Root-cause: PR #174 의
+    3 분기 (Exception / parse 실패 / 빈 list well fallback) 모두 *response 또는 parsed
+    가 비어있지 않다* 는 전제. ``response="" + llm_error_reason=None`` (silent timeout /
+    공백 응답) 케이스 미cover → 4번째 분기 추가 필요.
+
+    fail-silent 5번째 변형의 *6번째 sub-variant* — 본 PR 자체가 진단 surface 추가했지만
+    분기 갭으로 surface 안 됨. 자기 진화 cycle 의 self-correction 반복 evidence.
+    """
+
+    def silent_empty_llm_call(prompt: str) -> str:
+        return ""  # 예외 없이 빈 문자열 반환 (LLM provider silent failure 시뮬레이션)
+
+    report = run_retrospective(
+        user_request="네이버 쇼핑 크롤러",
+        workflow_id="wf_silent_empty",
+        verdict="BLOCKED",
+        llm_call=silent_empty_llm_call,
+    )
+
+    assert report.what_went_wrong, "분기 갭 회귀 — silent 빈 응답이 wrong 에 surface 안 됨"
+    assert "빈 문자열" in report.what_went_wrong[0]
+    assert "silent" in report.what_went_wrong[0]
+    assert report.lessons_learned
+    assert "LLM provider" in report.lessons_learned[0]
+
+
+def test_retrospective_whitespace_only_response_surfaces_diagnosis() -> None:
+    """공백/newline 만 있는 응답도 동일 분기 — strip() 후 빈."""
+
+    def whitespace_llm_call(prompt: str) -> str:
+        return "   \n\t   \n"
+
+    report = run_retrospective(
+        user_request="test",
+        workflow_id="wf_whitespace",
+        verdict="BLOCKED",
+        llm_call=whitespace_llm_call,
+    )
+
+    assert report.what_went_wrong
+    assert "빈 문자열" in report.what_went_wrong[0]
+
+
 def test_retrospective_normal_response_passes_through() -> None:
     """LLM 이 well/wrong/lessons 채워서 응답 → 그대로 사용 (회귀 차단)."""
 
