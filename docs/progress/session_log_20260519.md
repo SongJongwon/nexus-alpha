@@ -1,4 +1,4 @@
-# 📝 세션 로그 — 2026-05-19 (Track B E2E 재검증 + PR #174 분기 갭 → PR #176 hot-fix + 동시 라이브 + LLM variance 식별 + PR #179 raw 진단 + PR #181 결정적 root-cause 처방 + **Phase 5 라이브 검증 — 80% → 0% 도달** ⭐)
+# 📝 세션 로그 — 2026-05-19 (Track B E2E 재검증 + PR #174 분기 갭 → PR #176 hot-fix + 동시 라이브 + LLM variance 식별 + PR #179 raw 진단 + PR #181 결정적 root-cause 처방 + Phase 5 라이브 검증 80% → 0% 도달 ⭐ + **PR #184 CLI --forced-domain (3중 안전망 완비)**)
 
 > 본 세션은 (1) **Track B E2E 재검증** (PR #174 라이브 효과 확인) + (2) Fix B (Retrospective 진단 surface) 의 **분기 갭 발견** + (3) **PR #176 hot-fix** (silent 빈 응답 + 예외 없음 분기 추가) + (4) **Track B E2E 재재검증** — PR #170/#162/#172/#174 *동시 라이브* 확인 + (5) **LLM variance 식별** (80% silent 빈 응답률 — retrospective_lead 응답 raw 저장 sprint 후보). 직전 세션 ([2026-05-18](session_log_20260518.md)) Phase 9 의 후속 검증 sprint.
 
@@ -9,9 +9,10 @@
 | #176 (GH #176) | `0b90268` | Retrospective 진단 분기 4 추가 (silent 빈 응답 + 예외 없음) + 우선순위 재배치 (Exception > 빈/공백 > parse 실패 > 빈 list) | **1356** (+2) |
 | **#179** (GH #179) | **`8d03378`** | **retrospective_lead LLM 응답 raw 저장** — `run_retrospective(workflow_dir=...)` + `workflow_dir/retrospective_llm_raw.json` 진단 dump (prompt + response_raw + parsed + branch_hit + final lists). 80% silent 빈 응답률 root-cause 식별 도구 | **1365** (+9) |
 | **#181** (GH #181) | **`29d590d`** | **결정적 root-cause 처방** — `"pytest" in sys.modules` (false positive) → `bool(os.environ.get("PYTEST_CURRENT_TEST"))` robust 검출. production E2E 에서 pytest module 이 import 돼도 LLM 호출 진입. 80% silent 빈 응답률 → 0% 예상 | **1370** (+5) |
+| **#184** (GH #184) | **`0cd1dbc`** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) — argparse + AutomationDomain 변환 + Track B 두 caller 전달 + Track A warning + iterative_loop chain. Track B 도메인 분류 *3중 안전망 완비* (휴리스틱 + graceful fallback + 사용자 explicit override) | **1385** (+15) |
 
-**pytest 누적**: 1354 → **1370** (+16, 회귀 0) — PR #176 +2 / PR #179 +9 / **PR #181 +5**
-**누적 머지 PR (본 세션)**: 코어 3 (PR #176 / PR #179 / **PR #181**) + docs 3+
+**pytest 누적**: 1354 → **1385** (+31, 회귀 0) — PR #176 +2 / PR #179 +9 / PR #181 +5 / **PR #184 +15**
+**누적 머지 PR (본 세션)**: 코어 4 (PR #176 / PR #179 / PR #181 / **PR #184**) + docs 4+
 **E2E 라이브 검증 (본 세션)**: **7회 누적** (09:42 / 09:48 / 10:36 / Phase 3 검증 13:14 / 13:31 / 13:46 / **Phase 5 PR #181 라이브 14:21 — 100% 정상 응답 도달** ⭐)
 **silent 빈 응답률**: 80% → **0% 도달 확정**
 
@@ -345,6 +346,52 @@ PR #181 머지 직후 (14:04:43 KST) 새 Track B E2E 실행 — `alpha_run_20260
 
 산출: [outputs/alpha_run_20260519_142126/](../../outputs/alpha_run_20260519_142126/)
 
+## Phase 6 — CLI `--forced-domain` flag (PR #184 / PR #172 의 C 옵션 완성)
+
+Phase 5 완료 후 다음 작업 우선순위 #3 으로 잡혀있던 PR #172 의 *C 옵션* (CLI flag) sprint. ~30min 단일 PR.
+
+### 처방 (5 변경, 머지 commit `0cd1dbc`)
+
+| # | 변경 | 위치 |
+|---|------|------|
+| 1 | argparse `--forced-domain` flag (5 도메인 choices, default None) | [scripts/run.py:1115-1124](../../scripts/run.py) |
+| 2 | `_run_track_b()` 에서 str → AutomationDomain enum 변환 | [scripts/run.py:815-819](../../scripts/run.py) |
+| 3 | Track B 두 호출부 (`run_iterative_loop` + `run_automate_workflow`) 에 `forced_domain=` 전달 | scripts/run.py |
+| 4 | `main()` 에 Track A warning 추가 (Track A 일 때 무시 + stderr) | [scripts/run.py:1167-1172](../../scripts/run.py) |
+| 5 | `iterative_loop.py` 전달 chain: `run_iterative_loop(forced_domain=...)` + `_LoopState.forced_domain` + Track B 분기 `run_automate_workflow(forced_domain=state.get(...))` | [src/workflows/iterative_loop.py](../../src/workflows/iterative_loop.py) |
+
+### 사용 예시
+
+```powershell
+# Track B + 도메인 강제
+.venv\Scripts\python.exe scripts\run.py --request "사용자 요청" `
+    --track B --build --forced-domain web_scraping --non-interactive
+
+# Track A 에서 명시 시 warning + 무시
+.venv\Scripts\python.exe scripts\run.py --request "계산기" `
+    --track A --build --forced-domain devops
+# → [WARN] --forced-domain=devops 은 Track A 에서 영향 없음 (무시).
+```
+
+### 회귀 테스트 15 신규 ([test_pr183_cli_forced_domain.py](../../src/tests/test_pr183_cli_forced_domain.py))
+
+- argparse 4: default None / 5 도메인 valid (parametrized) / invalid 값 SystemExit
+- file-text 4: AutomationDomain import / forced_domain_enum 변환 / 두 caller 전달 / Track A warning
+- iterative_loop 3: 시그니처 파라미터 / `_LoopState` 필드 / Track B 분기 전달
+- integration 1: argparse choices ↔ AutomationDomain enum round-trip
+
+**pytest 1370 → 1385** (+15, 회귀 0).
+
+### Track B 도메인 분류 3중 안전망 완비
+
+| Fix | 차원 | PR |
+|-----|------|-----|
+| A. 한국어 동의어 키워드 확장 | 휴리스틱 cover 확대 | PR #172 |
+| B. UNKNOWN → graceful fallback + 진단 | 자동 안전망 | PR #172 |
+| **C. CLI `--forced-domain` flag** | **사용자 explicit override** | **PR #184** ⭐ |
+
+사용자 안전성 향상: fallback default (WEB_SCRAPING) 가 의도 위배 시 명시 override 가능. 자동화 / CI 스크립트의 *결정론 보장*.
+
 ## 다음 세션 컨텍스트 복원 가이드
 
 ### 읽을 순서
@@ -361,19 +408,16 @@ PR #181 머지 직후 (14:04:43 KST) 새 Track B E2E 실행 — `alpha_run_20260
 - ✅ Track A/B 양쪽 자기 진화 cycle 라이브 동작 확정
 - ✅ E2E 라이브 검증 누적 6회 (Track A 2회 PASS / Track B 1회 ValueError → 2회 PASS)
 
-### 다음 세션 재개 순서 — PM 지시 (Phase 5 라이브 검증 완료 반영)
+### 다음 세션 재개 순서 — PM 지시 (Phase 6 완료 반영)
 
 | # | 작업 | 비용 | 가치 | 비고 |
 |---|------|------|------|------|
-| **1** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | retrospective_lead 안정화 (PR #181 라이브 0% 빈 응답률 확정) + 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
-| **2** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override 안전망 |
-| **3** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
-| **4** | **Track B 1iter LLM 산출 품질 sprint** (선택) | M (~1-2h) | M | 본 E2E 의 retrospective wrong[0] = "pytest 13건 전수 실패" — 1iter LLM 산출이 *기능 동작* 부족. max_iterations=3 default 활용 또는 prompt 강화 |
+| **1** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | retrospective_lead 안정화 + Track B 3중 안전망 + 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
+| **2** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
+| **3** | **Track B 1iter LLM 산출 품질 sprint** (선택) | M (~1-2h) | M | Phase 5 E2E retrospective wrong[0] "pytest 13건 전수 실패" — 1iter LLM 산출이 *기능 동작* 부족. max_iterations=3 default 활용 또는 prompt 강화 |
 
-> ~~Track B E2E 재재검증 (PR #176 라이브 효과)~~ — Phase 2 완료
-> ~~retrospective_lead.py LLM 응답 raw 저장 sprint~~ — Phase 3 완료 (PR #179)
-> ~~Track B E2E + retrospective_llm_raw.json 누적 분석~~ — Phase 4 완료 (PR #181)
-> ~~Track B E2E 1~2회 PR #181 라이브 검증~~ — **Phase 5 완료** ⭐ (8.11min PASS, llm_call_invoked=True + retrospective.md 정상 산출 — 80% → 0% silent 빈 응답률 도달 확정)
+> ~~Phase 1~5 완료~~
+> ~~CLI --forced-domain flag (PR #172 의 C 옵션)~~ — **Phase 6 완료** ⭐ (PR #184 — Track B 도메인 분류 *3중 안전망 완비*: 휴리스틱 + graceful fallback + 사용자 explicit override)
 
 ---
 

@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-19 (**Phase 5 완료 — PR #181 라이브 검증 성공 ⭐**. Track B E2E 8.11min PASS + llm_call_invoked=True + retrospective.md 정상 산출 + branch_hit=normal. **silent 빈 응답률 80% → 0% 도달 확정**. 자기 진화 sprint cycle 완성 검증)
+> **마지막 업데이트**: 2026-05-19 (**Phase 6 완료 — PR #184 CLI --forced-domain flag ⭐**. PR #172 의 C 옵션 — Track B 도메인 분류 *3중 안전망 완비* (휴리스틱 + graceful fallback + 사용자 explicit override). pytest 1370 → 1385)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -21,9 +21,45 @@
 >
 > **🩺 LLM Variance 식별** — 5회 E2E 중 4회 빈 응답 / 1회 정상 응답 = **80% silent 빈 응답률**. retrospective_lead 만 silent 빈 응답 (다른 LLM 호출인 Curator 는 매번 정상 — qa_verdict 추출 OK). prompt 길이 / token / streaming 결함 가능. 다음 sprint: **LLM 응답 raw 저장** 으로 정확 root-cause 식별.
 >
-> **pytest 누적**: 1354 → **1370** (+16, 회귀 0) — PR #176 +2 / PR #179 +9 / **PR #181 +5**
-> **E2E 라이브 검증 누적**: 5회 → **12회** (Track B 본 세션 7회 추가: 09:42 / 09:48 / 10:36 / Phase 3 검증 13:14 / 13:31 / 13:46 / **Phase 5 라이브 14:21 — 100% 정상 응답 도달** ⭐)
+> **pytest 누적**: 1354 → **1385** (+31, 회귀 0) — PR #176 +2 / PR #179 +9 / PR #181 +5 / **PR #184 +15**
+> **E2E 라이브 검증 누적**: 5회 → **12회** (Track B 본 세션 7회 추가)
 > **silent 빈 응답률**: 80% → **0% 도달 확정** (PR #181 라이브 검증)
+> **Track B 도메인 분류 안전망**: **3중 완비** (PR #172 휴리스틱 + PR #172 graceful fallback + **PR #184 CLI --forced-domain**)
+>
+> ## 🎯 Phase 6 — PR #184 CLI --forced-domain flag (PR #172 의 C 옵션, 머지 commit `0cd1dbc`)
+>
+> PR #172 시점 식별된 3 처방안 중 *C (CLI --forced-domain)* 가 별도 PR 로 분리됐고, Phase 6 sprint 로 완성. Track B 도메인 분류의 **3중 안전망 완비**.
+>
+> ### 처방 (5 변경)
+> 1. argparse `--forced-domain` flag (5 도메인 choices, default None)
+> 2. `_run_track_b()` 에서 str → AutomationDomain enum 변환
+> 3. Track B 두 호출부 (`run_iterative_loop` + `run_automate_workflow`) 에 `forced_domain=` 전달
+> 4. `main()` Track A warning (Track A 일 때 무시 + stderr)
+> 5. `iterative_loop.py` 전달 chain (`run_iterative_loop` 파라미터 + `_LoopState.forced_domain` + Track B 분기 전달)
+>
+> ### 사용 예시
+> ```powershell
+> # Track B + 도메인 강제
+> .venv\Scripts\python.exe scripts\run.py --request "사용자 요청" `
+>     --track B --build --forced-domain web_scraping --non-interactive
+>
+> # Track A 명시 시 warning + 무시
+> .venv\Scripts\python.exe scripts\run.py --request "계산기" `
+>     --track A --build --forced-domain devops
+> # → [WARN] --forced-domain=devops 은 Track A 에서 영향 없음 (무시).
+> ```
+>
+> ### Track B 도메인 분류 3중 안전망 완비
+>
+> | Fix | 차원 | PR |
+> |-----|------|-----|
+> | A. 한국어 동의어 키워드 확장 | 휴리스틱 cover 확대 | PR #172 |
+> | B. UNKNOWN → graceful fallback + 진단 | 자동 안전망 | PR #172 |
+> | **C. CLI `--forced-domain`** | **사용자 explicit override** | **PR #184** ⭐ |
+>
+> 사용자 안전성 향상: fallback default 가 의도 위배 시 명시 override 가능. 자동화 / CI 스크립트의 *결정론 보장*.
+>
+> 회귀 테스트 **15 신규** (test_pr183_cli_forced_domain.py — argparse + file-text + iter_loop 매트릭스). **pytest 1370 → 1385** (+15, 회귀 0).
 >
 > ## ⭐ Phase 5 — PR #181 라이브 검증 성공 (Track B E2E 14:21, 8.11min PASS)
 >
@@ -99,17 +135,16 @@
 > | 3 | 정상 응답 + parse OK 인데 4 list 빈 | ✅ PR #174 (분기 4) |
 > | **4** | **response 빈/공백 + 예외 없음 (silent)** | ✅ **PR #176 (분기 2 NEW)** |
 >
-> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (Phase 5 라이브 검증 완료 반영)
+> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (Phase 6 완료 반영)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | retrospective_lead 안정화 (PR #181 라이브 0% 빈 응답률 확정) + 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
-> | **2** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override 안전망 |
-> | **3** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
-> | **4** | **Track B 1iter LLM 산출 품질 sprint** (선택) | M (~1-2h) | M | 본 E2E retrospective wrong[0] = "pytest 13건 전수 실패" — 1iter LLM 산출이 *기능 동작* 부족. max_iterations=3 default 활용 또는 prompt 강화 |
+> | **1** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | retrospective_lead 안정화 + Track B 3중 안전망 + 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
+> | **2** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
+> | **3** | **Track B 1iter LLM 산출 품질 sprint** (선택) | M (~1-2h) | M | Phase 5 E2E retrospective wrong[0] "pytest 13건 전수 실패" 기반 — 1iter LLM 산출 *기능 동작* 부족. max_iterations=3 default 활용 또는 prompt 강화 |
 >
-> > ~~Phase 1~4 완료~~
-> > ~~Track B E2E 1~2회 PR #181 라이브 검증~~ — **Phase 5 완료** ⭐ (8.11min PASS, llm_call_invoked=True + retrospective.md 정상 산출 — 80% → 0% silent 빈 응답률 도달 확정)
+> > ~~Phase 1~5 완료~~
+> > ~~CLI --forced-domain flag~~ — **Phase 6 완료** ⭐ (PR #184 — Track B 3중 안전망 완비)
 >
 > ---
 >
