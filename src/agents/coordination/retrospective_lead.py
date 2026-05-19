@@ -35,9 +35,15 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .schemas import RetrospectiveReport, SharedKickoffDecisions
+
+
+# PR #179 — raw 저장 file 이름 (workflow_dir 아래)
+RETROSPECTIVE_RAW_FILENAME = "retrospective_llm_raw.json"
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +236,7 @@ def run_retrospective(
     execution_result: Any = None,
     qa_review: str = "",
     llm_call: Optional[Callable[[str], str]] = None,
+    workflow_dir: Optional[Path] = None,
 ) -> RetrospectiveReport:
     """매 빌드 종료 시 1회 호출 — RetrospectiveReport 산출.
 
@@ -247,6 +254,11 @@ def run_retrospective(
         execution_result: SandboxResult (실행 verdict).
         qa_review: QA 리뷰 markdown — chain_result 의 qa_review 와 합쳐 delta 검출.
         llm_call: 외부 주입 가능 (테스트용). None + 비-pytest 시 ``_default_llm_call``.
+        workflow_dir: PR #179 — 진단용 raw 응답 dump 위치. None 이면 dump 안 함.
+            ``workflow_dir/retrospective_llm_raw.json`` 에 prompt + response_raw +
+            parsed + branch_hit + final lists 보존 → 다음 빈 응답 케이스에서 정확한
+            root-cause (prompt 길이 / streaming / token 등) 식별 가능. 80% silent
+            빈 응답률 진단 sprint (2026-05-19 Phase 2 결과).
 
     Returns:
         RetrospectiveReport — to_yaml() / to_markdown() 둘 다 지원.
@@ -263,7 +275,29 @@ def run_retrospective(
     wrong: list[str] = []
     lessons: list[str] = []
 
+    # PR #179 — raw 진단 누적 (workflow_dir 가 있으면 file 로 dump)
+    raw_diag: dict[str, Any] = {
+        "timestamp": datetime.now().isoformat(),
+        "workflow_id": workflow_id,
+        "verdict": verdict,
+        "llm_call_invoked": False,
+        "prompt": None,
+        "prompt_length_chars": 0,
+        "llm_error": None,
+        "response_raw": None,
+        "response_length_chars": 0,
+        "response_stripped_length": 0,
+        "parsed_raw": None,
+        "parsed_keys": [],
+        "parsed_well_count": 0,
+        "parsed_wrong_count": 0,
+        "parsed_lessons_count": 0,
+        "branch_hit": "no_llm_call",
+        "deltas": list(deltas),
+    }
+
     if llm_call is not None:
+        raw_diag["llm_call_invoked"] = True
         execution_verdict = "unknown"
         if execution_result is not None:
             execution_verdict = str(getattr(execution_result, "verdict", "unknown"))
@@ -280,6 +314,9 @@ def run_retrospective(
             ),
             delta_block="\n".join(f"- {d}" for d in deltas) if deltas else "(없음)",
         )
+        raw_diag["prompt"] = prompt
+        raw_diag["prompt_length_chars"] = len(prompt)
+
         # PR #174 — 3 시나리오 진단 surface (fail-silent 5번째 변형 정리)
         llm_error_reason: Optional[str] = None
         try:
@@ -287,13 +324,24 @@ def run_retrospective(
         except Exception as exc:  # noqa: BLE001 — 모든 예외 surface (PR #160a/#170/#172 패턴)
             response = ""
             llm_error_reason = f"{type(exc).__name__}: {exc}"
+        raw_diag["llm_error"] = llm_error_reason
+        raw_diag["response_raw"] = response
+        raw_diag["response_length_chars"] = len(response or "")
+        raw_diag["response_stripped_length"] = len((response or "").strip())
+
         parsed = _parse_retrospective_json(response or "")
+        raw_diag["parsed_raw"] = parsed if parsed else None
+        raw_diag["parsed_keys"] = sorted(parsed.keys()) if parsed else []
         well = parsed.get("what_went_well", [])
         wrong = parsed.get("what_went_wrong", [])
         lessons = parsed.get("lessons_learned", [])
+        raw_diag["parsed_well_count"] = len(well)
+        raw_diag["parsed_wrong_count"] = len(wrong)
+        raw_diag["parsed_lessons_count"] = len(lessons)
 
         # 진단 분기 1 — LLM 호출 자체 실패 (response 빈 문자열 + 예외)
         if llm_error_reason is not None:
+            raw_diag["branch_hit"] = "exception"
             if not wrong:
                 wrong = [f"Retrospective LLM 호출 실패 ({llm_error_reason})"]
             if not lessons:
@@ -303,6 +351,7 @@ def run_retrospective(
         # 여전히 (없음). 우선순위: Exception > 빈/공백 > parse 실패 > 빈 list — strip 후 빈
         # 응답은 *parse 실패 분기와 의미가 다름* (LLM 이 실 응답을 보냈는지 자체가 의문).
         elif not (response or "").strip():
+            raw_diag["branch_hit"] = "empty_silent"
             if not wrong:
                 wrong = [
                     "Retrospective LLM 응답 빈 문자열 (예외 없이 silent 빈 응답 수신 — "
@@ -314,6 +363,7 @@ def run_retrospective(
                 ]
         # 진단 분기 3 — response 받았지만 JSON parsing 실패
         elif response and not parsed:
+            raw_diag["branch_hit"] = "parse_fail"
             raw_preview = response.strip()[:120]
             if len(response.strip()) > 120:
                 raw_preview += "..."
@@ -323,13 +373,32 @@ def run_retrospective(
                 lessons = ["LLM 응답 JSON 형식 강제 prompt 개선 필요"]
         # 진단 분기 4 — 정상 응답 + parse OK 인데 4 list 모두 빈 list
         elif response and parsed and not (well or wrong or lessons):
+            raw_diag["branch_hit"] = "empty_lists"
             well = ["LLM 정상 응답 — 회고 항목 없음 판단 (재현 시 prompt 개선 검토)"]
+        else:
+            raw_diag["branch_hit"] = "normal"
 
     # delta 가 자동 검출됐는데 LLM 이 wrong 에 반영 안 했다면, wrong 에 자동 추가
     if deltas and not wrong:
         wrong = [
             f"킥오프 합의 ↔ 산출 불일치 (자동 검출): {d}" for d in deltas[:3]
         ]
+
+    # PR #179 — 최종 list 도 raw 에 보존 (delta propagate 이후)
+    raw_diag["final_well"] = list(well)
+    raw_diag["final_wrong"] = list(wrong)
+    raw_diag["final_lessons"] = list(lessons)
+
+    # workflow_dir 가 있으면 raw 진단 file 저장 (graceful — OSError 시 silent skip)
+    if workflow_dir is not None:
+        try:
+            workflow_dir.mkdir(parents=True, exist_ok=True)
+            raw_path = workflow_dir / RETROSPECTIVE_RAW_FILENAME
+            raw_path.write_text(
+                json.dumps(raw_diag, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            pass
 
     return RetrospectiveReport(
         workflow_id=workflow_id,
