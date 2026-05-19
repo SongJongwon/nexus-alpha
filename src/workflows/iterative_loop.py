@@ -489,6 +489,11 @@ def _node_retrospective(state: _LoopState) -> dict[str, Any]:
     if chain_result is not None:
         qa_review = getattr(chain_result, "qa_review", "") or ""
 
+    # PR #179 — raw 진단 file 위치 (workflow_dir/retrospective_llm_raw.json)
+    retro_workflow_dir: Optional[Path] = None
+    if chain_result is not None and chain_result.saved_dir is not None:
+        retro_workflow_dir = Path(chain_result.saved_dir)
+
     try:
         report = run_retrospective(
             user_request=state["user_request"],
@@ -498,6 +503,7 @@ def _node_retrospective(state: _LoopState) -> dict[str, Any]:
             chain_result=chain_result,
             execution_result=state.get("execution_result"),
             qa_review=qa_review,
+            workflow_dir=retro_workflow_dir,
         )
     except Exception:  # noqa: BLE001 — 회고 실패는 워크플로 차단 X
         return {
