@@ -298,7 +298,21 @@ def run_retrospective(
                 wrong = [f"Retrospective LLM 호출 실패 ({llm_error_reason})"]
             if not lessons:
                 lessons = ["LLM API 안정성 점검 필요 (다음 빌드 회고 fallback 진입)"]
-        # 진단 분기 2 — response 받았지만 JSON parsing 실패
+        # 진단 분기 2 (PR #176 hot-fix) — response *빈/공백* + 예외 *없음* (silent timeout/공백)
+        # PR #174 의 첫 시도가 본 분기 누락 → 2026-05-19 Track B E2E 재검증에서 retrospective.md
+        # 여전히 (없음). 우선순위: Exception > 빈/공백 > parse 실패 > 빈 list — strip 후 빈
+        # 응답은 *parse 실패 분기와 의미가 다름* (LLM 이 실 응답을 보냈는지 자체가 의문).
+        elif not (response or "").strip():
+            if not wrong:
+                wrong = [
+                    "Retrospective LLM 응답 빈 문자열 (예외 없이 silent 빈 응답 수신 — "
+                    "provider timeout / prompt 토큰 한도 / streaming 결함 추정)"
+                ]
+            if not lessons:
+                lessons = [
+                    "LLM provider 상태 점검 + prompt 길이/토큰 한도 확인 필요"
+                ]
+        # 진단 분기 3 — response 받았지만 JSON parsing 실패
         elif response and not parsed:
             raw_preview = response.strip()[:120]
             if len(response.strip()) > 120:
@@ -307,7 +321,7 @@ def run_retrospective(
                 wrong = [f"Retrospective JSON parse 실패 — raw: {raw_preview!r}"]
             if not lessons:
                 lessons = ["LLM 응답 JSON 형식 강제 prompt 개선 필요"]
-        # 진단 분기 3 — 정상 응답 + parse OK 인데 4 list 모두 빈 list
+        # 진단 분기 4 — 정상 응답 + parse OK 인데 4 list 모두 빈 list
         elif response and parsed and not (well or wrong or lessons):
             well = ["LLM 정상 응답 — 회고 항목 없음 판단 (재현 시 prompt 개선 검토)"]
 
