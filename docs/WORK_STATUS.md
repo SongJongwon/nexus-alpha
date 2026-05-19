@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-19 (Track B E2E 재검증 8.40min PASS + **PR #176 hot-fix** — PR #174 Fix B 의 분기 갭 발견 + 분기 4 추가 (silent 빈 응답 + 예외 없음). 자기 진화 cycle 의 self-correction 반복 evidence)
+> **마지막 업데이트**: 2026-05-19 (Track B E2E **3회 누적** — PR #176 머지 + 재재검증 10:36 8.16min PASS + retrospective.md **정상 산출** ⭐ + PR #170/#162/#172/#174 *동시 라이브* + LLM variance 80% silent 빈 응답률 식별)
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -9,19 +9,20 @@
 > 3. **[docs/insights/agent_collaboration_paradigm_shift.md](insights/agent_collaboration_paradigm_shift.md)** — 본질적 통찰 5 (north star)
 > 4. **메모리** — `MEMORY.md` + `project_paradigm_shift_pointer.md` (자동 로드됨)
 >
-> ## 🎯 2026-05-19 세션 — Track B E2E 재검증 + PR #176 hot-fix
+> ## 🎯 2026-05-19 세션 — Track B E2E 3회 + PR #176 hot-fix + retrospective.md 정상 산출
 >
-> | 항목 | 내용 |
-> |------|------|
-> | E2E 명령 | `--request "네이버 쇼핑 크롤러" --track B --build --max-iterations 1 --non-interactive` |
-> | 총 소요 | **8.40 min** (이전 8.60min, ≈ 동등) |
-> | Fix A (BLOCKED UX) | ✅ 정확 발동 — `verdict=BLOCKED(ITERATION_CAP) ... — partial output 산출 완료, --max-iterations 늘려 추가 개선 가능` |
-> | Fix B (Retrospective 진단) | ❌ 미발동 — retrospective.md 여전히 4 섹션 "(없음)" |
-> | Root-cause | PR #174 의 3 분기 모두 `response 또는 parsed` 가 비어있지 않다는 전제. `response="" + Exception 없음` 케이스 미cover |
-> | PR #176 hot-fix | 분기 4 추가 (silent 빈 응답) + 우선순위 재배치 (Exception > 빈/공백 > parse 실패 > 빈 list) |
+> | E2E | 시각 | 결과 | retrospective.md |
+> |-----|------|------|-------------------|
+> | 1차 | 09:42 (8.40min) | Fix A 정확 발동 / Fix B 분기 갭 발견 | 4 섹션 모두 "(없음)" |
+> | 2차 | 09:48 (11.32min) | PR #176 머지 *이전* 실행 (시간 분석으로 확정) | wrong=delta only |
+> | **3차** | **10:36 (8.16min)** | **PR #170/#162/#172/#174 동시 라이브** ⭐ | **모든 섹션 정상 산출** (well 3+wrong 3+lessons 3) |
+>
+> **PR #162 라이브 발동** (3차 E2E): `.exe SKIPPED — exit=-5 reason=Pre-PyInstaller validation 실패 — 코드 자체 결함이 있어 PyInstaller 호출해도 .exe 가 런타임 실패할 것. build 중단.` → 이전 E2E 들은 .exe 정상 산출이라 분기 hit 안 함, 3차 E2E 가 *첫 build 실패* 케이스로 PR #162 의 `_format_build_skipped_line` 진단 정확 surface.
+>
+> **🩺 LLM Variance 식별** — 5회 E2E 중 4회 빈 응답 / 1회 정상 응답 = **80% silent 빈 응답률**. retrospective_lead 만 silent 빈 응답 (다른 LLM 호출인 Curator 는 매번 정상 — qa_verdict 추출 OK). prompt 길이 / token / streaming 결함 가능. 다음 sprint: **LLM 응답 raw 저장** 으로 정확 root-cause 식별.
 >
 > **pytest 누적**: 1354 → **1356** (+2, 회귀 0)
-> **E2E 라이브 검증 누적**: 5회 → **6회** (Track B 본 세션 8.40min PASS 추가)
+> **E2E 라이브 검증 누적**: 5회 → **8회** (Track B 본 세션 3회 추가)
 >
 > ## 🩺 fail-silent 5번째 변형 sub-variants 누적 완비
 >
@@ -32,14 +33,16 @@
 > | 3 | 정상 응답 + parse OK 인데 4 list 빈 | ✅ PR #174 (분기 4) |
 > | **4** | **response 빈/공백 + 예외 없음 (silent)** | ✅ **PR #176 (분기 2 NEW)** |
 >
-> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-19 갱신)
+> ## 🗓️ 다음 세션 재개 순서 — PM 지시 (2026-05-19 Phase 2 검증 결과 반영)
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | **1** | **Track B E2E 재재검증** (PR #176 라이브 효과) | M (~30min) | HIGH | retrospective.md 분기 4 (silent 빈 응답) 실 surface 확인 → retrospective_lead LLM silent fail root-cause 식별 (prompt 길이 / token 한도 등) |
-> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 + 진단 surface 완비 후 결정 가능 |
+> | **1** | **`retrospective_lead.py` LLM 응답 raw 저장 sprint** | S~M (~30-45min) | HIGH | 80% silent 빈 응답률 root-cause 식별 — raw 응답 file 저장 + 다음 빈 응답 케이스에서 *prompt 길이 / token / streaming* 정확 진단 |
+> | **2** | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | 모든 핵심 라이브 검증 완비 — Telemetry fallback 우선 검토 |
 > | **3** | **CLI `--forced-domain` flag** (PR #172 의 C 옵션) | S (~30min) | M | Track B 사용자 explicit override 안전망 |
 > | **4** | **Track B Vision QA 추가 wiring** (PM 요청) | TBD | TBD | PR #155 자동 감지 완료 — 추가 항목 PM 협의 필요 |
+>
+> > ~~Track B E2E 재재검증 (PR #176 라이브 효과)~~ — **본 세션 Phase 2 완료** (10:36 8.16min PASS — retrospective.md 정상 산출, PR #170/#162/#172/#174 동시 라이브)
 >
 > ---
 >
