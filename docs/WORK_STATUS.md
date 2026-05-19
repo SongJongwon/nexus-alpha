@@ -1,6 +1,58 @@
 # 📌 Nexus Alpha — Work Status Dashboard
 
-> **마지막 업데이트**: 2026-05-19 **세션 마감 (Phase 8 추가)** — **12 PR 머지** (코어 5 + docs 7) / pytest 1354 → **1400** (+46, 회귀 0) / **fail-silent 5단계 cycle 완성** / **Track B 도메인 3중 안전망 완비** / **🎨 데스크탑 앱 비전 (Tauri) 보존** ⭐ / **🛰 Sprint 4 Telemetry foundation 완료** ⭐ (PR #187) — 다음 우선순위 #1: 베타 cohort 결정 + Sprint 5 (Tauri shell)
+> **마지막 업데이트**: 2026-05-19 **세션 진짜 마감 (Phase 8 + Architecture docs 추가)** — **13 PR 머지** (코어 5 + docs 8) / pytest 1354 → **1400** (+46, 회귀 0) / **fail-silent 5단계 cycle 완성** / **Track B 도메인 3중 안전망 완비** / **🎨 데스크탑 앱 비전 (Tauri) 보존** ⭐ / **🛰 Sprint 4 Telemetry foundation 완료** ⭐ (GH PR #188, 내부 "PR #187") / **📐 Architecture 단일 진입점 docs 신설** (agent_org_chart / system_architecture / phase_progress) — 다음 우선순위 #1: Sprint 5 (Tauri shell) 진입
+
+---
+
+## 🚀 다음 세션 첫 입력 가이드 (복사해서 새 세션에 그대로 붙여넣기)
+
+> 본 가이드는 **2026-05-19 세션 진짜 마감 시점** 의 핸드오프. 다음 세션 시작 시 *최소 컨텍스트 (3~5분)* 로 작업 재개 가능.
+
+### 옵션 A — 추천: Sprint 5 Tauri shell 진입
+
+```text
+docs/architecture/agent_org_chart.md + docs/architecture/system_architecture.md + docs/architecture/phase_progress.md + docs/progress/session_log_20260519.md (Phase 8) + docs/insights/desktop_app_vision.md + 메모리 (feedback_desktop_app_paradigm) 읽고 이어서 진행해줘.
+
+다음 작업: Sprint 5 — Tauri shell + React UI 골격 진입.
+목표 (본 세션 도달 범위 — 첫 layer):
+- src-tauri/ 신설 + hello-world Rust shell + Cargo build
+- React + Tailwind 프로젝트 scaffold (기존 다크모드 색상 시스템 활용)
+- Python sidecar spawn (`scripts/run.py --emit-events events.jsonl`) Tauri command
+- JSON Lines tail 동작 확인 (4 event type 수신 → 콘솔 log)
+- 부서 그리드 placeholder (3 카드: 🔵 기획 / 🟣 개발 / 🟢 학습)
+백엔드 코드 수정 0 — PR #188 의 telemetry hook 으로 모든 event 자동 emit.
+```
+
+### 옵션 B — 베타 cohort 결정 (단순 단일 결정)
+
+```text
+docs/WORK_STATUS.md + docs/insights/desktop_app_vision.md + 메모리 (feedback_desktop_app_paradigm) 읽고
+
+다음 작업: 베타 cohort 5명 ($250 budget) 결정.
+- 5명 후보 + 연락 방법 + 분배 예산 정리
+- Sprint 5/6 완료 후 데스크탑 앱으로 배포 예정 (PowerShell 아닌)
+- jsonl telemetry 로 cohort 빈 응답률 / silent failure 실시간 추적
+```
+
+### 옵션 C — Telemetry 노드별 emit 폴리싱 (작은 작업)
+
+```text
+src/monitoring/telemetry.py + src/workflows/iterative_loop.py (_telemetry_wrap) + src/tests/test_pr187_telemetry_emit.py 읽고
+
+다음 작업: Sprint 4 telemetry 폴리싱 (백로그):
+- iteration_begin / iteration_end 정확화 (현재 run_start/run_end 만)
+- sub-agent emit 확장 (Vision QA / pytest_author / curator 등 LLM 호출 외 차원)
+- AgentStatusEvent.iteration 갱신 (currently set_iteration 수동, run_chain 진입 시 자동화)
+```
+
+### 컨텍스트 복원 핵심 4 파일 (어떤 옵션이든 우선 읽기)
+
+1. **[docs/progress/session_log_20260519.md](progress/session_log_20260519.md)** — 본 세션 12 PR 머지 + Phase 1~8 진행 + fail-silent 5단계 cycle 완성 evidence
+2. **[docs/architecture/agent_org_chart.md](architecture/agent_org_chart.md)** ⭐ NEW — 본부 10 + 3 부서 매핑 (Tauri UI 카드)
+3. **[docs/architecture/system_architecture.md](architecture/system_architecture.md)** ⭐ NEW — 백엔드 + Telemetry + Tauri sidecar 흐름
+4. **[docs/architecture/phase_progress.md](architecture/phase_progress.md)** ⭐ NEW — Phase 1~8 완료 + Sprint 4~6 timeline
+
+
 >
 > ## ⭐ 다음 세션 컨텍스트 복원 순서 (3분 안)
 >
@@ -161,7 +213,7 @@
 >
 > | # | 작업 | 비용 | 가치 | 비고 |
 > |---|------|------|------|------|
-> | ~~1~~ ✅ | ~~Sprint 4 — Telemetry Hook foundation~~ | M (~1일) | **DONE** | **Phase 8 (PR #187) 완료** — `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit + `LANGFUSE_BASE_URL` fallback + 9 노드 wrap + `--emit-events` flag + 15 회귀 테스트. pytest 1385 → 1400. |
+> | ~~1~~ ✅ | ~~Sprint 4 — Telemetry Hook foundation~~ | M (~1일) | **DONE** | **Phase 8 (GitHub PR #188, 내부 "PR #187") 완료** — `AgentStatusEvent` / `AgentMessageEvent` / `IterationProgressEvent` / `ResultEvent` emit + `LANGFUSE_BASE_URL` fallback + 9 노드 wrap + `--emit-events` flag + 15 회귀 테스트. pytest 1385 → 1400. |
 > | **1** ⭐ | **베타 cohort 5명 ($250 budget) 결정** | TBD | HIGH | Telemetry foundation 완비. 베타가 데스크탑 앱으로 받게 됨이 의미 — Sprint 5/6 의 *진행 보드*. jsonl 모니터링으로 cohort 빈 응답률 / silent failure 실시간 추적 가능. |
 > | **2** | **Sprint 5 — Tauri shell + React UI 골격** | L (~1주) | HIGH | Rust shell + 부서 그리드 (placeholder) + Python sidecar spawn + jsonl tail + event 수신. PowerShell 대체 가능한 기본 GUI. |
 > | **3** | **Sprint 6 — 시각화 완성** | L (~1주) | HIGH | 픽셀 아이콘 + 펄스 + 대화 panel + iteration progress + 결과 패널. 베타 5명 배포 가능 상태. |

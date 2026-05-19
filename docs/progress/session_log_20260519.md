@@ -393,9 +393,11 @@ Phase 5 완료 후 다음 작업 우선순위 #3 으로 잡혀있던 PR #172 의
 
 사용자 안전성 향상: fallback default (WEB_SCRAPING) 가 의도 위배 시 명시 override 가능. 자동화 / CI 스크립트의 *결정론 보장*.
 
-## Phase 8 — Sprint 4 Telemetry Hook + LangFuse env fix (PR #187, foundation 차원)
+## Phase 8 — Sprint 4 Telemetry Hook + LangFuse env fix (GitHub PR #188, 내부 명명 "PR #187", foundation 차원)
 
 Phase 7 (데스크탑 앱 비전 보존) 직후 PM 지시로 *데스크탑 앱 prerequisite* 인 Telemetry hook foundation 진입. **본 세션 12번째 PR 머지 — Sprint 4 의 첫 코어 작업**.
+
+> ⚠ **PR 번호 정정** — commit 메시지 / PR 본문 / 본 session_log Phase 8 가 본 PR 을 *내부 명명* "PR #187" 로 표기하지만, GitHub 자동 부여 번호는 **PR #188**. 본 세션 직전 docs PR 들이 #186 머지 후 사이에 #187 자리가 다른 PR (또는 빈 번호)로 점유돼 발생. 향후 reference 는 *GitHub PR #188* 정식. 본 마감 docs PR 에서 표기 일관성 정정.
 
 ### 작업 범위 (1 PR, foundation + 9 노드 emit)
 
@@ -456,6 +458,76 @@ Phase 7 (데스크탑 앱 비전 보존) 직후 PM 지시로 *데스크탑 앱 p
 2. **LangFuse env alias fix 의 *cohort 안전성*** — 일부 사용자가 `LANGFUSE_BASE_URL` 명칭 사용 시 *silent 미인식* 으로 모니터링 비활성 상태. fallback + 경고 surface 로 사용자 환경 진단 부담 해소. PR #176/#179/#181 의 fail-silent 처방 cycle 의 *환경설정 차원* 확장.
 
 3. **default OFF + env var 활성화 패턴** — Sprint 4 의 기본 원칙. flag 가 없을 때 0 cost / flag 가 있을 때만 stream 활성. LangFuse client 동일 패턴 — 모니터링 layer 의 일관된 *opt-in* 설계.
+
+## Phase 9 — 세션 진짜 마감 docs PR (Architecture 단일 진입점 신설)
+
+Phase 8 (PR #188 Sprint 4) 직후 PM 지시로 *세션 진짜 마감* docs PR. 본 세션 12 PR 머지 후 누적된 *분산 docs* 를 Architecture 단일 진입점 3 문서로 통합.
+
+### 작업 매트릭스
+
+| # | 변경 | 위치 | 효과 |
+|---|------|------|------|
+| 1 | **신설** `docs/architecture/agent_org_chart.md` | 본부 10 + Tauri 3 부서 (🔵 기획 / 🟣 개발 / 🟢 학습) 매핑 + 13 active agent | 다음 세션 *부서 매핑* 즉시 참조 |
+| 2 | **신설** `docs/architecture/system_architecture.md` | 3 계층 (백엔드 / Telemetry / Tauri) 흐름 + Event 라우팅 계약 + 의존성 비용 | Sprint 5/6 진입 직전 *계약* 차원 |
+| 3 | **신설** `docs/architecture/phase_progress.md` | Phase 1~8 + Sprint 4~6 mermaid timeline + 마일스톤 + pytest graph | 다음 세션 *현재 위치* 1분 파악 |
+| 4 | **정정** session_log + WORK_STATUS — "PR #187" → "GH PR #188 (내부 'PR #187')" | session_log_20260519.md + WORK_STATUS.md | 번호 일관성 — 향후 reference 혼란 0 |
+| 5 | **갱신** WORK_STATUS.md — 다음 세션 첫 입력 가이드 3 옵션 (Sprint 5 / 베타 cohort / 폴리싱) | WORK_STATUS.md 헤더 직후 | 다음 세션 3~5 분 컨텍스트 복원 |
+| 6 | **본 Phase 9 추가** session_log_20260519.md | 본 파일 | 세션 진짜 마감 + docs inventory 보존 |
+
+### docs 폴더 최신 상태 (2026-05-19 진짜 마감 시점)
+
+```
+docs/
+├── WORK_STATUS.md                                    2026-05-19 ⭐ 진입점
+├── next_session_context.md                            2026-05-14
+├── architecture/
+│   ├── agent_org_chart.md                            2026-05-19 ⭐ NEW
+│   ├── system_architecture.md                        2026-05-19 ⭐ NEW
+│   ├── phase_progress.md                             2026-05-19 ⭐ NEW
+│   ├── Nexus_Alpha_조직도_v11.md                     2026-05-14 (직전 진입점)
+│   ├── Nexus_Alpha_구성안_v7.md                       2026-05-14
+│   └── (조직도 v6/v7/v8/v9/v10, 구성안 v5/v6, ...)
+├── insights/
+│   ├── desktop_app_vision.md                         2026-05-19 ⭐ (Phase 7)
+│   └── agent_collaboration_paradigm_shift.md         2026-05-14 (north star)
+├── progress/
+│   ├── session_log_20260519.md                       2026-05-19 ⭐ (본 파일, 12+1 PR)
+│   ├── session_log_20260518.md                       2026-05-18
+│   ├── session_log_20260515.md                       2026-05-15
+│   ├── session_log_20260514.md                       2026-05-14
+│   ├── pr133_alpha_deployment_summary.md             2026-05-14
+│   ├── session_handoff_pr133_to_next.md              2026-05-14
+│   └── (track_b_*, e2e_*, phase*, ...)
+├── health_check/project_health_check_20260514.md     2026-05-14
+├── security/bfg_rotation_procedure.md                2026-05-14
+├── templates/friend_beta_request.md                  2026-05-14
+└── context/next_session_context.md                   2026-05-11
+```
+
+총 docs 파일 수 (committed + 본 PR 신설): **70+** (architecture 12 + insights 2 + progress 40+ + 기타).
+
+### docs PR 누적 (본 세션 13건째)
+
+| PR # | 차원 | 일자 |
+|------|------|------|
+| GH #177 | Phase 1 E2E + PR #176 hot-fix docs | 05-19 |
+| GH #178 | Phase 2 E2E 3차 docs | 05-19 |
+| GH #180 | Phase 3 raw 진단 docs | 05-19 |
+| GH #182 | Phase 4 root-cause docs | 05-19 |
+| GH #183 | Phase 5 라이브 검증 docs | 05-19 |
+| GH #185 | Phase 6 CLI flag docs | 05-19 |
+| GH #186 | 세션 마감 docs | 05-19 |
+| **GH #189 (예정)** ⭐ | **세션 진짜 마감 docs (본 PR)** | **05-19** |
+
+### 핵심 통찰 — "세션 마감 의 *의미적 진짜* 마감"
+
+본 PR 은 *코드 변경 0* + *순수 docs 통합* 차원. 표면적으로는 "추가 docs PR" 이지만 실제 가치:
+
+1. **단일 진입점 docs 의 *가시화*** — 본부 10 조직도 v11 / paradigm-shift 통찰 / desktop_app_vision / session_log 가 *분산 docs* 였는데, agent_org_chart / system_architecture / phase_progress 3 문서가 *진입점 layer* 로 통합. 다음 세션 첫 입력에 본 3 문서 + WORK_STATUS 만 읽으면 *3~5 분* 컨텍스트 복원.
+
+2. **mermaid 시각화의 *현실화*** — `docs/insights/desktop_app_vision.md` 의 *Tauri UI 비전* 이 *backend 차원* 의 mermaid 다이어그램 (3 계층 / sequence diagram / phase timeline) 으로 *동시에 사실화*. Sprint 5/6 진입 시 *Spec 계약* 차원으로 활용 가능.
+
+3. **PR 번호 정정의 *향후 reference 안정성*** — "PR #187" (내부) vs "GH PR #188" (GitHub) 의 *명명 불일치* 가 향후 세션의 *컨텍스트 혼란* 을 유발할 위험. 본 PR 의 정정 + 안내문이 향후 *번호 reference* 의 정식 표준.
 
 ## 다음 세션 컨텍스트 복원 가이드
 
@@ -554,7 +626,7 @@ PM 의 새 비전 — **Tauri 데스크탑 앱 (Agent Office Visualizer)**. para
 
 | 항목 | 값 |
 |------|-----|
-| **머지 PR** | **12건** = 코어 5 (PR #176/#179/#181/**#184**/**#187**) + docs 7 (PR #177/#178/#180/#182/#183/#185/#186) |
+| **머지 PR** | **13건** = 코어 5 (GH #176/#179/#181/**#184**/**#188** ← 내부 "PR #187") + docs 8 (GH #177/#178/#180/#182/#183/#185/#186/**#189 ← 본 PR**) |
 | **pytest** | 1354 → **1400** (+46, 회귀 0) |
 | **E2E 라이브 검증** | 본 세션 **7회** 누적 (Track B) |
 | **silent 빈 응답률** | 80% → **0% 도달 확정** ⭐ |
