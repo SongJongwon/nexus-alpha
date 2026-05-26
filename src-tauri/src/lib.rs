@@ -157,6 +157,35 @@ async fn claude_auth_login() -> Result<AuthStatus, String> {
     claude_auth_status().await
 }
 
+/// 빌드된 .exe 를 detached spawn 으로 실행 (frontend 의 "실행" 버튼).
+///
+/// 2026-05-26 추가 — Sprint 6 의 *GUI 앱 자동 .exe 빌드* 흐름의 마지막 layer.
+/// ResultEvent.exe_path 가 채워진 run 종료 후, frontend 가 본 command 를 invoke
+/// 해서 사용자가 즉시 빌드된 앱을 실행할 수 있도록.
+///
+/// Detached spawn — Tauri shell 의 stdin/stdout 을 inherit 하지 *않음*. release
+/// 모드의 GUI subsystem 에서는 console 없으니 NULL handle, dev 모드에서는
+/// inherit 가 안전. spawn 후 child handle drop — 부모가 종료해도 child 는 계속
+/// 실행.
+#[tauri::command]
+async fn open_exe(path: String) -> Result<(), String> {
+    let exe_path = std::path::PathBuf::from(&path);
+    if !exe_path.exists() {
+        return Err(format!("실행 파일 미발견: {path}"));
+    }
+    if !exe_path.is_file() {
+        return Err(format!("파일 아님 (디렉터리?): {path}"));
+    }
+    let mut cmd = Command::new(&exe_path);
+    if let Some(parent) = exe_path.parent() {
+        cmd.current_dir(parent);
+    }
+    cmd.stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null());
+    cmd.spawn()
+        .map_err(|e| format!(".exe 실행 실패 ({path}): {e}"))?;
+    Ok(())
+}
+
 /// `claude auth logout` 실행. 성공 시 token 삭제.
 #[tauri::command]
 async fn claude_auth_logout() -> Result<(), String> {
@@ -379,6 +408,7 @@ pub fn run() {
             claude_auth_status,
             claude_auth_login,
             claude_auth_logout,
+            open_exe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

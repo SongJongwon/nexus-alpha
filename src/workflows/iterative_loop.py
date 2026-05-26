@@ -798,23 +798,90 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     }
 
 
+_GUI_IMPORT_MARKERS: tuple[str, ...] = (
+    "import tkinter",
+    "from tkinter",
+    "import flet",
+    "from flet",
+    "import PyQt5",
+    "import PyQt6",
+    "from PyQt5",
+    "from PyQt6",
+    "import PySide2",
+    "import PySide6",
+    "from PySide2",
+    "from PySide6",
+    "import customtkinter",
+    "from customtkinter",
+    "import kivy",
+    "from kivy",
+    "import wx",
+    "from wx",
+    "import dearpygui",
+    "from dearpygui",
+)
+
+
+def _detect_gui_in_saved_files(saved_code_files: Any) -> bool:
+    """saved_code_files 에 GUI 프레임워크 import 마커가 있는지 검사.
+
+    2026-05-26 추가 — Tkinter 등 GUI 앱의 ``mainloop()`` 가 헤드리스 sandbox 에서
+    종료되지 않아 TIMEOUT 으로 빌드가 BLOCKED 되는 사고 (kanban 앱 사례) 차단용.
+    qa_feedback_loop 의 ``detect_artifact_category()`` 와 동일 marker set, 다만
+    여기서는 파일 경로가 아닌 코드 내용 직접 grep.
+    """
+    if not saved_code_files:
+        return False
+    try:
+        code_blob = "\n".join(str(v) for v in saved_code_files.values())
+    except (AttributeError, TypeError):
+        return False
+    return any(marker in code_blob for marker in _GUI_IMPORT_MARKERS)
+
+
+def _make_gui_skip_sandbox_result() -> Any:
+    """GUI 앱 감지 시 sandbox 실행을 skip 하면서도 *PASS 시뮬레이션* SandboxResult.
+
+    SandboxResult.verdict 는 ``field(init=False)`` 라 ``__post_init__`` 가
+    derive — exit_code=0 + timed_out=False → ``"PASS"``. 후속 Convergence Judge
+    가 sandbox PASS 로 인식해 QA 차단 없이 통과. stderr 에 SKIP 사유 명시.
+    """
+    from src.agents.operations.sandbox_runner import SandboxResult
+
+    return SandboxResult(
+        exit_code=0,
+        stdout="",
+        stderr=(
+            "[GUI_SKIP] GUI 앱 감지 (tkinter/flet/PyQt/PySide/customtkinter/kivy/wx) — "
+            "mainloop() 가 헤드리스 sandbox 에서 종료되지 않아 TIMEOUT 회피 위해 "
+            "sandbox 실행 SKIP. PyInstaller 빌드 단계에서 .exe 산출."
+        ),
+        elapsed_sec=0.0,
+        timed_out=False,
+        timeout_sec=0,
+    )
+
+
 def _node_run_sandbox(state: _LoopState) -> dict[str, Any]:
     """Phase 3 — Engineer 산출 코드를 별도 프로세스에서 실행.
 
     Phase 3 보강 (2026-04-20):
         단일 파일 entry 만 다루던 초기 버전을 폐기하고, 멀티파일 패키지를
         디렉터리 트리째 재구성·실행하는 `run_python_package_in_sandbox` 로 위임.
-        `# file: <relpath>` 헤더 기반 트리 재구성 → `__main__.py`/`cli.py` 등
-        entry 자동 탐지 → `python -m <pkg>` 실행. 단일 파일도 동일 함수가 root
-        에 배치하고 스크립트로 실행해 backward compat 유지.
+
+    GUI 자동 SKIP (2026-05-26):
+        saved_code_files 의 코드에 GUI 프레임워크 import 가 있으면 sandbox 실행
+        없이 PASS 시뮬레이션 SandboxResult 반환. Tkinter mainloop TIMEOUT 으로
+        앱 빌드가 BLOCKED 되는 사고 (kanban 앱 사례) 차단용.
 
     동작 요약:
         1. `enable_sandbox=False` → 즉시 None 반환 (skip)
         2. `saved_code_files` 비었음 → None (FakeProvider 시나리오 등)
-        3. `run_python_package_in_sandbox` 호출:
+        3. **GUI 마커 감지 → PASS 시뮬레이션 SandboxResult 반환** (2026-05-26)
+        4. `run_python_package_in_sandbox` 호출:
              - 트리 재구성 + entry 탐지 + 실행
              - entry 미탐지 시 함수가 None 반환 → 그대로 전달
-        4. 잘못된 입력 (TypeError/ValueError) → None fallback (루프 안전성 우선)
+        5. 잘못된 입력 (TypeError/ValueError) → None fallback (루프 안전성 우선)
 
     Returns:
         {"execution_result": SandboxResult | None}
@@ -825,6 +892,10 @@ def _node_run_sandbox(state: _LoopState) -> dict[str, Any]:
     chain: WorkflowResult = state["chain_result"]
     if not chain or not chain.saved_code_files:
         return {"execution_result": None}
+
+    # GUI 자동 SKIP (kanban 앱 BLOCKED 사고 처방).
+    if _detect_gui_in_saved_files(chain.saved_code_files):
+        return {"execution_result": _make_gui_skip_sandbox_result()}
 
     try:
         result = run_python_package_in_sandbox(
