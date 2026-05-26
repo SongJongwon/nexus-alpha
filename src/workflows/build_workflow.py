@@ -1797,6 +1797,32 @@ def run_build_workflow(
                             exclude_modules=build_deps.excluded_modules or None,
                             timeout_sec=executor_timeout_sec,
                         )
+                        # 2026-05-26 — PM 명시 (4회 BLOCKED 사고 처방): GUI 앱
+                        # (windowed=True) 빌드 성공 시 *.exe smoke test* 자동 실행.
+                        # theme.py 같은 entry 오선택 사례를 빌드 직후 자동 검출.
+                        # 결과는 executor_result.stderr 에 prepend 하여 사용자 가시.
+                        if (
+                            windowed
+                            and executor_result.success
+                            and executor_result.exe_path is not None
+                        ):
+                            try:
+                                from src.agents.build_release.build_executor import (
+                                    run_exe_smoke_test,
+                                )
+                                smoke = run_exe_smoke_test(executor_result.exe_path)
+                                smoke_log = (
+                                    f"[EXE_SMOKE_TEST] {'PASS' if smoke.passed else 'FAIL'} — "
+                                    f"{smoke.reason}\n"
+                                )
+                                # stderr 에 prepend — 25_executor_result.md 에 표시됨
+                                executor_result.stderr = smoke_log + (
+                                    executor_result.stderr or ""
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                executor_result.stderr = (
+                                    f"[EXE_SMOKE_TEST] 실행 helper 호출 실패: {exc!r}\n"
+                                ) + (executor_result.stderr or "")
                 # 25_executor_result.md 저장 — 사용자 가시 산출물
                 executor_md = workflow_dir / "25_executor_result.md"
                 executor_md_body = _format_executor_result_md(executor_result)

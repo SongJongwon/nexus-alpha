@@ -334,3 +334,110 @@ def execute_pyinstaller(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+# ---------------------------------------------------------------------------
+# .exe Smoke Test — PM 명시 (2026-05-26, 4회 BLOCKED 사고 처방)
+# ---------------------------------------------------------------------------
+@dataclass
+class SmokeTestResult:
+    """`run_exe_smoke_test` 의 산출.
+
+    Attributes:
+        passed: 3초 동안 프로세스 alive 했으면 True (GUI 앱 mainloop 시작 추정).
+        reason: 사람-가독 결과 메시지.
+        exit_code: 프로세스 종료 코드 (timeout 으로 살아있다 terminate 했으면 None).
+        survived_sec: spawn 부터 결과까지 경과 시간.
+    """
+
+    passed: bool
+    reason: str
+    exit_code: Optional[int]
+    survived_sec: float
+
+
+def run_exe_smoke_test(exe_path: Path, timeout_sec: float = 3.0) -> SmokeTestResult:
+    """빌드된 .exe 의 minimal runtime 검증 (PM 명시 — 4회 BLOCKED 사고 처방).
+
+    동작 (Windows):
+        1. `subprocess.Popen` 로 .exe spawn (DETACHED_PROCESS + stdio null).
+        2. `proc.wait(timeout=timeout_sec)` 로 종료 대기.
+        3. timeout 이면 → 프로세스가 *살아있음* → PASS (GUI mainloop 시작 추정),
+           terminate() + (필요 시) kill() 로 정리.
+        4. timeout 전에 종료 → *즉시 종료* (entry 오선택 / import 실패) → FAIL.
+
+    사용 시나리오:
+        - 이전 4 사고 (계산기 / 유튜브 녹화기 / theme.py entry / 칸반 보드) 중
+          theme.py entry 오선택 같은 사례를 *빌드 후 자동 검출* — 사용자가 .exe
+          더블클릭 했는데 *즉시 종료* 하는 사고 차단.
+        - GUI 앱은 mainloop() 가 *블로킹* 이라 3초면 충분히 시작 확인.
+        - CLI 앱은 짧은 task 끝나면 즉시 종료 — *FAIL 로 판정될 수도* 있음. 따라서
+          본 helper 는 *GUI 앱에 한해 사용* 권장 (호출 측이 artifact_category=='gui'
+          때만 호출).
+
+    Args:
+        exe_path: 빌드 산출 .exe 의 Path.
+        timeout_sec: 살아있어야 PASS 로 인정될 시간 (default 3초).
+
+    Returns:
+        SmokeTestResult — passed True 면 3초 alive, False 면 즉시 종료.
+    """
+    if not exe_path.exists() or not exe_path.is_file():
+        return SmokeTestResult(False, f".exe 미발견: {exe_path}", None, 0.0)
+
+    creationflags = 0
+    if sys.platform == "win32":
+        # DETACHED_PROCESS — 부모 stdio 무관, console 창 안 띄움.
+        creationflags = 0x00000008
+
+    start = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            [str(exe_path)],
+            cwd=str(exe_path.parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return SmokeTestResult(False, f".exe spawn 실패: {exc!r}", None, 0.0)
+
+    try:
+        exit_code = proc.wait(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        elapsed = time.monotonic() - start
+        # 3초 alive — PASS. 정리: terminate → kill.
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    pass
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return SmokeTestResult(
+            passed=True,
+            reason=(
+                f"{elapsed:.2f}s alive — GUI 앱 mainloop 정상 시작 추정 "
+                f"(timeout={timeout_sec}s 동안 종료 안 됨)"
+            ),
+            exit_code=None,
+            survived_sec=elapsed,
+        )
+
+    # timeout 전에 종료 — FAIL (entry 오선택 / import 실패).
+    elapsed = time.monotonic() - start
+    return SmokeTestResult(
+        passed=False,
+        reason=(
+            f"즉시 종료 (entry 오선택 / import 실패 가능 — theme.py 사례) "
+            f"exit_code={exit_code} elapsed={elapsed:.2f}s"
+        ),
+        exit_code=exit_code,
+        survived_sec=elapsed,
+    )
