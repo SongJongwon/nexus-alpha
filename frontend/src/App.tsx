@@ -94,21 +94,24 @@ interface CapturedLine {
   receivedAt: string
 }
 
+// 2026-05-26 fix — Tauri 가 Rust 의 #[serde(rename = "loggedIn")] 결과를
+// 그대로 JS object 로 전달하므로 frontend 도 *camelCase* 로 맞춤. PM 의
+// DevTools invoke 결과 evidence: { loggedIn: true, subscriptionType: 'max', ... }
 interface AuthStatus {
-  logged_in: boolean
+  loggedIn: boolean
   email: string | null
-  subscription_type: string | null
-  auth_method: string | null
-  org_name: string | null
+  subscriptionType: string | null
+  authMethod: string | null
+  orgName: string | null
   error: string | null
 }
 
 const EMPTY_AUTH: AuthStatus = {
-  logged_in: false,
+  loggedIn: false,
   email: null,
-  subscription_type: null,
-  auth_method: null,
-  org_name: null,
+  subscriptionType: null,
+  authMethod: null,
+  orgName: null,
   error: null,
 }
 
@@ -195,7 +198,7 @@ function App() {
   const handleStart = async () => {
     if (running) return
     if (!request.trim()) return
-    if (!auth.logged_in) {
+    if (!auth.loggedIn) {
       setError('Claude 로그인이 필요합니다. 우측 상단 [로그인] 버튼을 눌러주세요.')
       return
     }
@@ -265,7 +268,7 @@ function App() {
                 <span className="w-2 h-2 rounded-full bg-slate-500 animate-pulse" aria-hidden />
                 <span className="text-slate-400">인증 상태 확인 중…</span>
               </>
-            ) : auth.logged_in ? (
+            ) : auth.loggedIn ? (
               <>
                 <span
                   className="w-2 h-2 rounded-full bg-emerald-500"
@@ -274,7 +277,7 @@ function App() {
                 <span className="text-slate-200 max-w-[16rem] truncate" title={auth.email ?? ''}>
                   {auth.email ?? '(이메일 없음)'}
                 </span>
-                {auth.subscription_type?.toLowerCase() === 'max' && (
+                {auth.subscriptionType?.toLowerCase() === 'max' && (
                   <span className="px-2 py-0.5 rounded bg-emerald-600/30 border border-emerald-500/60 text-emerald-200 text-xs font-bold tracking-wide">
                     MAX
                   </span>
