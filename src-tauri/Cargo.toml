@@ -1,0 +1,28 @@
+[package]
+name = "nexus_alpha"
+version = "0.1.0"
+description = "Nexus Alpha — Agent Office Visualizer (Tauri shell, Sprint 5 PR-A)"
+edition = "2021"
+license = "MIT"
+rust-version = "1.75"
+
+# Tauri 2.x 표준 — mobile entry point 호환 lib crate + desktop binary 분리.
+[lib]
+name = "nexus_alpha_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "nexus-alpha"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
