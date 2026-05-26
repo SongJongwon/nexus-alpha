@@ -2,80 +2,177 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-/**
- * Sprint 5 이후 PR — Claude Code CLI 인증 통합 + sticky toolbar.
- *
- * 추가 변경:
- *   1. Sticky 툴바 (top, z-50) — 로고 + 인증 상태 (🟢/🔴 + 이메일 + MAX 뱃지) + 로그인/로그아웃 버튼.
- *   2. 앱 시작 시 invoke('claude_auth_status') → 자동 인증 상태 표시.
- *   3. 로그아웃: 확인 다이얼로그 (진행 중 작업 있으면 경고 강화) → invoke('claude_auth_logout') → 상태 갱신.
- *   4. 시작 버튼: 로그인 안된 경우 "Claude 로그인 필요" 안내 + 시작 차단.
- *   5. start_run 호출은 Rust 측에서 자동으로 --force-cli 기본 추가 (PM 요청).
- */
+// =============================================================================
+// Sprint 6 UI 개편 — 3단 레이아웃 + 7 부서 Agent Office + 실시간 Telemetry 연동
+// =============================================================================
+//
+// 레이아웃:
+//   ┌─────────┬───────────────────────────┬──────────┐
+//   │ Sidebar │ Toolbar                   │          │
+//   │ (150px) ├───────────────────────────┤  Detail  │
+//   │ menu    │ Agent Office (7 부서)      │  Panel   │
+//   │ + 입력  │                           │  (220px) │
+//   │         ├───────────────────────────┴──────────┤
+//   │         │ Telemetry stream (counts + log)      │
+//   └─────────┴──────────────────────────────────────┘
+//
+// Telemetry 연동 (src/monitoring/telemetry.py 의 _NODE_DEPARTMENT mirror):
+//   agent_status (노드 단위)  → 해당 부서 카드 펄스 ON/OFF + agent bob
+//   agent_message (LLM 호출) → 오른쪽 패널 대화 추가
+//   result / run_end          → 시작 버튼 reset
+//
+// PM 요청 색상 매핑 (UI 차원):
+//   C-Level         : 🟡 amber (금색)
+//   PLANNING        : 🟣 purple (보라)
+//   ENGINEERING     : 🟢 emerald (초록)
+//   QA              : 🔴 red (빨강)
+//   LEARNING        : 🟢 teal (청록)
+//   DESIGN          : 🩷 pink (핑크/보라)
+//   BUILD & RELEASE : 🟢 lime (연두)
 
-type DeptKey = 'planning' | 'engineering' | 'learning'
+// =============================================================================
+// 1. 타입 + 상수 정의
+// =============================================================================
 
-interface DeptCard {
+type DeptKey =
+  | 'c-level'
+  | 'planning'
+  | 'engineering'
+  | 'qa'
+  | 'learning'
+  | 'design'
+  | 'build-release'
+
+interface AgentInfo {
+  name: string
+  role: string
+  dept: DeptKey
+}
+
+interface DepartmentDef {
   key: DeptKey
-  emoji: string
   label: string
   borderClass: string
   bgClass: string
-  ringClass: string
-  agents: string[]
-  description: string
+  accentClass: string
+  pulseRgba: string
+  agents: AgentInfo[]
 }
 
-const DEPARTMENTS: DeptCard[] = [
+const DEPARTMENTS: DepartmentDef[] = [
+  {
+    key: 'c-level',
+    label: 'C-Level',
+    borderClass: 'border-amber-500/60',
+    bgClass: 'bg-amber-950/20',
+    accentClass: 'text-amber-300',
+    pulseRgba: 'rgba(245, 158, 11, 0.5)',
+    agents: [
+      { name: 'CTO', role: 'Chief Technology Officer — 기술 전략', dept: 'c-level' },
+      { name: 'Convergence Judge', role: '결정론 verdict (COMPLETE/IMPROVE/BLOCKED)', dept: 'c-level' },
+    ],
+  },
   {
     key: 'planning',
-    emoji: '🔵',
-    label: '기획 부서',
-    borderClass: 'border-blue-500/50',
-    bgClass: 'bg-blue-950/30',
-    ringClass: 'ring-blue-400',
+    label: 'PLANNING',
+    borderClass: 'border-purple-500/60',
+    bgClass: 'bg-purple-950/25',
+    accentClass: 'text-purple-300',
+    pulseRgba: 'rgba(168, 85, 247, 0.5)',
     agents: [
-      'Requirement Expander',
-      'Meeting Facilitator',
-      'Gap Analyst',
-      'CTO',
-      'Product Analyst',
+      { name: 'Requirement Expander', role: '사용자 요청 YAML 확장', dept: 'planning' },
+      { name: 'Meeting Facilitator', role: '킥오프 회의 + shared assumptions', dept: 'planning' },
+      { name: 'Gap Analyst', role: 'iteration feedback gap 분석', dept: 'planning' },
+      { name: 'Product Analyst', role: '제품 분석 + 사용자 시나리오', dept: 'planning' },
     ],
-    description: '회의 / 분석 / feedback 작성',
   },
   {
     key: 'engineering',
-    emoji: '🟣',
-    label: '개발 부서',
-    borderClass: 'border-purple-500/50',
-    bgClass: 'bg-purple-950/30',
-    ringClass: 'ring-purple-400',
+    label: 'ENGINEERING',
+    borderClass: 'border-emerald-500/60',
+    bgClass: 'bg-emerald-950/25',
+    accentClass: 'text-emerald-300',
+    pulseRgba: 'rgba(16, 185, 129, 0.5)',
     agents: [
-      'Python Engineer',
-      'Code Reviewer',
-      'Sandbox Runner',
-      'Pytest Author',
-      'GUI Code Generator',
-      'Build Engineer',
+      { name: 'Python Engineer', role: 'Senior Python 코드 생성', dept: 'engineering' },
+      { name: 'GUI Code Generator', role: 'Tkinter/Flet/PyQt6 GUI 코드', dept: 'engineering' },
+      { name: 'Code Reviewer', role: 'Static QA + Pydantic schema', dept: 'engineering' },
+      { name: 'Sandbox Runner', role: '격리 subprocess 실행', dept: 'engineering' },
+      { name: 'Build Engineer', role: 'PyInstaller .exe 빌드', dept: 'engineering' },
     ],
-    description: '코드 작성 / 실행',
+  },
+  {
+    key: 'qa',
+    label: 'QA',
+    borderClass: 'border-red-500/60',
+    bgClass: 'bg-red-950/25',
+    accentClass: 'text-red-300',
+    pulseRgba: 'rgba(239, 68, 68, 0.5)',
+    agents: [
+      { name: 'Pytest Author', role: 'Pytest suite 생성 + 검증', dept: 'qa' },
+      { name: 'Code QA', role: 'pytest + ruff 실행', dept: 'qa' },
+      { name: 'GUI Test', role: 'pyautogui + Vision QA', dept: 'qa' },
+      { name: 'Security QA', role: '취약점 스캔 + 권고', dept: 'qa' },
+    ],
   },
   {
     key: 'learning',
-    emoji: '🟢',
-    label: '학습 부서',
-    borderClass: 'border-emerald-500/50',
-    bgClass: 'bg-emerald-950/30',
-    ringClass: 'ring-emerald-400',
+    label: 'LEARNING',
+    borderClass: 'border-teal-500/60',
+    bgClass: 'bg-teal-950/25',
+    accentClass: 'text-teal-300',
+    pulseRgba: 'rgba(20, 184, 166, 0.5)',
     agents: [
-      'Curator + RAG Searcher',
-      'Retrospective Lead',
-      'Convergence Judge',
-      'Vision QA',
+      { name: 'RAG Searcher', role: '과거 workflow recall', dept: 'learning' },
+      { name: 'Retrospective Lead', role: '4-step retrospective (well/wrong/lessons)', dept: 'learning' },
+      { name: 'Knowledge Curator', role: 'YAML entry 큐레이션 + 인덱싱', dept: 'learning' },
+      { name: 'Vision QA', role: 'GUI 스크린샷 LLM 검증 (옵션)', dept: 'learning' },
     ],
-    description: '회고 / RAG / 결정표',
+  },
+  {
+    key: 'design',
+    label: 'DESIGN',
+    borderClass: 'border-pink-500/60',
+    bgClass: 'bg-pink-950/25',
+    accentClass: 'text-pink-300',
+    pulseRgba: 'rgba(236, 72, 153, 0.5)',
+    agents: [
+      { name: 'GUI Designer', role: '와이어프레임 + widget tree', dept: 'design' },
+      { name: 'Theme Designer', role: 'Design tokens (palette/typography)', dept: 'design' },
+    ],
+  },
+  {
+    key: 'build-release',
+    label: 'BUILD & RELEASE',
+    borderClass: 'border-lime-500/60',
+    bgClass: 'bg-lime-950/25',
+    accentClass: 'text-lime-300',
+    pulseRgba: 'rgba(132, 204, 22, 0.5)',
+    agents: [
+      { name: 'Installer', role: 'Windows installer (NSIS)', dept: 'build-release' },
+      { name: 'Release Manager', role: 'GitHub release 코디네이션', dept: 'build-release' },
+    ],
   },
 ]
+
+// telemetry.py 의 _NODE_DEPARTMENT mirror — 노드 → UI 부서 매핑.
+// PM 명시: finalize / escalate 는 SYSTEM 이라 펄스 X.
+const NODE_TO_DEPT: Record<string, DeptKey | null> = {
+  expand_requirements: 'planning',
+  kickoff_meeting: 'planning',
+  analyze_gap: 'planning',
+  prepare_feedback: 'planning',
+  run_chain: 'engineering',
+  run_sandbox: 'engineering',
+  recall_past_knowledge: 'learning',
+  judge_convergence: 'learning',
+  retrospective: 'learning',
+  retrospective_blocked: 'learning',
+  curate_knowledge: 'learning',
+  curate_knowledge_blocked: 'learning',
+  finalize: null,
+  escalate: null,
+}
 
 interface TelemetryEvent {
   type?: string
@@ -85,10 +182,12 @@ interface TelemetryEvent {
   phase?: string
   verdict?: string
   ts?: string
-  // tail_meta (Rust tail_loop 진단 ping) 필드
   kind?: string
   path?: string
   detail?: string
+  role?: string
+  prompt_preview?: string
+  output_preview?: string
   [k: string]: unknown
 }
 
@@ -98,9 +197,6 @@ interface CapturedLine {
   receivedAt: string
 }
 
-// 2026-05-26 fix — Tauri 가 Rust 의 #[serde(rename = "loggedIn")] 결과를
-// 그대로 JS object 로 전달하므로 frontend 도 *camelCase* 로 맞춤. PM 의
-// DevTools invoke 결과 evidence: { loggedIn: true, subscriptionType: 'max', ... }
 interface AuthStatus {
   loggedIn: boolean
   email: string | null
@@ -120,17 +216,100 @@ const EMPTY_AUTH: AuthStatus = {
 }
 
 const MAX_LINES = 200
+const MAX_MESSAGES_PER_DEPT = 40
+
+type MenuKey = 'agent-map' | 'system' | 'monitor' | 'catalog' | 'usage' | 'settings'
+
+interface MenuItem {
+  key: MenuKey
+  label: string
+  enabled: boolean
+}
+
+const MENU_ITEMS: MenuItem[] = [
+  { key: 'agent-map', label: '에이전트 맵', enabled: true },
+  { key: 'system', label: '시스템 개요', enabled: false },
+  { key: 'monitor', label: '실시간 모니터', enabled: false },
+  { key: 'catalog', label: '카탈로그', enabled: false },
+  { key: 'usage', label: '사용 통계', enabled: false },
+  { key: 'settings', label: '설정', enabled: false },
+]
+
+// =============================================================================
+// 2. PixelCharacter — CSS grid 16x16 단순 face pattern
+// =============================================================================
+//
+// 8x8 face pattern (1=색, 0=투명). 모든 부서 동일 design, 부서 색상으로 tint.
+
+const FACE_PATTERN = [
+  '0011110000111100'.split(''),
+  '0111111001111110'.split(''),
+  '1111111111111111'.split(''),
+  '1111111111111111'.split(''),
+  '1100110011001100'.split(''), // 눈 line 1
+  '1100110011001100'.split(''), // 눈 line 2
+  '1111111111111111'.split(''),
+  '1111111111111111'.split(''),
+  '1111111111111111'.split(''),
+  '1110000000000111'.split(''), // 입 line 1
+  '1111000000001111'.split(''), // 입 line 2
+  '1111111111111111'.split(''),
+  '1111111111111111'.split(''),
+  '0111111111111110'.split(''),
+  '0011111111111100'.split(''),
+  '0000111111110000'.split(''),
+]
+
+interface PixelCharacterProps {
+  bgClass: string // tailwind bg color class (e.g. 'bg-emerald-400')
+  bobbing: boolean
+}
+
+function PixelCharacter({ bgClass, bobbing }: PixelCharacterProps) {
+  return (
+    <div
+      className={`grid grid-cols-16 grid-rows-16 w-8 h-8 ${bobbing ? 'animate-bob' : ''}`}
+      style={{ gridTemplateColumns: 'repeat(16, minmax(0, 1fr))', gridTemplateRows: 'repeat(16, minmax(0, 1fr))' }}
+      aria-hidden
+    >
+      {FACE_PATTERN.flat().map((cell, i) => (
+        <div key={i} className={cell === '1' ? bgClass : ''} />
+      ))}
+    </div>
+  )
+}
+
+// 부서별 character bg color (Tailwind class)
+const DEPT_CHAR_BG: Record<DeptKey, string> = {
+  'c-level': 'bg-amber-300',
+  planning: 'bg-purple-300',
+  engineering: 'bg-emerald-300',
+  qa: 'bg-red-300',
+  learning: 'bg-teal-300',
+  design: 'bg-pink-300',
+  'build-release': 'bg-lime-300',
+}
+
+// =============================================================================
+// 3. App
+// =============================================================================
 
 function App() {
+  // -- state --
   const [request, setRequest] = useState('')
-  const [activeDept, setActiveDept] = useState<DeptKey | null>(null)
   const [running, setRunning] = useState(false)
   const [eventsPath, setEventsPath] = useState<string | null>(null)
   const [lines, setLines] = useState<CapturedLine[]>([])
   const [error, setError] = useState<string | null>(null)
   const [auth, setAuth] = useState<AuthStatus>(EMPTY_AUTH)
   const [authLoading, setAuthLoading] = useState<boolean>(true)
+  const [activeDepts, setActiveDepts] = useState<Set<DeptKey>>(new Set())
+  const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null)
+  const [activeMenu, setActiveMenu] = useState<MenuKey>('agent-map')
+  const [messagesByDept, setMessagesByDept] = useState<Record<string, TelemetryEvent[]>>({})
+  const [currentNodeByDept, setCurrentNodeByDept] = useState<Record<string, string>>({})
 
+  // -- helpers --
   const refreshAuth = useCallback(async () => {
     setAuthLoading(true)
     try {
@@ -145,11 +324,11 @@ function App() {
     }
   }, [])
 
-  // 앱 시작 시 자동 인증 조회 + telemetry listener 등록.
   useEffect(() => {
     void refreshAuth()
   }, [refreshAuth])
 
+  // -- telemetry listener --
   useEffect(() => {
     let unlisten: UnlistenFn | undefined
     listen<string>('nexus://telemetry', (event) => {
@@ -162,24 +341,60 @@ function App() {
       }
       // eslint-disable-next-line no-console
       console.log('[Telemetry]', parsed?.type ?? 'unknown', parsed ?? raw)
+
+      // 1) lines stream 누적
       setLines((prev) => {
-        const captured: CapturedLine = {
-          raw,
-          parsed,
-          receivedAt: new Date().toISOString(),
-        }
+        const captured: CapturedLine = { raw, parsed, receivedAt: new Date().toISOString() }
         const next = [...prev, captured]
         return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next
       })
-      // 실행 종료 감지 → 시작 버튼 상태 reset.
-      //   - ResultEvent (verdict 결정): 정상/BLOCKED 모두 종료
-      //   - IterationProgressEvent (phase=run_end): run 종료 마커
-      // 둘 중 어느 것이 먼저 와도 안전하게 false 로 reset.
+
+      // 2) agent_status — 노드 → 부서 매핑 → activeDepts 갱신
+      if (parsed?.type === 'agent_status' && parsed.agent) {
+        const deptKey = NODE_TO_DEPT[parsed.agent] ?? null
+        if (deptKey) {
+          setActiveDepts((prev) => {
+            const next = new Set(prev)
+            if (parsed.status === 'working') {
+              next.add(deptKey)
+            } else if (parsed.status === 'done' || parsed.status === 'error') {
+              next.delete(deptKey)
+            }
+            return next
+          })
+          if (parsed.status === 'working') {
+            setCurrentNodeByDept((prev) => ({ ...prev, [deptKey]: parsed.agent! }))
+          } else if (parsed.status === 'done' || parsed.status === 'error') {
+            setCurrentNodeByDept((prev) => {
+              const next = { ...prev }
+              if (next[deptKey] === parsed.agent) delete next[deptKey]
+              return next
+            })
+          }
+        }
+      }
+
+      // 3) agent_message — 부서별 누적 (department 필드 기준)
+      if (parsed?.type === 'agent_message' && parsed.department) {
+        const dept = String(parsed.department)
+        setMessagesByDept((prev) => {
+          const cur = prev[dept] ?? []
+          const next = [...cur, parsed]
+          return {
+            ...prev,
+            [dept]: next.length > MAX_MESSAGES_PER_DEPT ? next.slice(-MAX_MESSAGES_PER_DEPT) : next,
+          }
+        })
+      }
+
+      // 4) result / run_end — 시작 버튼 reset
       if (
         parsed?.type === 'result' ||
         (parsed?.type === 'iteration_progress' && parsed.phase === 'run_end')
       ) {
         setRunning(false)
+        setActiveDepts(new Set())
+        setCurrentNodeByDept({})
       }
     })
       .then((fn) => {
@@ -194,6 +409,7 @@ function App() {
     }
   }, [])
 
+  // -- counts --
   const counts = useMemo(() => {
     const acc: Record<string, number> = {
       agent_status: 0,
@@ -210,6 +426,7 @@ function App() {
     return acc
   }, [lines])
 
+  // -- handlers --
   const handleStart = async () => {
     if (running) return
     if (!request.trim()) return
@@ -220,6 +437,9 @@ function App() {
     setError(null)
     setRunning(true)
     setLines([])
+    setMessagesByDept({})
+    setActiveDepts(new Set())
+    setCurrentNodeByDept({})
     try {
       const path = await invoke<string>('start_run', {
         request,
@@ -268,28 +488,37 @@ function App() {
     }
   }
 
+  const selectedDeptMessages = selectedAgent
+    ? messagesByDept[selectedAgent.dept] ?? []
+    : []
+
+  const totalActive = DEPARTMENTS.reduce((sum, d) => sum + d.agents.length, 0)
+
+  // =============================================================================
+  // Render
+  // =============================================================================
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 to-slate-900 text-slate-100">
-      {/* ============ 1. Sticky 툴바 ============ */}
-      <header className="sticky top-0 z-50 backdrop-blur-md bg-slate-950/85 border-b border-slate-800">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-bold text-sky-400">Nexus Alpha</span>
-            <span className="text-xs text-slate-500 hidden sm:inline">Agent Office</span>
+    <div className="h-screen w-screen flex flex-col bg-[#0d1117] text-slate-100">
+      {/* ============ 1. Top Toolbar ============ */}
+      <header className="flex-shrink-0 border-b border-slate-800 bg-[#161b22]">
+        <div className="px-6 py-2.5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="font-semibold text-slate-200">에이전트 오피스</span>
+            <span className="text-slate-600">·</span>
+            <span className="text-slate-400">본부 11</span>
+            <span className="text-slate-600">·</span>
+            <span className="text-emerald-400 font-semibold">{totalActive} active</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
             {authLoading ? (
               <>
-                <span className="w-2 h-2 rounded-full bg-slate-500 animate-pulse" aria-hidden />
-                <span className="text-slate-400">인증 상태 확인 중…</span>
+                <span className="w-2 h-2 rounded-full bg-slate-500 animate-pulse" />
+                <span className="text-slate-400">인증 확인 중…</span>
               </>
             ) : auth.loggedIn ? (
               <>
-                <span
-                  className="w-2 h-2 rounded-full bg-emerald-500"
-                  aria-label="Claude Code 로그인 됨"
-                />
-                <span className="text-slate-200 max-w-[16rem] truncate" title={auth.email ?? ''}>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="text-slate-200 max-w-[14rem] truncate" title={auth.email ?? ''}>
                   {auth.email ?? '(이메일 없음)'}
                 </span>
                 {auth.subscriptionType?.toLowerCase() === 'max' && (
@@ -307,10 +536,7 @@ function App() {
               </>
             ) : (
               <>
-                <span
-                  className="w-2 h-2 rounded-full bg-red-500"
-                  aria-label="Claude Code 로그인 안 됨"
-                />
+                <span className="w-2 h-2 rounded-full bg-red-500" />
                 <span className="text-slate-300">Claude 로그인 필요</span>
                 <button
                   type="button"
@@ -324,134 +550,255 @@ function App() {
           </div>
         </div>
         {auth.error && !authLoading && (
-          <div className="max-w-6xl mx-auto px-6 pb-2 text-xs text-amber-400">
-            <strong>auth status 경고:</strong> {auth.error}
+          <div className="px-6 pb-2 text-xs text-amber-400">
+            <strong>auth status:</strong> {auth.error}
           </div>
         )}
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-6 space-y-6">
-        <section>
-          <h1 className="text-2xl font-bold text-sky-400 mb-1">Agent Office</h1>
-          <p className="text-slate-400 text-sm">
-            자연어 → .exe 풀체인 자기 진화 cycle 의 사용자 가시화 layer. 본 PR
-            에서 Claude Code CLI 인증 통합 + sticky toolbar 추가.
-          </p>
-        </section>
+      {/* ============ Main 3-pane ============ */}
+      <div className="flex-1 flex min-h-0">
+        {/* === Left Sidebar === */}
+        <aside className="w-[150px] flex-shrink-0 border-r border-slate-800 bg-[#161b22] flex flex-col">
+          {/* 로고 + 부제 */}
+          <div className="px-4 pt-4 pb-3 border-b border-slate-800">
+            <div className="text-sm font-bold text-sky-400 leading-tight">Nexus Alpha</div>
+            <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
+              Agent Office v11
+            </div>
+          </div>
 
-        <section>
-          <label className="block text-slate-300 mb-2 text-sm font-semibold">
-            자연어 요청{' '}
-            <span className="text-slate-500 font-normal">
-              (Tauri command `start_run` + Python sidecar — Claude Code 구독 기반)
-            </span>
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              className="flex-1 px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition"
-              placeholder="예: 계산기 만들어줘"
+          {/* 메뉴 */}
+          <nav className="flex-1 overflow-y-auto py-2">
+            {MENU_ITEMS.map((m) => {
+              const isActive = activeMenu === m.key
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => m.enabled && setActiveMenu(m.key)}
+                  disabled={!m.enabled}
+                  className={`w-full text-left px-3 py-2 text-xs transition border-l-2 ${
+                    isActive
+                      ? 'border-sky-500 bg-sky-500/10 text-sky-300'
+                      : m.enabled
+                        ? 'border-transparent text-slate-300 hover:bg-slate-800/50 hover:border-slate-600'
+                        : 'border-transparent text-slate-600 cursor-not-allowed'
+                  }`}
+                  title={m.enabled ? undefined : '준비 중'}
+                >
+                  {m.label}
+                </button>
+              )
+            })}
+          </nav>
+
+          {/* 하단 고정 자연어 입력창 */}
+          <div className="flex-shrink-0 border-t border-slate-800 p-3 space-y-2">
+            <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+              자연어 요청
+            </label>
+            <textarea
+              rows={3}
+              className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 resize-none"
+              placeholder="예: 칸반 보드 앱 만들어줘"
               value={request}
               onChange={(e) => setRequest(e.target.value)}
               disabled={running}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleStart()
-              }}
             />
             <button
               type="button"
               onClick={() => void handleStart()}
               disabled={running || !request.trim()}
-              className="px-6 py-3 bg-sky-600 hover:bg-sky-500 active:bg-sky-700 disabled:bg-slate-700 disabled:text-slate-500 rounded-lg font-semibold transition"
+              className="w-full px-2 py-1.5 bg-sky-600 hover:bg-sky-500 active:bg-sky-700 disabled:bg-slate-700 disabled:text-slate-500 rounded text-xs font-semibold transition"
             >
               {running ? '실행 중…' : '시작'}
             </button>
-          </div>
-          {error && (
-            <p className="mt-2 text-sm text-red-400">
-              <strong>오류:</strong> {error}
-            </p>
-          )}
-          {eventsPath && (
-            <p className="mt-2 text-xs text-slate-500">
-              events.jsonl:{' '}
-              <code className="px-1 bg-slate-800 rounded text-slate-400">{eventsPath}</code>
-            </p>
-          )}
-        </section>
-
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {DEPARTMENTS.map((dept) => {
-            const isActive = activeDept === dept.key
-            return (
-              <button
-                key={dept.key}
-                type="button"
-                onClick={() => setActiveDept(isActive ? null : dept.key)}
-                className={`text-left p-5 border-2 ${dept.borderClass} ${dept.bgClass} rounded-xl transition-all hover:scale-[1.02] hover:border-slate-300/80 ${
-                  isActive ? `ring-2 ring-offset-2 ring-offset-slate-900 ${dept.ringClass}` : ''
-                }`}
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-2xl">{dept.emoji}</span>
-                  <h2 className="text-lg font-bold text-slate-100">{dept.label}</h2>
-                </div>
-                <p className="text-sm text-slate-300 mb-3">{dept.description}</p>
-                <ul className="space-y-1">
-                  {dept.agents.map((agent) => (
-                    <li key={agent} className="text-xs text-slate-400">
-                      • {agent}
-                    </li>
-                  ))}
-                </ul>
-              </button>
-            )
-          })}
-        </section>
-
-        <section className="border border-slate-700 rounded-xl p-4 bg-slate-900/60">
-          <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
-            <span className="font-semibold text-slate-200">Telemetry stream</span>
-            <span className="text-slate-500">·</span>
-            <span className="text-slate-400">
-              총 <span className="text-slate-100 font-semibold">{lines.length}</span> line
-            </span>
-            <span className="text-slate-500">·</span>
-            <span className="text-blue-300">agent_status {counts.agent_status}</span>
-            <span className="text-purple-300">agent_message {counts.agent_message}</span>
-            <span className="text-emerald-300">iteration_progress {counts.iteration_progress}</span>
-            <span className="text-amber-300">result {counts.result}</span>
-            <span className="text-slate-300">tail_meta {counts.tail_meta}</span>
-            {counts.unknown > 0 && (
-              <span className="text-slate-400">unknown {counts.unknown}</span>
+            {error && <p className="text-[10px] text-red-400 break-words">{error}</p>}
+            {eventsPath && (
+              <p className="text-[9px] text-slate-500 break-all" title={eventsPath}>
+                events.jsonl: …{eventsPath.slice(-30)}
+              </p>
             )}
           </div>
-          <pre className="h-64 overflow-auto text-xs font-mono text-slate-300 bg-slate-950/60 rounded-lg p-3 leading-relaxed">
-            {lines.length === 0
-              ? running
-                ? '// Python sidecar 시작됨 — 첫 event 대기 중…\n// (5초 이상 안 보이면 tail_meta 도 안 옴 → listen 권한 / Tauri 재시작 필요)'
-                : '// (시작 버튼을 누르면 Python sidecar 의 events.jsonl 이 tail 됩니다)'
-              : lines
-                  .map((l) => {
-                    if (!l.parsed) return `[raw] ${l.raw}`
-                    if (l.parsed.type === 'tail_meta') {
-                      return `[tail_meta] ${l.parsed.kind ?? '?'} — ${l.parsed.detail ?? l.parsed.path ?? ''}`
-                    }
-                    const main =
-                      l.parsed.agent ?? l.parsed.phase ?? l.parsed.verdict ?? ''
-                    const status = l.parsed.status ?? ''
-                    return `[${l.parsed.type ?? '?'}] ${main}  ${status}`.trim()
-                  })
-                  .join('\n')}
-          </pre>
-        </section>
+        </aside>
 
-        <footer className="p-4 border border-dashed border-slate-700 rounded-lg text-sm text-slate-400">
-          <strong className="text-slate-300">Sprint 6 도착 후:</strong> 본 panel
-          의 line 들은 부서 카드의 펄스 / 대화 panel 의 말풍선 / iteration progress
-          바로 시각화. 본 PR 은 인증 + 시작 흐름의 baseline.
-        </footer>
-      </main>
+        {/* === Center Agent Office === */}
+        <main className="flex-1 min-w-0 overflow-y-auto p-4 bg-[#0d1117]">
+          {activeMenu !== 'agent-map' ? (
+            <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+              "{MENU_ITEMS.find((m) => m.key === activeMenu)?.label}" 메뉴는 준비 중입니다.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {DEPARTMENTS.map((dept) => {
+                const isActive = activeDepts.has(dept.key)
+                const currentNode = currentNodeByDept[dept.key]
+                return (
+                  <section
+                    key={dept.key}
+                    className={`relative border-2 ${dept.borderClass} ${dept.bgClass} rounded-xl p-3`}
+                    style={
+                      isActive
+                        ? ({ '--pulse-color': dept.pulseRgba } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                    {/* dept 펄스 ring (active 일 때만) */}
+                    {isActive && (
+                      <div
+                        className="absolute inset-0 rounded-xl pointer-events-none animate-dept-pulse"
+                        style={{ '--pulse-color': dept.pulseRgba } as React.CSSProperties}
+                      />
+                    )}
+                    <header className="flex items-center justify-between mb-2 relative">
+                      <h2 className={`text-xs font-bold tracking-wide ${dept.accentClass}`}>
+                        {dept.label}
+                      </h2>
+                      {isActive && currentNode && (
+                        <span className="text-[9px] text-slate-400 font-mono truncate ml-2">
+                          {currentNode}
+                        </span>
+                      )}
+                    </header>
+                    <div className="grid grid-cols-2 gap-2 relative">
+                      {dept.agents.map((agent) => {
+                        const isSelected = selectedAgent?.name === agent.name
+                        return (
+                          <button
+                            key={agent.name}
+                            type="button"
+                            onClick={() => setSelectedAgent(agent)}
+                            className={`flex flex-col items-center gap-1 p-1.5 rounded transition hover:bg-slate-800/40 ${
+                              isSelected ? 'ring-1 ring-sky-400 bg-slate-800/40' : ''
+                            }`}
+                            title={`${agent.name}\n${agent.role}\n상태: ${isActive ? 'working' : 'idle'}`}
+                          >
+                            <PixelCharacter bgClass={DEPT_CHAR_BG[dept.key]} bobbing={isActive} />
+                            <span className="text-[9px] text-slate-200 leading-tight text-center line-clamp-2">
+                              {agent.name}
+                            </span>
+                            <span
+                              className={`text-[8px] px-1 rounded ${
+                                isActive
+                                  ? 'bg-emerald-700/40 text-emerald-300'
+                                  : 'bg-slate-700/40 text-slate-400'
+                              }`}
+                            >
+                              {isActive ? 'working' : 'idle'}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </section>
+                )
+              })}
+            </div>
+          )}
+        </main>
+
+        {/* === Right Detail Panel === */}
+        <aside className="w-[220px] flex-shrink-0 border-l border-slate-800 bg-[#161b22] overflow-y-auto">
+          {!selectedAgent ? (
+            <div className="h-full flex items-center justify-center text-slate-500 text-xs px-4 text-center">
+              에이전트를 클릭하세요
+            </div>
+          ) : (
+            <div className="p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100">{selectedAgent.name}</h3>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wide mt-0.5">
+                  {DEPARTMENTS.find((d) => d.key === selectedAgent.dept)?.label}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded ${
+                    activeDepts.has(selectedAgent.dept)
+                      ? 'bg-emerald-700/40 text-emerald-300'
+                      : 'bg-slate-700/40 text-slate-400'
+                  }`}
+                >
+                  {activeDepts.has(selectedAgent.dept) ? 'working' : 'idle'}
+                </span>
+                {currentNodeByDept[selectedAgent.dept] && (
+                  <span className="text-[10px] text-slate-400 font-mono truncate">
+                    {currentNodeByDept[selectedAgent.dept]}
+                  </span>
+                )}
+              </div>
+              <div>
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
+                  역할
+                </h4>
+                <p className="text-xs text-slate-300 leading-snug">{selectedAgent.role}</p>
+              </div>
+              <div>
+                <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
+                  대화 내역 ({selectedDeptMessages.length})
+                </h4>
+                <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
+                  {selectedDeptMessages.length === 0 ? (
+                    <p className="text-[10px] text-slate-500 italic">
+                      (이 부서의 LLM 호출이 발생하면 여기 표시됩니다)
+                    </p>
+                  ) : (
+                    selectedDeptMessages.map((m, i) => (
+                      <div
+                        key={i}
+                        className="border border-slate-800 rounded p-2 bg-slate-900/40 text-[10px] leading-snug"
+                      >
+                        <div className="flex items-center justify-between text-slate-500 text-[9px] mb-1">
+                          <span>{m.role ?? 'llm_call'}</span>
+                          <span>{m.ts?.slice(11, 19) ?? ''}</span>
+                        </div>
+                        <p className="text-slate-300 line-clamp-3 break-all">
+                          {String(m.output_preview ?? m.prompt_preview ?? '').slice(0, 240)}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      {/* ============ Bottom Telemetry stream ============ */}
+      <section className="flex-shrink-0 border-t border-slate-800 bg-[#161b22] p-2 max-h-[180px] flex flex-col">
+        <div className="flex flex-wrap items-center gap-2 text-[10px] mb-1.5 px-1">
+          <span className="font-semibold text-slate-200">Telemetry stream</span>
+          <span className="text-slate-600">·</span>
+          <span className="text-slate-400">
+            총 <span className="text-slate-100 font-semibold">{lines.length}</span>
+          </span>
+          <span className="text-blue-300">agent_status {counts.agent_status}</span>
+          <span className="text-purple-300">agent_message {counts.agent_message}</span>
+          <span className="text-emerald-300">iter_prog {counts.iteration_progress}</span>
+          <span className="text-amber-300">result {counts.result}</span>
+          <span className="text-slate-300">tail_meta {counts.tail_meta}</span>
+          {counts.unknown > 0 && <span className="text-slate-400">? {counts.unknown}</span>}
+        </div>
+        <pre className="flex-1 overflow-auto text-[10px] font-mono text-slate-300 bg-slate-950/60 rounded p-2 leading-tight">
+          {lines.length === 0
+            ? running
+              ? '// Python sidecar 시작됨 — 첫 event 대기 중…'
+              : '// (시작 버튼을 누르면 events.jsonl 이 tail 됩니다)'
+            : lines
+                .map((l) => {
+                  if (!l.parsed) return `[raw] ${l.raw}`
+                  if (l.parsed.type === 'tail_meta') {
+                    return `[tail_meta] ${l.parsed.kind ?? '?'} — ${l.parsed.detail ?? l.parsed.path ?? ''}`
+                  }
+                  const main = l.parsed.agent ?? l.parsed.phase ?? l.parsed.verdict ?? ''
+                  const status = l.parsed.status ?? ''
+                  return `[${l.parsed.type ?? '?'}] ${main}  ${status}`.trim()
+                })
+                .join('\n')}
+        </pre>
+      </section>
     </div>
   )
 }

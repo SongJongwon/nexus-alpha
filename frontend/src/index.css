@@ -1,17 +1,75 @@
 @import "tailwindcss";
 
-/* Sprint 5 PR-B — Tauri shell 의 다크 모드 baseline. Tailwind v4 의 색상
-   유틸리티 (slate/sky/blue/purple/emerald) 가 본 baseline 위에 적용된다. */
+/* Sprint 6 UI 개편 — Agent Office 3단 레이아웃의 base + 픽셀 애니메이션. */
+
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
-  background-color: #020617; /* slate-950 */
-  color: #e2e8f0;            /* slate-200 */
-  font-family: system-ui, -apple-system, "Segoe UI", "Pretendard", "Apple SD Gothic Neo",
-    "Noto Sans KR", sans-serif;
+  background-color: #0d1117; /* GitHub Dark base — PM 명시 */
+  color: #e6edf3;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    "Pretendard",
+    "Apple SD Gothic Neo",
+    "Noto Sans KR",
+    sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  overflow: hidden; /* 3단 레이아웃이 viewport 안에서 스크롤 */
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* working agent 의 위아래 bob 애니메이션 — ~1Hz, 부드러운 ease-in-out */
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.animate-bob {
+  animation: bob 0.9s ease-in-out infinite;
+}
+
+/* 부서 카드의 펄스 (working 진행 중인 부서 강조) */
+@keyframes dept-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--pulse-color, rgba(56, 189, 248, 0.5));
+  }
+  50% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+.animate-dept-pulse {
+  animation: dept-pulse 1.4s ease-out infinite;
+}
+
+/* 스크롤바 다크 모드 친화 */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: #0d1117;
+}
+*::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
 }
