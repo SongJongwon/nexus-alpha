@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+/* Sprint 5 PR-B — Tauri shell 의 다크 모드 baseline. Tailwind v4 의 색상
+   유틸리티 (slate/sky/blue/purple/emerald) 가 본 baseline 위에 적용된다. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background-color: #020617; /* slate-950 */
+  color: #e2e8f0;            /* slate-200 */
+  font-family: system-ui, -apple-system, "Segoe UI", "Pretendard", "Apple SD Gothic Neo",
+    "Noto Sans KR", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
