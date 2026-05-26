@@ -233,8 +233,13 @@ async fn start_run(
         .arg(max_iterations.to_string())
         .arg("--non-interactive")
         .current_dir(&project_root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        // 2026-05-26 fix — Stdio::piped() 인데 부모가 read 안 하면 child 의
+        // OS write buffer full → Python sidecar 가 BrokenPipeError 로 즉시 사망 →
+        // events.jsonl 0 byte. inherit() 로 변경하면 dev 모드는 Tauri shell 의
+        // console 로 stream (debugging 가능), release 의 GUI subsystem 은 NULL
+        // handle inherit (조용히 무시) — 양쪽 모두 broken pipe 회피.
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
     if build {
         cmd.arg("--build");
     }
@@ -276,21 +281,71 @@ fn resolve_project_root() -> Result<PathBuf, String> {
 }
 
 fn tail_loop(app: AppHandle, path: PathBuf) {
+    // 2026-05-26 — 시작 즉시 *meta event* emit. frontend 가 본 event 를 받으면
+    // listen 권한 + tail thread 모두 정상 evidence (PR #200 capability fix 적용 확인).
+    emit_tail_meta(
+        &app,
+        "tail_started",
+        &path,
+        &format!("watching path (poll 500ms)"),
+    );
+
     let mut offset: u64 = 0;
+    let mut announced_ready = false;
+    let mut announced_missing = false;
+    let mut missing_round_count: u32 = 0;
     loop {
         thread::sleep(Duration::from_millis(500));
-        if let Ok((lines, new_offset)) = read_new_lines(&path, offset) {
-            offset = new_offset;
-            for line in lines {
-                let trimmed = line.trim_end();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if let Err(err) = app.emit("nexus://telemetry", trimmed.to_string()) {
-                    eprintln!("[Tauri] telemetry emit 실패: {err}");
+        if !path.exists() {
+            missing_round_count = missing_round_count.saturating_add(1);
+            // 첫 1초 (2 round) 이후 file 미존재 시 1회만 알림.
+            if !announced_missing && missing_round_count >= 2 {
+                emit_tail_meta(
+                    &app,
+                    "tail_file_missing",
+                    &path,
+                    "events.jsonl 미존재 — Python sidecar 가 실행되지 않았거나 즉시 종료된 가능성",
+                );
+                announced_missing = true;
+            }
+            continue;
+        }
+        if !announced_ready {
+            emit_tail_meta(&app, "tail_file_ready", &path, "events.jsonl 발견 — tail 시작");
+            announced_ready = true;
+        }
+        match read_new_lines(&path, offset) {
+            Ok((lines, new_offset)) => {
+                offset = new_offset;
+                for line in lines {
+                    let trimmed = line.trim_end();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Err(err) = app.emit("nexus://telemetry", trimmed.to_string()) {
+                        eprintln!("[Tauri] telemetry emit 실패: {err}");
+                    }
                 }
             }
+            Err(err) => {
+                eprintln!("[Tauri] events.jsonl read 실패: {err}");
+            }
         }
+    }
+}
+
+/// `nexus://telemetry` channel 에 진단용 *meta* JSON 한 줄 emit. frontend 는
+/// `type=tail_meta` 로 인식. ad-hoc 진단 정보를 *기존 event stream* 으로 흘려보내
+/// 별도 channel 추가 없이 stream panel 에 즉시 표시되도록 한다.
+fn emit_tail_meta(app: &AppHandle, kind: &str, path: &Path, detail: &str) {
+    let payload = serde_json::json!({
+        "type": "tail_meta",
+        "kind": kind,
+        "path": path.to_string_lossy(),
+        "detail": detail,
+    });
+    if let Ok(line) = serde_json::to_string(&payload) {
+        let _ = app.emit("nexus://telemetry", line);
     }
 }
 
