@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.songjongwon.nexus-alpha",
   "build": {
-    "frontendDist": "../frontend"
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../frontend run dev",
+    "beforeBuildCommand": "npm --prefix ../frontend run build"
   },
   "app": {
     "windows": [
