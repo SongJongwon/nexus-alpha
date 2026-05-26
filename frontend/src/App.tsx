@@ -171,6 +171,16 @@ function App() {
         const next = [...prev, captured]
         return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next
       })
+      // 실행 종료 감지 → 시작 버튼 상태 reset.
+      //   - ResultEvent (verdict 결정): 정상/BLOCKED 모두 종료
+      //   - IterationProgressEvent (phase=run_end): run 종료 마커
+      // 둘 중 어느 것이 먼저 와도 안전하게 false 로 reset.
+      if (
+        parsed?.type === 'result' ||
+        (parsed?.type === 'iteration_progress' && parsed.phase === 'run_end')
+      ) {
+        setRunning(false)
+      }
     })
       .then((fn) => {
         unlisten = fn
