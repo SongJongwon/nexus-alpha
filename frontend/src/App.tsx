@@ -1,21 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 /**
- * Sprint 5 PR-C — Agent Office Visualizer 의 *실제 sidecar wire layer*.
+ * Sprint 5 이후 PR — Claude Code CLI 인증 통합 + sticky toolbar.
  *
- * PR-B 는 정적 부서 그리드 placeholder, **본 PR-C** 는:
- *   1. 자연어 입력창 + 시작 버튼 → Rust `start_run` command invoke.
- *   2. Rust 의 tail thread 가 emit 한 `nexus://telemetry` event 수신
- *      (events.jsonl 한 line 당 한 event) → 콘솔 log + 화면 panel 렌더.
- *   3. event type 별 카운터 (`agent_status` / `agent_message` /
- *      `iteration_progress` / `result`) 로 PR #188 Sprint 4 의 4 event type
- *      수신 가시화.
- *
- * 본 PR 시점 한계:
- *   - 카드 펄스 / working 강조 / 대화 panel 의 *부서별 매핑* 은 Sprint 6 시각화 단계.
- *   - run 중단 / 재실행 / 다중 run 동시 처리는 PR-C 이후 follow-up.
+ * 추가 변경:
+ *   1. Sticky 툴바 (top, z-50) — 로고 + 인증 상태 (🟢/🔴 + 이메일 + MAX 뱃지) + 로그인/로그아웃 버튼.
+ *   2. 앱 시작 시 invoke('claude_auth_status') → 자동 인증 상태 표시.
+ *   3. 로그아웃: 확인 다이얼로그 (진행 중 작업 있으면 경고 강화) → invoke('claude_auth_logout') → 상태 갱신.
+ *   4. 시작 버튼: 로그인 안된 경우 "Claude 로그인 필요" 안내 + 시작 차단.
+ *   5. start_run 호출은 Rust 측에서 자동으로 --force-cli 기본 추가 (PM 요청).
  */
 
 type DeptKey = 'planning' | 'engineering' | 'learning'
@@ -99,6 +94,24 @@ interface CapturedLine {
   receivedAt: string
 }
 
+interface AuthStatus {
+  logged_in: boolean
+  email: string | null
+  subscription_type: string | null
+  auth_method: string | null
+  org_name: string | null
+  error: string | null
+}
+
+const EMPTY_AUTH: AuthStatus = {
+  logged_in: false,
+  email: null,
+  subscription_type: null,
+  auth_method: null,
+  org_name: null,
+  error: null,
+}
+
 const MAX_LINES = 200
 
 function App() {
@@ -108,6 +121,27 @@ function App() {
   const [eventsPath, setEventsPath] = useState<string | null>(null)
   const [lines, setLines] = useState<CapturedLine[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [auth, setAuth] = useState<AuthStatus>(EMPTY_AUTH)
+  const [authLoading, setAuthLoading] = useState<boolean>(true)
+
+  const refreshAuth = useCallback(async () => {
+    setAuthLoading(true)
+    try {
+      const status = await invoke<AuthStatus>('claude_auth_status')
+      setAuth(status)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[Auth] status 조회 실패', e)
+      setAuth({ ...EMPTY_AUTH, error: String(e ?? 'unknown') })
+    } finally {
+      setAuthLoading(false)
+    }
+  }, [])
+
+  // 앱 시작 시 자동 인증 조회 + telemetry listener 등록.
+  useEffect(() => {
+    void refreshAuth()
+  }, [refreshAuth])
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined
@@ -119,7 +153,6 @@ function App() {
       } catch {
         parsed = null
       }
-      // PR-C 검증 목적의 콘솔 log — sprint 5 가이드의 "4 event type 콘솔 log" 요구
       // eslint-disable-next-line no-console
       console.log('[Telemetry]', parsed?.type ?? 'unknown', parsed ?? raw)
       setLines((prev) => {
@@ -160,7 +193,12 @@ function App() {
   }, [lines])
 
   const handleStart = async () => {
-    if (!request.trim() || running) return
+    if (running) return
+    if (!request.trim()) return
+    if (!auth.logged_in) {
+      setError('Claude 로그인이 필요합니다. 우측 상단 [로그인] 버튼을 눌러주세요.')
+      return
+    }
     setError(null)
     setRunning(true)
     setLines([])
@@ -183,24 +221,111 @@ function App() {
     }
   }
 
+  const handleLogin = async () => {
+    setError(null)
+    try {
+      const status = await invoke<AuthStatus>('claude_auth_login')
+      setAuth(status)
+    } catch (e) {
+      const msg = String(e ?? 'unknown')
+      // eslint-disable-next-line no-console
+      console.error('[Auth] login 실패', e)
+      setError(`로그인 실패: ${msg}`)
+    }
+  }
+
+  const handleLogout = async () => {
+    const msg = running
+      ? '⚠️ 진행 중인 작업이 있습니다.\n로그아웃 시 sidecar 의 후속 LLM 호출이 인증 만료로 실패할 수 있습니다.\n그래도 로그아웃 하시겠습니까?'
+      : '로그아웃 하시겠습니까?'
+    if (!window.confirm(msg)) return
+    try {
+      await invoke<void>('claude_auth_logout')
+      setAuth(EMPTY_AUTH)
+    } catch (e) {
+      const errMsg = String(e ?? 'unknown')
+      // eslint-disable-next-line no-console
+      console.error('[Auth] logout 실패', e)
+      setError(`로그아웃 실패: ${errMsg}`)
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 to-slate-900 text-slate-100 p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <header>
-          <h1 className="text-3xl font-bold text-sky-400 mb-1">
-            Nexus Alpha — Agent Office
-          </h1>
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 to-slate-900 text-slate-100">
+      {/* ============ 1. Sticky 툴바 ============ */}
+      <header className="sticky top-0 z-50 backdrop-blur-md bg-slate-950/85 border-b border-slate-800">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-bold text-sky-400">Nexus Alpha</span>
+            <span className="text-xs text-slate-500 hidden sm:inline">Agent Office</span>
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            {authLoading ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-slate-500 animate-pulse" aria-hidden />
+                <span className="text-slate-400">인증 상태 확인 중…</span>
+              </>
+            ) : auth.logged_in ? (
+              <>
+                <span
+                  className="w-2 h-2 rounded-full bg-emerald-500"
+                  aria-label="Claude Code 로그인 됨"
+                />
+                <span className="text-slate-200 max-w-[16rem] truncate" title={auth.email ?? ''}>
+                  {auth.email ?? '(이메일 없음)'}
+                </span>
+                {auth.subscription_type?.toLowerCase() === 'max' && (
+                  <span className="px-2 py-0.5 rounded bg-emerald-600/30 border border-emerald-500/60 text-emerald-200 text-xs font-bold tracking-wide">
+                    MAX
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  className="ml-1 px-3 py-1 rounded-md border border-slate-600 hover:border-slate-400 text-slate-200 hover:text-white text-xs transition"
+                >
+                  로그아웃
+                </button>
+              </>
+            ) : (
+              <>
+                <span
+                  className="w-2 h-2 rounded-full bg-red-500"
+                  aria-label="Claude Code 로그인 안 됨"
+                />
+                <span className="text-slate-300">Claude 로그인 필요</span>
+                <button
+                  type="button"
+                  onClick={() => void handleLogin()}
+                  className="ml-1 px-3 py-1 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition"
+                >
+                  로그인
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        {auth.error && !authLoading && (
+          <div className="max-w-6xl mx-auto px-6 pb-2 text-xs text-amber-400">
+            <strong>auth status 경고:</strong> {auth.error}
+          </div>
+        )}
+      </header>
+
+      <main className="max-w-6xl mx-auto px-6 py-6 space-y-6">
+        <section>
+          <h1 className="text-2xl font-bold text-sky-400 mb-1">Agent Office</h1>
           <p className="text-slate-400 text-sm">
-            Sprint 5 PR-C — Python sidecar spawn + JSON Lines tail + 4 event
-            type 콘솔 log. Sprint 6 에서 부서 펄스 / 대화 panel 시각화.
+            자연어 → .exe 풀체인 자기 진화 cycle 의 사용자 가시화 layer. 본 PR
+            에서 Claude Code CLI 인증 통합 + sticky toolbar 추가.
           </p>
-        </header>
+        </section>
 
         <section>
           <label className="block text-slate-300 mb-2 text-sm font-semibold">
             자연어 요청{' '}
             <span className="text-slate-500 font-normal">
-              (Tauri command `start_run` 으로 Python sidecar 실행)
+              (Tauri command `start_run` + Python sidecar — Claude Code 구독 기반)
             </span>
           </label>
           <div className="flex gap-2">
@@ -226,12 +351,13 @@ function App() {
           </div>
           {error && (
             <p className="mt-2 text-sm text-red-400">
-              <strong>start_run 실패:</strong> {error}
+              <strong>오류:</strong> {error}
             </p>
           )}
           {eventsPath && (
             <p className="mt-2 text-xs text-slate-500">
-              events.jsonl: <code className="px-1 bg-slate-800 rounded text-slate-400">{eventsPath}</code>
+              events.jsonl:{' '}
+              <code className="px-1 bg-slate-800 rounded text-slate-400">{eventsPath}</code>
             </p>
           )}
         </section>
@@ -295,11 +421,11 @@ function App() {
         </section>
 
         <footer className="p-4 border border-dashed border-slate-700 rounded-lg text-sm text-slate-400">
-          <strong className="text-slate-300">Sprint 6 도착 후:</strong> 본
-          panel 의 line 들은 부서 카드의 펄스 / 대화 panel 의 말풍선 / iteration
-          progress 바로 *시각화*. 본 PR-C 는 stream 수신 자체의 검증.
+          <strong className="text-slate-300">Sprint 6 도착 후:</strong> 본 panel
+          의 line 들은 부서 카드의 펄스 / 대화 panel 의 말풍선 / iteration progress
+          바로 시각화. 본 PR 은 인증 + 시작 흐름의 baseline.
         </footer>
-      </div>
+      </main>
     </div>
   )
 }
