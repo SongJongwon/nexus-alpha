@@ -85,6 +85,10 @@ interface TelemetryEvent {
   phase?: string
   verdict?: string
   ts?: string
+  // tail_meta (Rust tail_loop 진단 ping) 필드
+  kind?: string
+  path?: string
+  detail?: string
   [k: string]: unknown
 }
 
@@ -186,6 +190,7 @@ function App() {
       agent_message: 0,
       iteration_progress: 0,
       result: 0,
+      tail_meta: 0,
       unknown: 0,
     }
     for (const line of lines) {
@@ -406,19 +411,27 @@ function App() {
             <span className="text-purple-300">agent_message {counts.agent_message}</span>
             <span className="text-emerald-300">iteration_progress {counts.iteration_progress}</span>
             <span className="text-amber-300">result {counts.result}</span>
+            <span className="text-slate-300">tail_meta {counts.tail_meta}</span>
             {counts.unknown > 0 && (
               <span className="text-slate-400">unknown {counts.unknown}</span>
             )}
           </div>
           <pre className="h-64 overflow-auto text-xs font-mono text-slate-300 bg-slate-950/60 rounded-lg p-3 leading-relaxed">
             {lines.length === 0
-              ? '// (시작 버튼을 누르면 Python sidecar 의 events.jsonl 이 tail 됩니다)'
+              ? running
+                ? '// Python sidecar 시작됨 — 첫 event 대기 중…\n// (5초 이상 안 보이면 tail_meta 도 안 옴 → listen 권한 / Tauri 재시작 필요)'
+                : '// (시작 버튼을 누르면 Python sidecar 의 events.jsonl 이 tail 됩니다)'
               : lines
-                  .map((l) =>
-                    l.parsed
-                      ? `[${l.parsed.type ?? '?'}] ${l.parsed.agent ?? l.parsed.phase ?? l.parsed.verdict ?? ''}  ${l.parsed.status ?? ''}`.trim()
-                      : `[raw] ${l.raw}`,
-                  )
+                  .map((l) => {
+                    if (!l.parsed) return `[raw] ${l.raw}`
+                    if (l.parsed.type === 'tail_meta') {
+                      return `[tail_meta] ${l.parsed.kind ?? '?'} — ${l.parsed.detail ?? l.parsed.path ?? ''}`
+                    }
+                    const main =
+                      l.parsed.agent ?? l.parsed.phase ?? l.parsed.verdict ?? ''
+                    const status = l.parsed.status ?? ''
+                    return `[${l.parsed.type ?? '?'}] ${main}  ${status}`.trim()
+                  })
                   .join('\n')}
           </pre>
         </section>
