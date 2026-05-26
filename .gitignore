@@ -30,3 +30,14 @@ desktop.ini
 # 임시 파일
 *.tmp
 *.temp
+
+# Sprint 5 — Tauri 데스크탑 앱 build artifacts (Cargo.lock 은 binary 프로젝트이므로 commit)
+src-tauri/target/
+src-tauri/gen/schemas/
+frontend/node_modules/
+frontend/dist/
+
+# PM 임시 작업 file (작업 무관)
+items.csv
+x.csv
+out/
