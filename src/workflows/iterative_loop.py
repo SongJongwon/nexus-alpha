@@ -56,6 +56,7 @@ Phase 3 (Sandbox 통합) 추가 메모:
 
 from __future__ import annotations
 
+import ast
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -798,45 +799,101 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     }
 
 
-_GUI_IMPORT_MARKERS: tuple[str, ...] = (
-    "import tkinter",
-    "from tkinter",
-    "import flet",
-    "from flet",
-    "import PyQt5",
-    "import PyQt6",
-    "from PyQt5",
-    "from PyQt6",
-    "import PySide2",
-    "import PySide6",
-    "from PySide2",
-    "from PySide6",
-    "import customtkinter",
-    "from customtkinter",
-    "import kivy",
-    "from kivy",
-    "import wx",
-    "from wx",
-    "import dearpygui",
-    "from dearpygui",
-)
+# GUI 프레임워크의 *최상위 모듈 이름* — AST `import X` / `from X import ...` 매칭용.
+# PR #209 의 substring grep 을 PR (본 PR) 에서 AST 기반으로 강화.
+# 4회 BLOCKED 사고 (계산기 / 유튜브 녹화기 / theme.py entry / 칸반 보드) 차단.
+_GUI_TOP_LEVEL_MODULES: frozenset[str] = frozenset({
+    "tkinter",
+    "flet",
+    "PyQt5",
+    "PyQt6",
+    "PySide2",
+    "PySide6",
+    "customtkinter",
+    "kivy",
+    "wx",
+    "dearpygui",
+    "ttkbootstrap",  # tkinter 기반 — 동일 mainloop 문제
+    "pygame",        # event loop 동일
+})
+
+
+def _ast_detect_gui_in_code(code: str) -> bool:
+    """단일 .py 코드 문자열에 GUI framework import 가 있는지 AST 로 검사.
+
+    `ast.walk` 로 모든 노드 순회 → `ast.Import` / `ast.ImportFrom` 의 *top-level
+    module 이름* 을 `_GUI_TOP_LEVEL_MODULES` 와 매칭. 주석/문자열 안의 marker
+    는 *false positive* — AST 방식은 *실제 import 만* 검출 (PR #209 substring
+    grep 의 한계 극복).
+
+    Args:
+        code: Python source 코드 문자열.
+
+    Returns:
+        True 면 GUI framework import 발견. AST parse 실패 (SyntaxError) 시는
+        보수적으로 **substring fallback** 으로 한 번 더 검사.
+    """
+    if not code:
+        return False
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError):
+        # AST parse 실패 — substring fallback (보수적 양성 판정).
+        return _substring_detect_gui_in_code(code)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = (alias.name or "").split(".", 1)[0]
+                if top in _GUI_TOP_LEVEL_MODULES:
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            module = (node.module or "").split(".", 1)[0]
+            if module in _GUI_TOP_LEVEL_MODULES:
+                return True
+    return False
+
+
+def _substring_detect_gui_in_code(code: str) -> bool:
+    """AST 실패 시 fallback — substring grep. PR #209 패턴 유지 (보수적)."""
+    markers = (
+        "import tkinter", "from tkinter",
+        "import flet", "from flet",
+        "import PyQt5", "import PyQt6", "from PyQt5", "from PyQt6",
+        "import PySide2", "import PySide6", "from PySide2", "from PySide6",
+        "import customtkinter", "from customtkinter",
+        "import kivy", "from kivy",
+        "import wx", "from wx",
+        "import dearpygui", "from dearpygui",
+        "import ttkbootstrap", "from ttkbootstrap",
+        "import pygame", "from pygame",
+    )
+    return any(m in code for m in markers)
 
 
 def _detect_gui_in_saved_files(saved_code_files: Any) -> bool:
-    """saved_code_files 에 GUI 프레임워크 import 마커가 있는지 검사.
+    """saved_code_files (dict of path → code) 중 *어느 한 file* 에라도 GUI
+    framework import 가 있으면 True.
 
-    2026-05-26 추가 — Tkinter 등 GUI 앱의 ``mainloop()`` 가 헤드리스 sandbox 에서
-    종료되지 않아 TIMEOUT 으로 빌드가 BLOCKED 되는 사고 (kanban 앱 사례) 차단용.
-    qa_feedback_loop 의 ``detect_artifact_category()`` 와 동일 marker set, 다만
-    여기서는 파일 경로가 아닌 코드 내용 직접 grep.
+    2026-05-26 강화 (4회 BLOCKED 사고 처방):
+        - 기존 substring grep → AST `ast.walk` + `ast.Import` / `ast.ImportFrom` 매칭
+        - GUI module 추가: ttkbootstrap (tkinter 기반), pygame (event loop)
+        - AST parse 실패 시 substring fallback
     """
     if not saved_code_files:
         return False
     try:
-        code_blob = "\n".join(str(v) for v in saved_code_files.values())
-    except (AttributeError, TypeError):
+        values = saved_code_files.values()
+    except AttributeError:
         return False
-    return any(marker in code_blob for marker in _GUI_IMPORT_MARKERS)
+    for code in values:
+        try:
+            code_str = str(code) if code is not None else ""
+        except (TypeError, ValueError):
+            continue
+        if _ast_detect_gui_in_code(code_str):
+            return True
+    return False
 
 
 def _make_gui_skip_sandbox_result() -> Any:
