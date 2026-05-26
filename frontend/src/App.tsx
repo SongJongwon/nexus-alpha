@@ -768,6 +768,9 @@ function App() {
   const [filter, setFilter] = useState<FilterKey>('all')
   const [agentMessages, setAgentMessages] = useState<TelemetryEvent[]>([])
   const [expandedMsg, setExpandedMsg] = useState<Set<number>>(new Set())
+  const [buildEnabled, setBuildEnabled] = useState<boolean>(true)
+  const [resultEvent, setResultEvent] = useState<TelemetryEvent | null>(null)
+  const [exeRunMessage, setExeRunMessage] = useState<string | null>(null)
 
   const refreshAuth = useCallback(async () => {
     setAuthLoading(true)
@@ -846,6 +849,10 @@ function App() {
         })
       }
 
+      if (parsed?.type === 'result') {
+        // 빌드된 .exe 경로 보존 — banner + 실행 버튼용
+        setResultEvent(parsed)
+      }
       if (
         parsed?.type === 'result' ||
         (parsed?.type === 'iteration_progress' && parsed.phase === 'run_end')
@@ -921,11 +928,13 @@ function App() {
     setActiveHqs(new Set())
     setCurrentNodeByHq({})
     setExpandedMsg(new Set())
+    setResultEvent(null)
+    setExeRunMessage(null)
     try {
       const path = await invoke<string>('start_run', {
         request,
         track: 'A',
-        build: false,
+        build: buildEnabled,
         maxIterations: 1,
       })
       setEventsPath(path)
@@ -933,6 +942,16 @@ function App() {
       const msg = String(e ?? 'unknown')
       setError(msg)
       setRunning(false)
+    }
+  }
+
+  const handleOpenExe = async (path: string) => {
+    setExeRunMessage(null)
+    try {
+      await invoke<void>('open_exe', { path })
+      setExeRunMessage(`실행 시작: ${path.split(/[\\/]/).pop() ?? path}`)
+    } catch (e) {
+      setExeRunMessage(`실행 실패: ${String(e ?? 'unknown')}`)
     }
   }
 
@@ -1067,6 +1086,82 @@ function App() {
         </span>
       </div>
 
+      {/* ============ 2.5. Result Banner (exe_path 있을 때만) ============ */}
+      {resultEvent && (
+        <div
+          className={`flex-shrink-0 border-b border-slate-800 px-6 py-2.5 flex items-center gap-3 text-xs ${
+            resultEvent.verdict === 'COMPLETE' || resultEvent.exe_path
+              ? 'bg-emerald-950/40 border-emerald-800'
+              : 'bg-amber-950/40 border-amber-800'
+          }`}
+        >
+          {resultEvent.exe_path ? (
+            <>
+              <span className="text-lg">✅</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-emerald-300 font-semibold">
+                  실행 파일 생성 완료 — verdict: {String(resultEvent.verdict ?? '')}
+                </div>
+                <div
+                  className="text-slate-400 text-[10px] mt-0.5 truncate font-mono"
+                  title={String(resultEvent.exe_path)}
+                >
+                  {String(resultEvent.exe_path)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleOpenExe(String(resultEvent.exe_path))}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded text-xs font-semibold whitespace-nowrap"
+              >
+                ▶ 실행
+              </button>
+              <button
+                type="button"
+                onClick={() => setResultEvent(null)}
+                className="px-2 py-1 text-slate-400 hover:text-slate-200 text-lg leading-none"
+                title="배너 닫기"
+              >
+                ×
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-lg">⚠</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-amber-300 font-semibold">
+                  실행 종료 — verdict: {String(resultEvent.verdict ?? '')}
+                </div>
+                <div className="text-slate-400 text-[10px] mt-0.5">
+                  {String(resultEvent.summary_line ?? resultEvent.blocked_cause ?? '.exe 생성 안 됨 (build 토글 OFF 또는 빌드 단계 실패)')}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResultEvent(null)}
+                className="px-2 py-1 text-slate-400 hover:text-slate-200 text-lg leading-none"
+                title="배너 닫기"
+              >
+                ×
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {exeRunMessage && (
+        <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900 px-6 py-1.5 text-[10px] text-slate-300 flex items-center justify-between">
+          <span>{exeRunMessage}</span>
+          <button
+            type="button"
+            onClick={() => setExeRunMessage(null)}
+            className="text-slate-500 hover:text-slate-200"
+            title="닫기"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* ============ 3. Filter Bar ============ */}
       <div className="flex-shrink-0 border-b border-slate-800 bg-[#161b22] px-6 py-2 flex items-center gap-1.5 overflow-x-auto whitespace-nowrap">
         <button
@@ -1141,6 +1236,16 @@ function App() {
               onChange={(e) => setRequest(e.target.value)}
               disabled={running}
             />
+            <label className="flex items-center gap-1.5 text-[10px] text-slate-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={buildEnabled}
+                onChange={(e) => setBuildEnabled(e.target.checked)}
+                disabled={running}
+                className="accent-sky-500"
+              />
+              <span>PyInstaller .exe 빌드</span>
+            </label>
             <button
               type="button"
               onClick={() => void handleStart()}
