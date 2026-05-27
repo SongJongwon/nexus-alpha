@@ -581,8 +581,10 @@ const HEADQUARTERS: HeadquartersDef[] = [
       },
       {
         name: 'Knowledge Curator (promoted)',
-        role: '본부 5 → 본부 10 조직개편 (미구현, Phase 3)',
-        implemented: false,
+        role: 'v11 Phase 3 — 본부 5 의 Knowledge Curator 가 본부 10 으로 조직개편된 인스턴스 (구현 ✅ — agent 자체는 본부 5 의 curator.py)',
+        goalDetailed:
+          'Knowledge Curator agent 자체는 본부 5 에 *이미 구현* (knowledge/curator.py). 본부 10 의 "(promoted)" 는 *조직 개편 차원의 논리적 매핑* — 동일 agent 가 본부 10 desk 도 갖는 v11 Phase 3 비전. agent 인스턴스 실재 → implemented: true.',
+        implemented: true,
         hq: 'hq-10',
       },
     ],
