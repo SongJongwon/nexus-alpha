@@ -621,6 +621,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
             enable_gui_branch=not args.force_cli,
             enable_build_branch=args.build,
             enable_rv=args.enable_rv,
+            enable_strategist=args.enable_strategist,
             enable_release_branch=args.release,
             enable_executor=args.build,
             enable_publish=args.release,
@@ -1074,6 +1075,15 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "v13 Phase 1 — 본부 9 Runtime Verification opt-in. 빌드된 .exe 를 "
             "Exe Runtime Tester 가 자율 검증 (silent fail / crash 감지). "
             "default OFF — Telemetry --emit-events 와 동일 패턴 (기존 사용자 영향 0)."
+        ),
+    )
+    parser.add_argument(
+        "--enable-strategist", dest="enable_strategist", action="store_true", default=False,
+        help=(
+            "v13 Phase 2 — 본부 1 System Refactoring Strategist opt-in. "
+            "Auto-Fix Coordinator 가 escalate 결정 시 Strategist 가 events.jsonl "
+            "+ verdict 시퀀스를 분석해 *이사회 안건* markdown 발제. "
+            "default OFF — Phase 4 의결권 활성화 전까지 안건은 보존만."
         ),
     )
     parser.add_argument(
