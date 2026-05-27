@@ -35,6 +35,17 @@ from .requirement_expander import (
     REQUIREMENT_EXPANDER_ROLE,
     create_requirement_expander_agent,
 )
+from .system_refactoring_strategist import (
+    SILENT_FAIL_THRESHOLD,
+    SYSTEM_REFACTORING_STRATEGIST_BACKSTORY,
+    SYSTEM_REFACTORING_STRATEGIST_GOAL,
+    SYSTEM_REFACTORING_STRATEGIST_NAME,
+    SYSTEM_REFACTORING_STRATEGIST_ROLE,
+    RefactoringProposal,
+    analyze_runtime_patterns,
+    trigger_strategist_on_escalation,
+    write_proposal_markdown,
+)
 
 __all__ = [
     "DATA_ANALYST_BACKSTORY",
@@ -49,7 +60,16 @@ __all__ = [
     "REQUIREMENT_EXPANDER_GOAL",
     "REQUIREMENT_EXPANDER_NAME",
     "REQUIREMENT_EXPANDER_ROLE",
+    "SILENT_FAIL_THRESHOLD",
+    "SYSTEM_REFACTORING_STRATEGIST_BACKSTORY",
+    "SYSTEM_REFACTORING_STRATEGIST_GOAL",
+    "SYSTEM_REFACTORING_STRATEGIST_NAME",
+    "SYSTEM_REFACTORING_STRATEGIST_ROLE",
+    "RefactoringProposal",
+    "analyze_runtime_patterns",
     "create_data_analyst_agent",
     "create_gap_analyst_agent",
     "create_requirement_expander_agent",
+    "trigger_strategist_on_escalation",
+    "write_proposal_markdown",
 ]

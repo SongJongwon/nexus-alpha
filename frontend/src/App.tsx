@@ -147,10 +147,10 @@ const HEADQUARTERS: HeadquartersDef[] = [
       },
       {
         name: 'System Refactoring Strategist',
-        role: 'v13 ⭐ 런타임 + Telemetry 분석 → 이사회 자율 개선안 안건 발제 (미구현)',
+        role: 'v13 ⭐ 런타임 + Telemetry 분석 → 이사회 자율 개선안 안건 발제',
         goalDetailed:
-          'v13 ⭐ 자기 진화 루프의 *안건 발제* 노드. 런타임 로그 + Telemetry 데이터를 분석해 시스템 자율 개선안 (예: max_iterations 상향 / GUI sandbox SKIP 강화 / Token 한도 조정) 을 Boardroom 에 안건으로 제출. v12 의 Business Process Analyst + Use Case Specialist 삭제 (행정 오버헤드 다이어트) 후 자율 진화 차원으로 신설.',
-        implemented: false,
+          'v13 ⭐ 자기 진화 루프의 *안건 발제* 노드. 런타임 로그 + Telemetry 데이터를 분석해 시스템 자율 개선안 (예: max_iterations 상향 / GUI sandbox SKIP 강화 / Token 한도 조정) 을 Boardroom 에 안건으로 제출. v12 의 Business Process Analyst + Use Case Specialist 삭제 (행정 오버헤드 다이어트) 후 자율 진화 차원으로 신설. Phase 2 구현 — Auto-Fix Coordinator escalate hook 활용, --enable-strategist opt-in.',
+        implemented: true,
         hq: 'hq-1',
       },
     ],

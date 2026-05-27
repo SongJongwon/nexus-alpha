@@ -57,6 +57,7 @@ Phase 3 (Sandbox 통합) 추가 메모:
 from __future__ import annotations
 
 import ast
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -251,6 +252,10 @@ class _LoopState(TypedDict, total=False):
     enable_rv: bool  # --enable-rv flag. False (default) 면 _node_runtime_verify pass-through
     rv_result: Any  # RuntimeTestResult | None — Exe Runtime Tester 산출
     rv_failure_detected: bool  # silent fail / crash 감지 시 True → prepare_feedback 분기 trigger
+    # v13 Phase 2 (PR #219) — 본부 1 System Refactoring Strategist opt-in wire
+    enable_strategist: bool  # --enable-strategist flag. False (default) 면 escalate 시에도 Strategist 호출 X
+    consecutive_rv_failures: int  # 연속 RV 실패 카운트 (escalate threshold 5)
+    strategist_proposal_path: Any  # Path | None — 발제된 안건 markdown 경로
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -1022,10 +1027,106 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             pass  # artifact 실패가 메인 cycle 차단 X
 
+    # v13 Phase 2 (PR #219) — Auto-Fix Coordinator escalate hook → Strategist 호출
+    consecutive = int(state.get("consecutive_rv_failures", 0))
+    if failure_detected:
+        consecutive += 1
+    else:
+        consecutive = 0  # PASS 시 카운트 reset
+
+    proposal_path = state.get("strategist_proposal_path")
+    if state.get("enable_strategist", False) and failure_detected:
+        try:
+            new_proposal_path = _maybe_trigger_strategist(
+                rv_result=rv_result,
+                consecutive_failures=consecutive,
+                outputs_dir=state.get("outputs_dir", ""),
+            )
+            if new_proposal_path is not None:
+                proposal_path = new_proposal_path
+        except Exception:  # noqa: BLE001
+            pass  # Strategist 실패가 메인 cycle 차단 X
+
     return {
         "rv_result": rv_result,
         "rv_failure_detected": failure_detected,
+        "consecutive_rv_failures": consecutive,
+        "strategist_proposal_path": proposal_path,
     }
+
+
+def _maybe_trigger_strategist(
+    rv_result: Any,
+    consecutive_failures: int,
+    outputs_dir: str,
+) -> Optional[Path]:
+    """Auto-Fix Coordinator escalate 결정 시 Strategist 호출 → proposal md 저장.
+
+    v13 Phase 2 (PR #219) — Phase 1 의 ``decide_auto_fix`` hook 을 활용한 wire.
+
+    Strategist 입력 구성:
+        1. events.jsonl (있으면) — 라이브 telemetry stream
+        2. *in-memory 합성 events* — events.jsonl 부재 시 (test 환경 / telemetry
+           OFF) 에도 결정론 패턴 매처가 동작하도록 ``consecutive_failures`` 개수
+           만큼 SILENT_FAIL/CRASH 합성 event 를 주입.
+    """
+    from src.agents.runtime_verification.auto_fix_coordinator import decide_auto_fix
+    from src.agents.analysis.system_refactoring_strategist import (
+        analyze_runtime_patterns,
+        write_proposal_markdown,
+    )
+
+    # Auto-Fix Coordinator 호출 → escalate 여부 판정
+    decision = decide_auto_fix(
+        runtime_result=rv_result,
+        failure_analysis=None,
+        ui_result=None,
+        consecutive_failures=consecutive_failures,
+    )
+
+    if decision.action != "escalate":
+        return None
+
+    # events.jsonl path — env var 에서 추출 (--emit-events 가 set 한 경로)
+    events: list[dict[str, Any]] = []
+    raw = (os.environ.get("NEXUS_TELEMETRY_PATH") or "").strip()
+    if raw:
+        candidate = Path(raw)
+        if candidate.exists():
+            try:
+                import json as _json
+                for line in candidate.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        events.append(_json.loads(line))
+                    except _json.JSONDecodeError:
+                        continue
+            except Exception:  # noqa: BLE001
+                pass
+
+    # in-memory 합성 events — events.jsonl 부재 또는 silent_fail 카운트 부족 시
+    # ``consecutive_failures`` 만큼 verdict 시그널을 주입 (결정론 매처 활성화).
+    synthetic_verdict = (
+        rv_result.verdict if rv_result and rv_result.verdict in ("SILENT_FAIL", "CRASH")
+        else "SILENT_FAIL"
+    )
+    for _ in range(consecutive_failures):
+        events.append({
+            "agent": "exe_runtime_tester",
+            "status": "done",
+            "detail": f"verdict={synthetic_verdict}",
+        })
+
+    proposal = analyze_runtime_patterns(events=events, recent_verdicts=None)
+
+    if outputs_dir:
+        output_dir = Path(outputs_dir) / "_refactoring_proposals"
+    else:
+        output_dir = Path("outputs") / "_refactoring_proposals"
+
+    return write_proposal_markdown(proposal, output_dir)
 
 
 def _write_runtime_verify_artifact(
@@ -1370,6 +1471,7 @@ def run_iterative_loop(
     enable_gui_branch: bool = False,
     enable_build_branch: bool = False,
     enable_rv: bool = False,  # v13 Phase 1 2단계 — 본부 9 RV opt-in (default OFF, 1477 PASS 보호)
+    enable_strategist: bool = False,  # v13 Phase 2 — 본부 1 Strategist opt-in (default OFF)
     target_platform: str = "windows",
     enable_release_branch: bool = False,
     previous_version: str = "",
@@ -1491,6 +1593,10 @@ def run_iterative_loop(
             "enable_build_branch": enable_build_branch,
             "enable_rv": enable_rv,
             "rv_failure_detected": False,
+            # v13 Phase 2 (PR #219) — Strategist opt-in 초기 state
+            "enable_strategist": enable_strategist,
+            "consecutive_rv_failures": 0,
+            "strategist_proposal_path": None,
             "target_platform": target_platform,
             "enable_release_branch": enable_release_branch,
             "previous_version": previous_version,
