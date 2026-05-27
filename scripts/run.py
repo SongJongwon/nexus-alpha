@@ -649,13 +649,20 @@ def _run_track_a(args: argparse.Namespace) -> int:
         from src.workflows.analyze_and_implement import run_analyze_and_implement
 
         tracker.start("analyze_and_implement (4~7 agent chain + build/release)")
+        # PR #217 follow-up — enable_rv 는 iterative_loop 전용 (analyze_and_implement
+        # 단발 호출 시 RV 노드 우회가 자연 동작). 잘못 전달 시 TypeError 발생.
+        if args.enable_rv:
+            print(
+                "  ! --enable-rv 는 --auto-iterate 모드에서만 동작 — "
+                "1회성 chain 실행에서는 무시됨",
+                file=sys.stderr,
+            )
         result = run_analyze_and_implement(
             args.request,
             outputs_dir=outputs_dir,
             verbose=args.verbose,
             enable_gui_branch=not args.force_cli,
             enable_build_branch=args.build,
-            enable_rv=args.enable_rv,
             enable_release_branch=args.release,
             enable_executor=args.build,
             enable_publish=args.release,
