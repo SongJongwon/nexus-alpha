@@ -1012,10 +1012,56 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
         return {}
 
     failure_detected = rv_result.verdict in ("SILENT_FAIL", "CRASH")
+
+    # PR #217 follow-up — 가시 artifact (26_runtime_verify_*.md) 보장.
+    # events.jsonl 외에 outputs/ 폴더에서도 RV 결과를 즉시 확인 가능.
+    saved_dir = getattr(chain, "saved_dir", None)
+    if isinstance(saved_dir, Path) and saved_dir.exists():
+        try:
+            _write_runtime_verify_artifact(saved_dir, rv_result, exe_path)
+        except Exception:  # noqa: BLE001
+            pass  # artifact 실패가 메인 cycle 차단 X
+
     return {
         "rv_result": rv_result,
         "rv_failure_detected": failure_detected,
     }
+
+
+def _write_runtime_verify_artifact(
+    saved_dir: Path, rv_result: Any, exe_path: Path
+) -> None:
+    """`26_runtime_verify_<verdict>.md` 작성 — 사용자 가시 RV 증거.
+
+    분석 reasoning: events.jsonl 만으로는 RV 동작이 *비가시* (CLI 사용자가
+    텔레메트리를 직접 grep 해야 함). outputs/workflow/ 의 numbered .md 시퀀스에
+    RV 결과를 끼워넣어 25_executor_result.md 직후 자연스럽게 확인 가능.
+    """
+    verdict_lower = str(rv_result.verdict).lower()
+    artifact_path = saved_dir / f"26_runtime_verify_{verdict_lower}.md"
+    body_lines = [
+        "# Runtime Verification (본부 9 RV)",
+        "",
+        f"- **verdict**: `{rv_result.verdict}`",
+        f"- **exe_path**: `{exe_path.name}`",
+        f"- **exit_code**: {rv_result.exit_code}",
+        f"- **startup_time_ms**: {rv_result.startup_time_ms:.1f}",
+        f"- **memory_peak_mb**: {rv_result.memory_peak_mb}",
+        f"- **timed_out**: {rv_result.timed_out}",
+        "",
+        "## stderr (excerpt)",
+        "",
+        "```",
+        (rv_result.stderr or "(빈 stderr)").strip()[:2000],
+        "```",
+        "",
+        "## error_trace",
+        "",
+        "```",
+        (rv_result.error_trace or "(없음)").strip()[:2000],
+        "```",
+    ]
+    artifact_path.write_text("\n".join(body_lines), encoding="utf-8")
 
 
 def _node_analyze_gap(state: _LoopState) -> dict[str, Any]:
