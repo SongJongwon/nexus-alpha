@@ -256,6 +256,9 @@ class _LoopState(TypedDict, total=False):
     enable_strategist: bool  # --enable-strategist flag. False (default) 면 escalate 시에도 Strategist 호출 X
     consecutive_rv_failures: int  # 연속 RV 실패 카운트 (escalate threshold 5)
     strategist_proposal_path: Any  # Path | None — 발제된 안건 markdown 경로
+    # v13 Phase 3 (PR #221) — 본부 10 Boardroom 회의실 인프라 opt-in wire
+    enable_boardroom: bool  # --enable-boardroom flag. False (default) 면 안건 발제해도 회의 X
+    boardroom_session_path: Any  # Path | None — 회의록 markdown 경로
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -1035,6 +1038,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
         consecutive = 0  # PASS 시 카운트 reset
 
     proposal_path = state.get("strategist_proposal_path")
+    boardroom_session_path = state.get("boardroom_session_path")
     if state.get("enable_strategist", False) and failure_detected:
         try:
             new_proposal_path = _maybe_trigger_strategist(
@@ -1044,6 +1048,18 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
             )
             if new_proposal_path is not None:
                 proposal_path = new_proposal_path
+                # v13 Phase 3 — Strategist 안건 작성 직후 Boardroom 회의 자동 소집
+                # (enable_boardroom=True 시만; 의결권은 Phase 4 활성화)
+                if state.get("enable_boardroom", False):
+                    try:
+                        new_session_path = _maybe_convene_boardroom(
+                            proposal_path=new_proposal_path,
+                            outputs_dir=state.get("outputs_dir", ""),
+                        )
+                        if new_session_path is not None:
+                            boardroom_session_path = new_session_path
+                    except Exception:  # noqa: BLE001
+                        pass  # Boardroom 실패가 메인 cycle 차단 X
         except Exception:  # noqa: BLE001
             pass  # Strategist 실패가 메인 cycle 차단 X
 
@@ -1052,6 +1068,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
         "rv_failure_detected": failure_detected,
         "consecutive_rv_failures": consecutive,
         "strategist_proposal_path": proposal_path,
+        "boardroom_session_path": boardroom_session_path,
     }
 
 
@@ -1127,6 +1144,49 @@ def _maybe_trigger_strategist(
         output_dir = Path("outputs") / "_refactoring_proposals"
 
     return write_proposal_markdown(proposal, output_dir)
+
+
+def _maybe_convene_boardroom(
+    proposal_path: Path,
+    outputs_dir: str,
+) -> Optional[Path]:
+    """v13 Phase 3 — Strategist 안건 작성 후 Boardroom 회의 자동 소집.
+
+    동작:
+        1. proposal markdown 의 제목 + 본문에서 ``RefactoringProposal``-like
+           duck-typed object 재구성 (title 만 사용)
+        2. ``convene_full_boardroom_cycle`` 호출 → boardroom_trigger →
+           goal_alignment_check (Placeholder) → budget_brake (Placeholder)
+        3. 회의록 markdown 을 ``outputs/_boardroom_sessions/`` 에 저장
+
+    Returns:
+        회의록 markdown 경로 (실패 시 None).
+    """
+    from src.agents.coordination import convene_full_boardroom_cycle
+
+    # proposal markdown 첫 줄 (# title) 추출 → duck-typed proposal 구성
+    proposal_title = "(미지정 안건)"
+    try:
+        first_line = proposal_path.read_text(encoding="utf-8").splitlines()[0]
+        if first_line.startswith("# "):
+            proposal_title = first_line[2:].strip()
+    except Exception:  # noqa: BLE001
+        pass
+
+    class _DuckProposal:
+        title = proposal_title
+
+    if outputs_dir:
+        boardroom_dir = Path(outputs_dir) / "_boardroom_sessions"
+    else:
+        boardroom_dir = Path("outputs") / "_boardroom_sessions"
+
+    _, md_path = convene_full_boardroom_cycle(
+        proposal=_DuckProposal(),
+        proposal_path=str(proposal_path),
+        output_dir=boardroom_dir,
+    )
+    return md_path
 
 
 def _write_runtime_verify_artifact(
@@ -1472,6 +1532,7 @@ def run_iterative_loop(
     enable_build_branch: bool = False,
     enable_rv: bool = False,  # v13 Phase 1 2단계 — 본부 9 RV opt-in (default OFF, 1477 PASS 보호)
     enable_strategist: bool = False,  # v13 Phase 2 — 본부 1 Strategist opt-in (default OFF)
+    enable_boardroom: bool = False,  # v13 Phase 3 — 본부 10 Boardroom opt-in (default OFF)
     target_platform: str = "windows",
     enable_release_branch: bool = False,
     previous_version: str = "",
@@ -1597,6 +1658,9 @@ def run_iterative_loop(
             "enable_strategist": enable_strategist,
             "consecutive_rv_failures": 0,
             "strategist_proposal_path": None,
+            # v13 Phase 3 (PR #221) — Boardroom 회의실 인프라 초기 state
+            "enable_boardroom": enable_boardroom,
+            "boardroom_session_path": None,
             "target_platform": target_platform,
             "enable_release_branch": enable_release_branch,
             "previous_version": previous_version,

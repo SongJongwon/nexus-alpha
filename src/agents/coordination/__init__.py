@@ -29,6 +29,22 @@ PR #138 Phase 1 full (2026-05-15, 본인 비전 통찰 6):
     )
 """
 
+from .boardroom_facilitator import (
+    BOARDROOM_FACILITATOR_BACKSTORY,
+    BOARDROOM_FACILITATOR_GOAL,
+    BOARDROOM_FACILITATOR_NAME,
+    BOARDROOM_FACILITATOR_ROLE,
+    DEFAULT_BOARDROOM_ATTENDEES,
+    AlignmentCheckResult,
+    BoardroomFacilitator,
+    BoardroomSession,
+    BudgetBrakeResult,
+    convene_full_boardroom_cycle,
+    node_boardroom_trigger,
+    node_budget_brake,
+    node_goal_alignment_check,
+    write_boardroom_session_markdown,
+)
 from .meeting_facilitator import (
     DEFAULT_PARTICIPANTS,
     MEETING_FACILITATOR_BACKSTORY,
@@ -51,6 +67,15 @@ from .schemas import (
 )
 
 __all__ = [
+    "AlignmentCheckResult",
+    "BOARDROOM_FACILITATOR_BACKSTORY",
+    "BOARDROOM_FACILITATOR_GOAL",
+    "BOARDROOM_FACILITATOR_NAME",
+    "BOARDROOM_FACILITATOR_ROLE",
+    "BoardroomFacilitator",
+    "BoardroomSession",
+    "BudgetBrakeResult",
+    "DEFAULT_BOARDROOM_ATTENDEES",
     "DEFAULT_PARTICIPANTS",
     "MEETING_FACILITATOR_BACKSTORY",
     "MEETING_FACILITATOR_GOAL",
@@ -63,6 +88,11 @@ __all__ = [
     "RetrospectiveReport",
     "SharedAssumption",
     "SharedKickoffDecisions",
+    "convene_full_boardroom_cycle",
+    "node_boardroom_trigger",
+    "node_budget_brake",
+    "node_goal_alignment_check",
     "run_kickoff_meeting",
     "run_retrospective",
+    "write_boardroom_session_markdown",
 ]

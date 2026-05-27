@@ -622,6 +622,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
             enable_build_branch=args.build,
             enable_rv=args.enable_rv,
             enable_strategist=args.enable_strategist,
+            enable_boardroom=args.enable_boardroom,
             enable_release_branch=args.release,
             enable_executor=args.build,
             enable_publish=args.release,
@@ -1084,6 +1085,15 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Auto-Fix Coordinator 가 escalate 결정 시 Strategist 가 events.jsonl "
             "+ verdict 시퀀스를 분석해 *이사회 안건* markdown 발제. "
             "default OFF — Phase 4 의결권 활성화 전까지 안건은 보존만."
+        ),
+    )
+    parser.add_argument(
+        "--enable-boardroom", dest="enable_boardroom", action="store_true", default=False,
+        help=(
+            "v13 Phase 3 — 본부 10 Boardroom 회의실 인프라 opt-in. "
+            "Strategist 안건 발제 시 Boardroom Facilitator 가 BoardroomSession 생성 + "
+            "goal_alignment_check/budget_brake Placeholder 실행 + 회의록 markdown 저장. "
+            "default OFF — Phase 4 의결권 활성화 전까지 회의록 보존만 (자동 적용 X)."
         ),
     )
     parser.add_argument(

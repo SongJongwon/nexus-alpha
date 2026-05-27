@@ -52,6 +52,7 @@ ENGINEERING = "engineering"  # 🟣 보라 (개발)
 LEARNING = "learning"        # 🟢 청록 (학습)
 SYSTEM = "system"            # 종결/오케스트레이션 노드 (부서 N/A)
 RV = "rv"                    # 🟠 본부 9 Runtime Verification (v13 Phase 1)
+C_LEVEL = "c-level"          # 🟡 C-Level 의결권자 (v13 Phase 3 — Goal Alignment + Token Budget)
 
 # iterative_loop 노드 → 부서 매핑.
 # (운영 안전: 매핑 누락 시 SYSTEM 로 fallback — emit 결함 차단)
@@ -66,6 +67,10 @@ _NODE_DEPARTMENT: dict[str, str] = {
     "run_sandbox": ENGINEERING,
     # v13 Phase 1 2단계 — 본부 9 RV (system_architecture.md 계층 2.5 명세)
     "runtime_verify": RV,
+    # v13 Phase 3 — Boardroom 회의실 인프라 (boardroom_facilitator.py)
+    "boardroom_trigger": PLANNING,         # 본부 10 Coordination — 의장 격상
+    "goal_alignment_check": C_LEVEL,        # Placeholder (Phase 4 교체)
+    "budget_brake": C_LEVEL,                # Placeholder (Phase 4 교체)
     # 학습 부서 (Curator / Retrospective Lead / Convergence Judge)
     "recall_past_knowledge": LEARNING,
     "judge_convergence": LEARNING,
