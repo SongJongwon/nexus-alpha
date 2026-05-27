@@ -9,6 +9,7 @@ CLI를 서브프로세스로 띄워 사용자의 Claude Code 로그인(MAX 구�
 
 from __future__ import annotations
 
+import os
 from typing import AsyncIterator, Optional
 
 from claude_agent_sdk import (
@@ -22,6 +23,32 @@ from claude_agent_sdk import (
 from .base_provider import BaseLLMProvider
 
 
+DEFAULT_MAX_TURNS: int = 20
+"""build chain / CrewAI 멀티턴 작업에 필요한 안전 기본값.
+
+PR #220 (2026-05-27) — 이전 default=1 은 build_workflow 의 kickoff_with_converter_rescue
+호출에서 ``"Reached maximum number of turns (1)"`` 에러를 유발했다. Claude Code
+공식 권장 10~20 범위 + build chain 같은 복잡 작업 보수적 안전마진으로 20 채택.
+"""
+
+MAX_TURNS_ENV_VAR: str = "NEXUS_CLAUDE_MAX_TURNS"
+"""환경변수 — 운영 중에도 max_turns 조절 가능 (e.g. 비용 절감 위해 10으로 하향)."""
+
+
+def _resolve_default_max_turns() -> int:
+    """``NEXUS_CLAUDE_MAX_TURNS`` env var 우선, 없으면 ``DEFAULT_MAX_TURNS``."""
+    raw = (os.environ.get(MAX_TURNS_ENV_VAR) or "").strip()
+    if not raw:
+        return DEFAULT_MAX_TURNS
+    try:
+        parsed = int(raw)
+        if parsed < 1:
+            return DEFAULT_MAX_TURNS
+        return parsed
+    except ValueError:
+        return DEFAULT_MAX_TURNS
+
+
 class AgentSDKProvider(BaseLLMProvider):
     """Claude Code CLI(`claude`)를 경유해 Claude를 호출하는 Provider.
 
@@ -30,7 +57,9 @@ class AgentSDKProvider(BaseLLMProvider):
 
     Args:
         model: Claude 모델 ID. `None`이면 Claude Code 기본값을 따른다.
-        max_turns: 에이전트 최대 턴 수. 단발성 응답이면 1로 충분하다.
+        max_turns: 에이전트 최대 턴 수. 명시 None 이면 ``NEXUS_CLAUDE_MAX_TURNS``
+            env var 우선, 없으면 ``DEFAULT_MAX_TURNS`` (=20). build chain 등
+            멀티턴 작업 대비 안전 기본값. 단발 테스트는 ``max_turns=1`` 명시.
         permission_mode: 도구 실행 권한 모드. 기본 `"bypassPermissions"`는
             프롬프트 없이 모든 도구를 허용한다(비대화식 환경 안전).
     """
@@ -38,11 +67,11 @@ class AgentSDKProvider(BaseLLMProvider):
     def __init__(
         self,
         model: Optional[str] = None,
-        max_turns: int = 1,
+        max_turns: Optional[int] = None,
         permission_mode: str = "bypassPermissions",
     ) -> None:
         self._model = model
-        self._max_turns = max_turns
+        self._max_turns = max_turns if max_turns is not None else _resolve_default_max_turns()
         self._permission_mode = permission_mode
 
     @property
