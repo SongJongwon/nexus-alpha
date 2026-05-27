@@ -232,6 +232,7 @@ def _make_args(**overrides) -> SimpleNamespace:
         "max_iterations": 5,
         "enable_rv": False,  # v13 Phase 1 2단계 — 본부 9 RV opt-in (default OFF)
         "enable_strategist": False,  # v13 Phase 2 — 본부 1 Strategist opt-in (default OFF)
+        "enable_boardroom": False,  # v13 Phase 3 — 본부 10 Boardroom opt-in (default OFF)
     }
     base.update(overrides)
     return SimpleNamespace(**base)
