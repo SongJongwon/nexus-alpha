@@ -1,9 +1,21 @@
-# 🏗️ Nexus Alpha — System Architecture (백엔드 + Telemetry + Tauri sidecar)
+# 🏗️ Nexus Alpha — System Architecture (백엔드 + Telemetry + Tauri sidecar) — v13 동기화
 
 > **신설일**: 2026-05-19 (세션 진짜 마감 docs PR)
-> **목적**: 백엔드 (자기 진화 cycle) + Telemetry (PR #188 Sprint 4) + Tauri 데스크탑 앱 (Sprint 5/6) 의 *3 계층 데이터 흐름* 을 단일 문서로 통합.
+> **v13 갱신일**: **2026-05-27** (PR #213 직후 — Boardroom 자기 진화 4 신규 노드 명세 추가)
+> **목적**: 백엔드 (자기 진화 cycle) + Telemetry (PR #188 Sprint 4) + Tauri 데스크탑 앱 (Sprint 5/6) 의 *3 계층 데이터 흐름* + **v13 Boardroom 자율 진화 루프 4 신규 노드 (미구현)** 를 단일 문서로 통합.
 >
-> 본 문서는 *현재 상태 + 데스크탑 앱 진입 경로* 의 진입점. 백엔드 코드 변경 없이 Tauri sidecar 가 jsonl tail 만으로 UI 갱신 가능한 *비침습 통합 설계* 핵심.
+> 본 문서는 *현재 상태 + 데스크탑 앱 진입 경로 + v13 자율 진화 루프 설계 예고* 의 진입점. 백엔드 코드 변경 없이 Tauri sidecar 가 jsonl tail 만으로 UI 갱신 가능한 *비침습 통합 설계* 핵심.
+
+## ⚠ v13 신규 노드 — 모두 "(v13 설계 예고 — 미구현)" 상태
+
+| 노드 | 책임 본부 | 상태 |
+|------|----------|------|
+| `runtime_verify` | 본부 9 RV (Phase 1순위 ★) | **(v13 설계 예고 — 미구현)** |
+| `boardroom_trigger` | 본부 10 (Boardroom Facilitator) | **(v13 설계 예고 — 미구현)** |
+| `goal_alignment_check` | 본부 0 (Goal Alignment Agent) | **(v13 설계 예고 — 미구현)** |
+| `budget_brake` | 본부 0 (Token Budget Optimizer) | **(v13 설계 예고 — 미구현)** |
+
+→ 본 4 노드는 *현재 백엔드 코드에 부재*. v13 Phase 1~4 진행으로 점진 구현. 본 문서 §2 계층 1 + §3 계층 2 에 *설계 명세* 만 기록.
 
 ---
 
@@ -54,14 +66,41 @@ graph TB
 | 계층 | 책임 | 상태 | 코드 |
 |------|------|------|------|
 | **1. 백엔드** | 자기 진화 cycle (recall → kickoff → chain → sandbox → gap → judge → retrospective → curate). LLM 호출 + 사람이 검토할 산출 file 생성. | ✅ Phase 1~6 + 자기 진화 paradigm production default | `scripts/run.py`, `src/workflows/iterative_loop.py`, `src/agents/**` |
-| **2. Telemetry** | 4 event type 을 JSON Lines 로 append. **default OFF** — env var 또는 CLI flag 활성. 기존 백엔드 코드 0 수정. | ✅ Sprint 4 foundation (GH PR #188, 내부 "PR #187") | `src/monitoring/telemetry.py` |
-| **3. Tauri 데스크탑 앱** | Rust shell + React UI. Python sidecar spawn + jsonl tail + 부서 그리드 / 대화 panel / iteration progress / 결과 패널. | 🔜 Sprint 5/6 진입 (다음 세션) | `src-tauri/` (예정), `frontend/` (예정) |
+| **1.5 — v13 Boardroom 자율 진화 루프** ⭐ | Telemetry 감지 → 안건 발제 → 이사회 토론 → 의결 → 자율 배포의 *메타 cycle*. 4 신규 노드 (runtime_verify / boardroom_trigger / goal_alignment_check / budget_brake) | **(v13 설계 예고 — 미구현)** | 백엔드 부재 — v13 Phase 1~4 진행 시 신설 예정 |
+| **2. Telemetry** | 4 event type 을 JSON Lines 로 append. **default OFF** — env var 또는 CLI flag 활성. 기존 백엔드 코드 0 수정. | ✅ Sprint 4 foundation (GH PR #188) | `src/monitoring/telemetry.py` |
+| **2.5 — v13 신규 Telemetry 부서** ⭐ | RV 자율 인지 emit + C-Level 의결권 emit. `_NODE_DEPARTMENT` 에 `rv` / `c-level` 키 추가 예정 | **(v13 설계 예고 — 미구현)** | `src/monitoring/telemetry.py` 갱신 예정 |
+| **3. Tauri 데스크탑 앱** | Rust shell + React UI. Python sidecar spawn + jsonl tail + 부서 그리드 / 대화 panel / iteration progress / 결과 패널. | ✅ Sprint 5/6 완료 (PR #197 / #206 / #208) | `src-tauri/`, `frontend/src/App.tsx` |
+| **3.5 — v13 UI Boardroom panel** ⭐ | 이사회 토론 *실시간 시각화* — agent 간 티키타카 메시지 + 의결권 결과 | **(v13 Phase 5 예정 — 미구현)** | `frontend/src/App.tsx` 갱신 예정 |
 
 ---
 
-## 2. 백엔드 자기 진화 cycle (계층 1)
+## 2. 백엔드 자기 진화 cycle (계층 1) + v13 Boardroom 루프 (계층 1.5 — 미구현)
 
 `src/workflows/iterative_loop.py` 의 9 노드 + 2 alias = 13 add_node. PR #188 의 `_telemetry_wrap` 이 일괄 wrap.
+
+### v13 자율 진화 루프 — 4 신규 노드 (미구현)
+
+기존 iterative_loop (요청 처리 cycle) 과 *별도* 의 *메타 cycle*. v13 Phase 3 에서 신설 예정:
+
+```mermaid
+flowchart TB
+    RV["runtime_verify<br/>(v13 설계 예고 — 미구현)<br/>본부 9 RV"] -->|silent fail / 성능 저하 감지| RS["System Refactoring Strategist<br/>(v13 Phase 2 — 미구현)<br/>본부 1"]
+    RS -->|자율 개선안 발제| BT["boardroom_trigger<br/>(v13 설계 예고 — 미구현)<br/>본부 10 Boardroom Facilitator"]
+    BT -->|토론 + 합의| GA["goal_alignment_check<br/>(v13 설계 예고 — 미구현)<br/>본부 0 Goal Alignment Agent"]
+    GA -->|목적/보안 부합| BB["budget_brake<br/>(v13 설계 예고 — 미구현)<br/>본부 0 Token Budget Optimizer"]
+    BB -->|예산 통과| DEPLOY["자율 배포<br/>(본부 8 Build & Release)"]
+
+    style RV fill:#fed7aa,stroke:#ea580c
+    style RS fill:#bae6fd,stroke:#0284c7
+    style BT fill:#e9d5ff,stroke:#a855f7
+    style GA fill:#fef3c7,stroke:#d97706
+    style BB fill:#fef3c7,stroke:#d97706
+    style DEPLOY fill:#d1fae5,stroke:#10b981
+```
+
+→ 4 신규 노드 (`runtime_verify` / `boardroom_trigger` / `goal_alignment_check` / `budget_brake`) 모두 **백엔드 코드 부재**. v13 Phase 3 에서 신설 예정.
+
+### 기존 cycle (계층 1, 구현 완료)
 
 ```mermaid
 flowchart LR
@@ -266,3 +305,4 @@ graph LR
 | 일자 | 변경 |
 |------|------|
 | 2026-05-19 | 신설 — 3 계층 (백엔드 / Telemetry / Tauri) 통합 진입점. Sprint 4 완료 + Sprint 5/6 계약 차원. |
+| **2026-05-27** | ⭐ **v13 동기화 — 계층 1.5 (Boardroom 자율 진화 루프) + 계층 2.5 (rv/c-level telemetry 부서) + 계층 3.5 (UI Boardroom panel) 추가. 4 신규 노드 모두 "(v13 설계 예고 — 미구현)" 명시. Sprint 5/6 완료 상태 갱신.** |
