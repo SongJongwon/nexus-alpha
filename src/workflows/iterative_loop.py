@@ -247,6 +247,11 @@ class _LoopState(TypedDict, total=False):
     # PR #183 — Track B 도메인 자동 분류 우회 (CLI --forced-domain)
     forced_domain: Any  # AutomationDomain | None — Track B 전용, None 이면 휴리스틱
 
+    # v13 Phase 1 2단계 (PR #217) — 본부 9 Runtime Verification opt-in wire
+    enable_rv: bool  # --enable-rv flag. False (default) 면 _node_runtime_verify pass-through
+    rv_result: Any  # RuntimeTestResult | None — Exe Runtime Tester 산출
+    rv_failure_detected: bool  # silent fail / crash 감지 시 True → prepare_feedback 분기 trigger
+
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
 
@@ -965,6 +970,54 @@ def _node_run_sandbox(state: _LoopState) -> dict[str, Any]:
     return {"execution_result": result}
 
 
+def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
+    """v13 Phase 1 2단계 — 본부 9 Runtime Verification opt-in 노드.
+
+    `run_sandbox` 직후 진입. 빌드 산출 .exe 가 있고 `enable_rv=True` 면
+    `Exe Runtime Tester` 가 silent fail / crash 자율 감지. 감지 결과를 state
+    의 ``rv_result`` + ``rv_failure_detected`` 에 보존하여 후속 ``prepare_feedback``
+    분기에서 활용 가능 (Phase 3 wire 시점에 *직접 라우팅* 으로 확장).
+
+    안전성 — default OFF:
+        ``enable_rv=False`` (default) 면 즉시 빈 dict 반환 (no-op). LangGraph
+        state 변경 0 → 기존 1477 PASS 안정성 회귀 위험 0.
+
+    Returns:
+        ``{}`` (enable_rv=False) — pass-through
+        ``{"rv_result": RuntimeTestResult, "rv_failure_detected": bool}``
+    """
+    if not state.get("enable_rv", False):
+        return {}
+
+    # 빌드된 .exe 경로 추출 — chain_result 의 executor_result 또는 saved_dir 기반.
+    chain: WorkflowResult = state.get("chain_result")  # type: ignore
+    exe_path: Optional[Path] = None
+    if chain is not None:
+        executor_result = getattr(chain, "executor_result", None)
+        if executor_result is not None:
+            candidate = getattr(executor_result, "exe_path", None)
+            if isinstance(candidate, Path) and candidate.exists():
+                exe_path = candidate
+
+    if exe_path is None:
+        # 빌드 산출물 없음 — RV 실행 불가, no-op (회귀 0)
+        return {}
+
+    try:
+        from src.agents.runtime_verification import run_exe_runtime_test
+
+        rv_result = run_exe_runtime_test(exe_path, timeout_sec=3.0)
+    except Exception:  # noqa: BLE001
+        # RV 실패가 메인 cycle 차단 X — silent + no-op
+        return {}
+
+    failure_detected = rv_result.verdict in ("SILENT_FAIL", "CRASH")
+    return {
+        "rv_result": rv_result,
+        "rv_failure_detected": failure_detected,
+    }
+
+
 def _node_analyze_gap(state: _LoopState) -> dict[str, Any]:
     """Gap Analyst 호출 → 마크다운 + 정규화 GapReport."""
     from crewai import Crew, Task
@@ -1215,6 +1268,8 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     g.add_node("kickoff_meeting", _telemetry_wrap("kickoff_meeting", _node_kickoff_meeting))                    # PR #138 full
     g.add_node("run_chain", _telemetry_wrap("run_chain", _node_run_chain))
     g.add_node("run_sandbox", _telemetry_wrap("run_sandbox", _node_run_sandbox))
+    # v13 Phase 1 2단계 — 본부 9 Runtime Verification opt-in 노드 (default OFF).
+    g.add_node("runtime_verify", _telemetry_wrap("runtime_verify", _node_runtime_verify))
     g.add_node("analyze_gap", _telemetry_wrap("analyze_gap", _node_analyze_gap))
     g.add_node("judge_convergence", _telemetry_wrap("judge_convergence", _node_judge_convergence))
     g.add_node("prepare_feedback", _telemetry_wrap("prepare_feedback", _node_prepare_feedback))
@@ -1230,7 +1285,10 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     g.add_edge("recall_past_knowledge", "kickoff_meeting")
     g.add_edge("kickoff_meeting", "run_chain")
     g.add_edge("run_chain", "run_sandbox")
-    g.add_edge("run_sandbox", "analyze_gap")
+    # v13 Phase 1 2단계 — run_sandbox → runtime_verify → analyze_gap.
+    # enable_rv=False (default) 면 runtime_verify 가 즉시 pass-through.
+    g.add_edge("run_sandbox", "runtime_verify")
+    g.add_edge("runtime_verify", "analyze_gap")
     g.add_edge("analyze_gap", "judge_convergence")
     g.add_conditional_edges(
         "judge_convergence",
@@ -1265,6 +1323,7 @@ def run_iterative_loop(
     sandbox_timeout_sec: int = DEFAULT_SANDBOX_TIMEOUT_SEC,
     enable_gui_branch: bool = False,
     enable_build_branch: bool = False,
+    enable_rv: bool = False,  # v13 Phase 1 2단계 — 본부 9 RV opt-in (default OFF, 1477 PASS 보호)
     target_platform: str = "windows",
     enable_release_branch: bool = False,
     previous_version: str = "",
@@ -1384,6 +1443,8 @@ def run_iterative_loop(
             "sandbox_timeout_sec": sandbox_timeout_sec,
             "enable_gui_branch": enable_gui_branch,
             "enable_build_branch": enable_build_branch,
+            "enable_rv": enable_rv,
+            "rv_failure_detected": False,
             "target_platform": target_platform,
             "enable_release_branch": enable_release_branch,
             "previous_version": previous_version,
