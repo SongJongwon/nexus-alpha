@@ -89,17 +89,18 @@ const HEADQUARTERS: HeadquartersDef[] = [
         pipelines: ['Track A', 'Track B'],
       },
       {
-        name: 'CEO',
-        role: 'Chief Executive Officer (Phase 8 예정)',
+        name: 'Goal Alignment Agent',
+        role: 'v13 ⭐ 이사회 의장 — 시스템 목적 + 보안 거버넌스 최종 조율 (미구현)',
         goalDetailed:
-          '다중 프로젝트 동시 진행 시 의미. 단일 프로젝트 사이클은 CTO + Convergence Judge 로 충분.',
+          'v13 ⭐ (이전 CEO) Boardroom 이사회의 의장 역임. 시스템의 궁극적 목적 + 보안 거버넌스 최종 조율. Telemetry 기반 자율 진화 안건의 *목적 부합 여부* 최종 판정.',
         implemented: false,
         hq: 'hq-0',
       },
       {
-        name: 'CFO',
-        role: 'Chief Financial Officer (Phase 8 예정)',
-        goalDetailed: '비용 / 토큰 / API 한도 관리. 현재는 BUDGET 게이트가 결정론으로 처리.',
+        name: 'Token Budget Optimizer',
+        role: 'v13 ⭐ 기술재무관 — LLM 비용 + 컴퓨팅 자원 한도 브레이크 (미구현)',
+        goalDetailed:
+          'v13 ⭐ (이전 CFO) Boardroom 이사회의 기술재무관. LLM 호출 비용 + 컴퓨팅 자원 한도 기반 *브레이크* 역할. 자율 진화 안건의 토큰 견적 + 예산 한도 검증.',
         implemented: false,
         hq: 'hq-0',
       },
@@ -145,16 +146,10 @@ const HEADQUARTERS: HeadquartersDef[] = [
         pipelines: ['Track B'],
       },
       {
-        name: 'Business Process Analyst',
-        role: '업무 프로세스 분석 (미구현)',
-        goalDetailed: 'BPMN/swim lane 등 업무 흐름 모델링. 현재 미구현.',
-        implemented: false,
-        hq: 'hq-1',
-      },
-      {
-        name: 'Use Case Specialist',
-        role: '유스케이스 명세 (미구현)',
-        goalDetailed: 'Use case diagram + scenario script 작성. 현재 미구현.',
+        name: 'System Refactoring Strategist',
+        role: 'v13 ⭐ 런타임 + Telemetry 분석 → 이사회 자율 개선안 안건 발제 (미구현)',
+        goalDetailed:
+          'v13 ⭐ 자기 진화 루프의 *안건 발제* 노드. 런타임 로그 + Telemetry 데이터를 분석해 시스템 자율 개선안 (예: max_iterations 상향 / GUI sandbox SKIP 강화 / Token 한도 조정) 을 Boardroom 에 안건으로 제출. v12 의 Business Process Analyst + Use Case Specialist 삭제 (행정 오버헤드 다이어트) 후 자율 진화 차원으로 신설.',
         implemented: false,
         hq: 'hq-1',
       },
@@ -186,12 +181,6 @@ const HEADQUARTERS: HeadquartersDef[] = [
       {
         name: 'Product Manager',
         role: '제품 전략 (미구현)',
-        implemented: false,
-        hq: 'hq-2',
-      },
-      {
-        name: 'Project Coordinator',
-        role: '프로젝트 coordination (미구현)',
         implemented: false,
         hq: 'hq-2',
       },
@@ -569,10 +558,10 @@ const HEADQUARTERS: HeadquartersDef[] = [
     defaultPipelines: ['공통'],
     agents: [
       {
-        name: 'Meeting Facilitator',
-        role: '킥오프 회의 + shared assumptions',
+        name: 'Boardroom Facilitator',
+        role: 'v13 ⭐ Telemetry 기반 전략 이사회 의장 (집단 지성 티키타카 리드)',
         goalDetailed:
-          'kickoff_meeting 노드. 모든 부서가 *공유 가정* (real-time vs cached 등) 을 합의. 환율 변환기 사례 같은 cross-agent inconsistency 차단.',
+          'v13 ⭐ kickoff_meeting 노드의 v12 Meeting Facilitator 가 v13 에서 격상. 단순 행정 회의가 아니라 C-Level (Goal Alignment + Token Budget + CTO) + 부서 대표 에이전트들이 모여 Telemetry 기반 시스템 개선안을 *치열하게 토론* + *타협점 도출* 하는 전략 이사회 프로세스 리드. 자율 진화 루프의 의장 노드.',
         implemented: true,
         hq: 'hq-10',
       },
@@ -1198,7 +1187,7 @@ function App() {
           <div className="px-4 pt-4 pb-3 border-b border-slate-800">
             <div className="text-sm font-bold text-sky-400 leading-tight">Nexus Alpha</div>
             <div className="text-[10px] text-slate-500 leading-tight mt-0.5">
-              Agent Office v12
+              Agent Office v13 — Boardroom
             </div>
           </div>
           <nav className="flex-1 overflow-y-auto py-2">
