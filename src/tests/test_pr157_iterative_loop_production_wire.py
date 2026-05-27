@@ -230,6 +230,7 @@ def _make_args(**overrides) -> SimpleNamespace:
         "vision_qa_max_retries": 0,
         "auto_iterate": False,
         "max_iterations": 5,
+        "enable_rv": False,  # v13 Phase 1 2단계 — 본부 9 RV opt-in (default OFF)
     }
     base.update(overrides)
     return SimpleNamespace(**base)

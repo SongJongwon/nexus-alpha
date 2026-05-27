@@ -620,6 +620,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
             verbose=args.verbose,
             enable_gui_branch=not args.force_cli,
             enable_build_branch=args.build,
+            enable_rv=args.enable_rv,
             enable_release_branch=args.release,
             enable_executor=args.build,
             enable_publish=args.release,
@@ -654,6 +655,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
             verbose=args.verbose,
             enable_gui_branch=not args.force_cli,
             enable_build_branch=args.build,
+            enable_rv=args.enable_rv,
             enable_release_branch=args.release,
             enable_executor=args.build,
             enable_publish=args.release,
@@ -1058,6 +1060,14 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--build", action="store_true", default=False,
         help="PyInstaller .exe 빌드 활성 (default off — 사양만 산출).",
+    )
+    parser.add_argument(
+        "--enable-rv", dest="enable_rv", action="store_true", default=False,
+        help=(
+            "v13 Phase 1 — 본부 9 Runtime Verification opt-in. 빌드된 .exe 를 "
+            "Exe Runtime Tester 가 자율 검증 (silent fail / crash 감지). "
+            "default OFF — Telemetry --emit-events 와 동일 패턴 (기존 사용자 영향 0)."
+        ),
     )
     parser.add_argument(
         "--force-cli", action="store_true", default=False,

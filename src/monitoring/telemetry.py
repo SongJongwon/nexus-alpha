@@ -51,6 +51,7 @@ PLANNING = "planning"        # 🔵 파랑 (기획)
 ENGINEERING = "engineering"  # 🟣 보라 (개발)
 LEARNING = "learning"        # 🟢 청록 (학습)
 SYSTEM = "system"            # 종결/오케스트레이션 노드 (부서 N/A)
+RV = "rv"                    # 🟠 본부 9 Runtime Verification (v13 Phase 1)
 
 # iterative_loop 노드 → 부서 매핑.
 # (운영 안전: 매핑 누락 시 SYSTEM 로 fallback — emit 결함 차단)
@@ -63,6 +64,8 @@ _NODE_DEPARTMENT: dict[str, str] = {
     # 개발 부서 (CTO / Engineer / Reviewer / QA / Sandbox / Pytest)
     "run_chain": ENGINEERING,
     "run_sandbox": ENGINEERING,
+    # v13 Phase 1 2단계 — 본부 9 RV (system_architecture.md 계층 2.5 명세)
+    "runtime_verify": RV,
     # 학습 부서 (Curator / Retrospective Lead / Convergence Judge)
     "recall_past_knowledge": LEARNING,
     "judge_convergence": LEARNING,
