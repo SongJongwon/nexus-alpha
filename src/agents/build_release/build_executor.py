@@ -337,6 +337,73 @@ def execute_pyinstaller(
 
 
 # ---------------------------------------------------------------------------
+# fixup #16 (2026-05-26) — Windowed bootloader 검증
+# ---------------------------------------------------------------------------
+def _validate_windowed_bootloader(
+    executor_result: "ExecuteResult", expected_windowed: bool
+) -> Optional[str]:
+    """PyInstaller 의 stdout 에서 *bootloader 종류* 를 검증한다.
+
+    PyInstaller 가 출력하는 패턴:
+        ``Bootloader ...\\bootloader\\Windows-64bit-intel\\runw.exe`` ← windowed (GUI)
+        ``Bootloader ...\\bootloader\\Windows-64bit-intel\\run.exe``  ← console (CLI)
+
+    5번째 시도 사고 (Calculator.exe — windowed=False false negative 로 cmd 창 표시)
+    같은 결함을 *빌드 직후 자동 감지*.
+
+    Args:
+        executor_result: `execute_pyinstaller` 의 반환값. ``stdout`` 에 bootloader
+            라인이 포함됨.
+        expected_windowed: 의도된 windowed 값. True 면 runw.exe 가 기대, False 면
+            run.exe 가 기대.
+
+    Returns:
+        검증 로그 한 줄 (Optional). build_workflow 가 stderr 에 prepend 해서
+        25_executor_result.md 에 자동 표시되도록.
+    """
+    if not executor_result.success:
+        return None
+    stdout = executor_result.stdout or ""
+    if "Bootloader" not in stdout:
+        # bootloader line 자체가 없음 — 로그 verbose level 차이 가능
+        return None
+
+    has_runw = "runw.exe" in stdout
+    has_run = "run.exe" in stdout and not has_runw  # runw.exe 가 있으면 run.exe 매치는 substring noise
+
+    if expected_windowed:
+        if has_runw:
+            return (
+                "[WINDOWED_VALIDATION] PASS — runw.exe bootloader 확인 (콘솔 없는 "
+                "GUI 빌드, --windowed 정상 적용)\n"
+            )
+        elif has_run:
+            return (
+                "[WINDOWED_VALIDATION] FAIL — windowed=True 인데 console bootloader "
+                "(run.exe) 감지. 빌드된 .exe 실행 시 cmd 창 표시될 가능성. "
+                "PyInstaller args 의 --windowed 적용 여부 확인 필요.\n"
+            )
+        else:
+            return (
+                "[WINDOWED_VALIDATION] UNKNOWN — Bootloader 라인 있으나 runw.exe / "
+                "run.exe 패턴 어느 쪽도 매치 안 됨.\n"
+            )
+    else:
+        # CLI 앱 — run.exe 가 기대
+        if has_run:
+            return (
+                "[WINDOWED_VALIDATION] PASS — run.exe bootloader 확인 (CLI 빌드, "
+                "콘솔 표시 정상)\n"
+            )
+        elif has_runw:
+            return (
+                "[WINDOWED_VALIDATION] WARN — windowed=False 인데 runw.exe bootloader "
+                "감지. CLI 앱의 stdout 출력이 안 보일 수 있음.\n"
+            )
+        return None
+
+
+# ---------------------------------------------------------------------------
 # .exe Smoke Test — PM 명시 (2026-05-26, 4회 BLOCKED 사고 처방)
 # ---------------------------------------------------------------------------
 @dataclass

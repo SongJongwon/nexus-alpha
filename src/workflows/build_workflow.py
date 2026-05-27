@@ -60,7 +60,11 @@ from src.agents.build_release import (
     create_platform_tester_agent,
     format_platform_test_result_for_task,
 )
-from src.agents.build_release.build_executor import ExecuteResult, execute_pyinstaller
+from src.agents.build_release.build_executor import (
+    ExecuteResult,
+    _validate_windowed_bootloader,
+    execute_pyinstaller,
+)
 from src.agents.operations import run_python_package_in_sandbox
 from src.monitoring import get_langfuse_client
 from src.workflows._common import (
@@ -1720,8 +1724,24 @@ def run_build_workflow(
                 )
                 saved.append(executor_md)
             elif entry_path is not None:
-                # GUI 여부는 ui_spec 의 need_gui 파싱 (단순 substring 매치).
-                windowed = "need_gui: yes" in ui_spec or "need_gui=yes" in ui_spec
+                # fixup #16 (2026-05-26) — windowed 결정 강화.
+                # 기존: ui_spec 의 substring "need_gui: yes" 만 (LLM 산출 의존 false
+                #       negative 빈번 — Calculator.exe 가 console 빌드되어 cmd 창 표시 사고).
+                # 신규: AST 기반 GUI 감지 (PR #210 의 _detect_gui_in_saved_files) +
+                #       ui_spec substring 의 OR — 둘 중 하나라도 GUI 면 --windowed.
+                #       AST 가 *실제 import 만* 검출 → false negative 차단.
+                ast_gui = False
+                try:
+                    from src.workflows.iterative_loop import (
+                        _detect_gui_in_saved_files,
+                    )
+                    ast_gui = _detect_gui_in_saved_files(code_files)
+                except Exception:  # noqa: BLE001
+                    pass
+                ui_spec_gui = (
+                    "need_gui: yes" in ui_spec or "need_gui=yes" in ui_spec
+                )
+                windowed = ast_gui or ui_spec_gui
                 # 앱 이름은 entry 파일명 또는 user_request 단서 → 안전한 단순 휴리스틱
                 app_name = entry_path.stem.title() or "App"
 
@@ -1797,6 +1817,18 @@ def run_build_workflow(
                             exclude_modules=build_deps.excluded_modules or None,
                             timeout_sec=executor_timeout_sec,
                         )
+                        # 2026-05-26 fixup #16 — windowed bootloader 검증.
+                        # PyInstaller stdout 의 "Bootloader ...runw.exe" / "run.exe"
+                        # 패턴 검색. windowed=True 인데 console bootloader 가 잡힌
+                        # 경우 — 5번째 시도 사고 (Calculator.exe 에 cmd 창) 처방.
+                        validation_log = _validate_windowed_bootloader(
+                            executor_result, expected_windowed=windowed
+                        )
+                        if validation_log:
+                            executor_result.stderr = validation_log + (
+                                executor_result.stderr or ""
+                            )
+
                         # 2026-05-26 — PM 명시 (4회 BLOCKED 사고 처방): GUI 앱
                         # (windowed=True) 빌드 성공 시 *.exe smoke test* 자동 실행.
                         # theme.py 같은 entry 오선택 사례를 빌드 직후 자동 검출.
