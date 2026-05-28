@@ -1,10 +1,11 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-28 v13 Phase 5.4 — Cross-Agent Consultant + 양방향 티키타카 토론 인프라**
-> ⭐ **Phase 5.4 머지** (PR #224) — *직렬 단방향* (Strategist → goal → budget) → *진정한 양방향 티키타카* 격상. Cross-Agent Consultant 신설 (본부 10 3/4 → 4/4 임박) + 3 라운드 sequence (proposer → reviewer → dissenter → mediator) + dissent 자동 감지 (한/영 13 키워드) + decision.yaml schema **v1 → v2** (rounds[] + consensus). 회의록이 *합의 도출 과정* 자체를 보존.
-> 이전 (Phase 5.1 PR #223): UI Boardroom Panel + decision.yaml viewer (가시화 layer)
+> **마지막 업데이트**: **2026-05-28 v13 Phase 5.E 사전 준비 — 라이브 검증 wire + 가이드**
+> ⭐ **Phase 5.E 사전 준비 머지** (PR #225) — `--enable-tikitaka` CLI flag wire (scripts/run.py + iterative_loop.py + _maybe_convene_boardroom 전체 chain) + BoardroomPanel.tsx 빈 state 안전 처리 (rounds=[] / statements=[] 명시 안내) + 라이브 검증 가이드 [PHASE_5E_LIVE_VERIFICATION_GUIDE.md](PHASE_5E_LIVE_VERIFICATION_GUIDE.md). PM 본인 PC 실행 준비 완료.
+> 이전 (Phase 5.4 PR #224): Cross-Agent Consultant + 양방향 티키타카 + schema v1→v2
+> 이전 (Phase 5.1 PR #223): UI Boardroom Panel + decision.yaml viewer
 > 이전 (Phase 1~4 PR #217~#222): 자율 진화 루프 풀체인 작동
-> pytest: 1598 → **1636** (Phase 5.4 +38 신규, 회귀 0)
+> pytest: 1636 (회귀 0)
 
 ---
 
@@ -19,7 +20,8 @@
 | #221 | 2026-05-27 | Phase 3 | Boardroom 회의실 인프라 — boardroom_trigger + Placeholder 2 nodes + Facilitator 격상 |
 | #222 | 2026-05-28 | Phase 4 | 본부 0 Goal Alignment + Token Budget Optimizer — 이사회 의결권 활성화 + decision.yaml 의결 로그 |
 | #223 | 2026-05-28 | Phase 5.1 | UI Boardroom Panel + decision.yaml viewer — 3-pane 가시화 |
-| **#224** | **2026-05-28** | **Phase 5.4 ★** | **Cross-Agent Consultant + 양방향 티키타카 — 본부 10 47/52 도달 + schema v1→v2 (rounds + consensus) + UI rounds 카드** |
+| #224 | 2026-05-28 | Phase 5.4 | Cross-Agent Consultant + 양방향 티키타카 — 본부 10 47/52 도달 + schema v1→v2 (rounds + consensus) + UI rounds 카드 |
+| **#225** | **2026-05-28** | **Phase 5.E 사전 준비 ★** | **--enable-tikitaka CLI wire + BoardroomPanel.tsx 빈 state 안전 처리 + 라이브 검증 가이드 문서** |
 
 ---
 
@@ -116,7 +118,14 @@ final_decision: approved → Build & Release (Phase 5 wire)
 | ~~Phase 5.4~~ | ~~Cross-Agent Consultant + 양방향 티키타카 토론~~ | 본부 10 | ✅ **완료** (PR #224) |
 | **Phase 5.2** | **백엔드 5명 중 가치 높은 3명** (Product Manager / Documentation Lead / Monitoring Engineer) | 본부 2/5/6 | 🚧 다음 sub-PR |
 | **Phase 5.3** | **Mobile + Embedded Specialist** | 본부 3 | 🚧 후순위 (수요 낮음) |
-| **Phase 5.E** | **E2E 라이브 검증** — 자율 진화 루프 1 cycle 완주 evidence (실 LLM 3 라운드 핑퐁) | PM 본인 PC | 🚧 ~25-40min |
+| **Phase 5.E** | **E2E 라이브 검증** — 자율 진화 루프 1 cycle 완주 evidence (실 LLM 3 라운드 핑퐁) | PM 본인 PC | 🚧 ~25-40min — 가이드: [PHASE_5E_LIVE_VERIFICATION_GUIDE.md](PHASE_5E_LIVE_VERIFICATION_GUIDE.md) |
+
+### Phase 5.E 사전 준비 완료 (PR #225) ✅
+
+- ✅ `--enable-tikitaka` CLI flag wire — scripts/run.py + iterative_loop.py + _maybe_convene_boardroom 전체 chain
+- ✅ BoardroomPanel.tsx 빈 state 안전 처리 — `rounds=[]` 인 경우 "enable_tikitaka=False" 안내 카드, `statements=[]` 인 경우 "(라운드 발언 미수집)" inline 메시지
+- ✅ 라이브 검증 가이드 — 5회 BLOCKED 유도 `--request` 추천 옵션 3개 + 실행 명령 (PowerShell + Bash) + 산출 파일 grep 명령 + 실패 시나리오 진단
+- ✅ Phase 5.E DoD — 7개 통과 조건 (anti-fail) 명시
 
 ### Phase 5.1 완료 조건 (Definition of Done) ✅
 
