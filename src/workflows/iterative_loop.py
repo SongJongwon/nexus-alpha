@@ -1150,21 +1150,22 @@ def _maybe_convene_boardroom(
     proposal_path: Path,
     outputs_dir: str,
 ) -> Optional[Path]:
-    """v13 Phase 3 — Strategist 안건 작성 후 Boardroom 회의 자동 소집.
+    """v13 Phase 3+4 — Strategist 안건 작성 후 Boardroom 회의 자동 소집.
 
     동작:
-        1. proposal markdown 의 제목 + 본문에서 ``RefactoringProposal``-like
-           duck-typed object 재구성 (title 만 사용)
-        2. ``convene_full_boardroom_cycle`` 호출 → boardroom_trigger →
-           goal_alignment_check (Placeholder) → budget_brake (Placeholder)
-        3. 회의록 markdown 을 ``outputs/_boardroom_sessions/`` 에 저장
+        1. proposal markdown 첫 줄 (# title) 추출 → duck-typed proposal 구성
+           (estimated_cost / proposed_changes 는 기본값 — Phase 4 budget 평가용)
+        2. ``convene_full_boardroom_cycle`` 호출 — boardroom_trigger →
+           goal_alignment_check (Goal Alignment Agent 실 의결) →
+           budget_brake (Token Budget Optimizer 실 의결) → FinalDecision
+        3. 회의록 markdown ``outputs/_boardroom_sessions/`` + 의결 YAML
+           ``outputs/board_decisions/`` 양쪽 저장
 
     Returns:
         회의록 markdown 경로 (실패 시 None).
     """
     from src.agents.coordination import convene_full_boardroom_cycle
 
-    # proposal markdown 첫 줄 (# title) 추출 → duck-typed proposal 구성
     proposal_title = "(미지정 안건)"
     try:
         first_line = proposal_path.read_text(encoding="utf-8").splitlines()[0]
@@ -1175,16 +1176,23 @@ def _maybe_convene_boardroom(
 
     class _DuckProposal:
         title = proposal_title
+        # Phase 4 의결 평가용 default — markdown 파싱 확장 시 채울 필드
+        estimated_cost = "medium"
+        proposed_changes: list[str] = []
 
     if outputs_dir:
-        boardroom_dir = Path(outputs_dir) / "_boardroom_sessions"
+        base = Path(outputs_dir)
+        boardroom_dir = base / "_boardroom_sessions"
+        decision_dir = base / "board_decisions"
     else:
         boardroom_dir = Path("outputs") / "_boardroom_sessions"
+        decision_dir = Path("outputs") / "board_decisions"
 
-    _, md_path = convene_full_boardroom_cycle(
+    _, md_path, _yaml_path = convene_full_boardroom_cycle(
         proposal=_DuckProposal(),
         proposal_path=str(proposal_path),
         output_dir=boardroom_dir,
+        decision_output_dir=decision_dir,
     )
     return md_path
 
