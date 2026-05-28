@@ -33,13 +33,14 @@ Severity 통합 규칙 (설계 보강):
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
 import yaml
 from crewai import Agent
 
+from src.agents.analysis.requirement_expander import ChecklistItem
 from src.llm import NexusAlphaLLM
 
 
@@ -55,7 +56,7 @@ class Verdict(str, Enum):
 
 
 class BlockedCause(str, Enum):
-    """BLOCKED 판정 시 세부 원인. 우선순위: BUILD_FAILED > STAGNATION > BUDGET > ITER_CAP.
+    """BLOCKED 판정 시 세부 원인. 우선순위: BUILD_FAILED > STAGNATION > BUDGET > ITER_CAP > FAKE_PACKAGE.
 
     NONE 은 verdict != BLOCKED 일 때 채워지는 sentinel.
 
@@ -63,12 +64,19 @@ class BlockedCause(str, Enum):
     PyInstaller .exe 산출이 실패 (entry 미탐지 / pip install 실패 / 정적 검증 실패 등)
     한 경우, 실 결과가 사용자 손에 도달 불가하므로 BLOCKED 로 override. judge 노드의
     ``_apply_build_failure_override`` 가 적용.
+
+    PR #226 (Phase 6.2, 2026-05-28): ``FAKE_PACKAGE`` enum 신설 (PM 의사결정 #5
+    절충안). 본 PR 시점에는 *enum 만 사전 정의* — 실 검증 로직은 PR #227/#228
+    의 PyPI JSON API 통합 시 활성. 절충안 흐름:
+      - 1차 가짜 패키지 발견 → IMPROVE_NEEDED + partial 힌트 (재 iter)
+      - 2차 연속 발견 → BLOCKED(FAKE_PACKAGE) 강제 (무한 루프 예산 낭비 방지)
     """
 
     BUILD_FAILED = "BUILD_FAILED"
     STAGNATION = "STAGNATION"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     ITERATION_CAP = "ITERATION_CAP"
+    FAKE_PACKAGE = "FAKE_PACKAGE"
     NONE = "NONE"
 
 
@@ -98,6 +106,10 @@ class GapReport:
     iteration: int = 1
 
 
+# v13 Phase 6.2 (PR #226) — domain_checklist 미충족 항목 ID 보존
+# (JudgmentDecision 의 새 필드 — Rule 0 채우는 결과)
+
+
 @dataclass
 class JudgmentDecision:
     """`judge_convergence` 의 구조화 산출물.
@@ -109,6 +121,9 @@ class JudgmentDecision:
         reason: 결정 근거 한 문장 (영문, 결정 규칙 스니펫 인용).
         next_action: 다음 단계 권고 (영문). Iteration Controller 가 그대로 사용.
         must_fix_count: blocker + major 합계 (참고용).
+        domain_unsatisfied: v13 Phase 6.2 (PR #226) — Rule 0 미충족 항목 ID list.
+            기본 빈 list. 호출자가 ``domain_checklist=`` 주입 안 하면 항상 [].
+            다음 iter Engineer prompt 에 주입되어 *명시적 미충족 안내* 역할.
     """
 
     verdict: Verdict
@@ -116,6 +131,7 @@ class JudgmentDecision:
     reason: str
     next_action: str
     must_fix_count: int
+    domain_unsatisfied: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -134,15 +150,54 @@ NO_BUDGET_GATE: int = -1
 # ---------------------------------------------------------------------------
 # 결정표 함수 (LLM 무관, 결정론적)
 # ---------------------------------------------------------------------------
+def _validate_domain_checklist(
+    checklist: list[ChecklistItem],
+    engineer_output: str,
+    qa_result: str,
+) -> list[ChecklistItem]:
+    """v13 Phase 6.2 (PR #226) — 도메인 체크리스트 결정론 검증.
+
+    각 ``ChecklistItem.detect_keywords`` 중 *하나라도* ``engineer_output`` 또는
+    ``qa_result`` 텍스트 (대소문자 무시, 부분 매칭) 에 등장하면 *충족* 으로 간주.
+    ``must_satisfy=False`` 항목은 검증 대상 제외 (caveat 등급).
+
+    Args:
+        checklist: 검증할 ChecklistItem list.
+        engineer_output: Engineer 산출 코드 발췌 (또는 전체).
+        qa_result: QA 검증 결과 발췌.
+
+    Returns:
+        미충족 ChecklistItem list — 빈 list 면 모두 충족.
+    """
+    if not checklist:
+        return []
+    haystack = (str(engineer_output) + " " + str(qa_result)).lower()
+    unsatisfied: list[ChecklistItem] = []
+    for item in checklist:
+        if not item.must_satisfy:
+            continue
+        if not item.detect_keywords:
+            # 키워드 없는 항목은 결정론 검증 불가 — skip
+            continue
+        if not any(kw.lower() in haystack for kw in item.detect_keywords):
+            unsatisfied.append(item)
+    return unsatisfied
+
+
 def judge_convergence(
     gap: GapReport,
     *,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     budget_tokens_remaining: int = NO_BUDGET_GATE,
+    domain_checklist: Optional[list[ChecklistItem]] = None,
+    engineer_output_excerpt: str = "",
+    qa_result_excerpt: str = "",
 ) -> JudgmentDecision:
     """Gap Analyst 보고서 + 안전 조건을 받아 루프 종료 verdict 를 반환한다.
 
     결정 규칙 (우선순위 순):
+        0. ★ v13 Phase 6.2 — domain_checklist 미충족 항목 있음 → IMPROVE_NEEDED 강제
+           (domain_checklist=None or [] 면 자동 skip — 회귀 0 보장)
         1. must_fix == 0 → COMPLETE
            (minor 만 있으면 caveat 표기 안내, 나머지 0이면 깨끗한 종료)
         2. must_fix > 0 AND stagnation → BLOCKED(STAGNATION)
@@ -161,6 +216,11 @@ def judge_convergence(
         gap: 정규화된 Gap Analyst 산출물.
         max_iterations: iteration 한도 (기본 5, design §7-1).
         budget_tokens_remaining: 남은 토큰 예산. NO_BUDGET_GATE(-1) 면 검사 생략.
+        domain_checklist: v13 Phase 6.2 (PR #226) — Requirement Expander 의
+            ``build_domain_checklist(user_request)`` 산출. None or [] 시 Rule 0
+            자동 skip → 기존 Rule 1~5 그대로. 기본 None (회귀 0).
+        engineer_output_excerpt: Rule 0 결정론 매칭 대상 텍스트 (Engineer 산출).
+        qa_result_excerpt: Rule 0 결정론 매칭 대상 텍스트 (QA 결과).
 
     Returns:
         JudgmentDecision — verdict 및 부속 메타데이터.
@@ -169,6 +229,36 @@ def judge_convergence(
         본 함수는 LLM 을 호출하지 않는다. 따라서 동일 입력에 대해 항상 동일
         출력을 반환하며 ms 단위로 동작한다. Agent narration 은 별도 단계.
     """
+    # ★ Rule 0: 도메인 체크리스트 미충족 → IMPROVE_NEEDED 강제 (Rule 1 보다 우선)
+    if domain_checklist:
+        unsatisfied = _validate_domain_checklist(
+            checklist=domain_checklist,
+            engineer_output=engineer_output_excerpt,
+            qa_result=qa_result_excerpt,
+        )
+        if unsatisfied:
+            must_fix_for_rule0 = gap.unsatisfied_blockers + gap.unsatisfied_majors
+            unsatisfied_ids = [u.id for u in unsatisfied]
+            # 다음 iter Engineer 가 명시적 안내 받을 수 있도록 reason 에 ID + desc
+            preview = ", ".join(
+                f"[{u.id}] {u.description}" for u in unsatisfied[:3]
+            )
+            return JudgmentDecision(
+                verdict=Verdict.IMPROVE_NEEDED,
+                blocked_cause=BlockedCause.NONE,
+                reason=(
+                    f"Domain checklist {len(unsatisfied)}/{len(domain_checklist)} "
+                    f"unsatisfied: {preview}"
+                ),
+                next_action=(
+                    "Re-enter loop with domain checklist context. Engineer must "
+                    "explicitly address unsatisfied items: "
+                    + ", ".join(unsatisfied_ids)
+                ),
+                must_fix_count=must_fix_for_rule0,
+                domain_unsatisfied=unsatisfied_ids,
+            )
+
     must_fix = gap.unsatisfied_blockers + gap.unsatisfied_majors
 
     # Rule 1: COMPLETE — 모든 must-fix 충족

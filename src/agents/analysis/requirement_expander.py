@@ -22,11 +22,161 @@ Nexus Alpha Requirement Expander 에이전트 (업무 분석 본부, Phase 2.5 /
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Optional
 
 from crewai import Agent
 
 from src.llm import NexusAlphaLLM
+
+
+# ---------------------------------------------------------------------------
+# v13 Phase 6.2 (PR #226) — 도메인 결정론 매처 + 체크리스트 템플릿
+#
+# 배경: BIM 빌드 사례 분석 — "진짜 3D vs 가짜 2D" 미구분 결함 + Convergence
+# Judge 의 성급한 종료 결함. 본 모듈에 *도메인 detect + 템플릿 체크리스트*
+# 결정론 인프라 추가. PM 확정 사양 (docs/architecture/phase6_proposal.md):
+#   - 옵션 B 만 (PyPI JSON, 비용 0원)
+#   - 3D 도메인 우선 (BIM 검증 후 확장)
+#   - 회귀 0 절대 준수 (domain_checklist 사용 안 하면 기존 동작)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ChecklistItem:
+    """도메인 체크리스트 1 항목 — Convergence Judge Rule 0 입력 (v13 Phase 6.2).
+
+    Attributes:
+        id: kebab-case 도메인 ID (예: ``"3d-camera-orbit"``).
+            안정 식별자 — 미충족 항목 ID 가 다음 iter Engineer prompt 에 주입됨.
+        domain: 도메인 카테고리 (예: ``"3d_visualization"``).
+        description: 한국어 1 문장 요구사항 설명.
+        must_satisfy: True 면 Rule 0 강제 검증 대상.
+            False 면 caveat 안내만 (현재 미사용 — 향후 minor 등급 도입 시).
+        detect_keywords: ``engineer_output`` + ``qa_result`` 에 등장하면
+            *충족된 것* 으로 간주하는 키워드 list. 대소문자 무시 부분 매칭.
+    """
+
+    id: str
+    domain: str
+    description: str
+    must_satisfy: bool = True
+    detect_keywords: list[str] = field(default_factory=list)
+
+
+# 도메인별 사용자 요청 키워드 패턴 (대소문자 무시 부분 매칭)
+# 3D 우선 — PM 의사결정 #4. BIM 검증 후 data_viz / ml / distributed 확장.
+_DOMAIN_PATTERNS: dict[str, list[str]] = {
+    "3d_visualization": [
+        # 영문
+        "3d", "WebGL", "Three.js", "BIM", "CAD",
+        "Bloch sphere", "Mesh", "Camera", "Orbit", "renderer",
+        # 한국어
+        "3차원", "삼차원", "공간 시각화", "건축 모델",
+    ],
+}
+
+
+# 3D 도메인 템플릿 체크리스트 (4 항목) — BIM 본질 검증 핵심.
+_TEMPLATE_3D_CHECKLIST: list[ChecklistItem] = [
+    ChecklistItem(
+        id="3d-camera-orbit",
+        domain="3d_visualization",
+        description="카메라 Orbit 회전 (마우스 드래그로 카메라 위치 조정)",
+        must_satisfy=True,
+        detect_keywords=[
+            "OrbitControls", "mouseDown", "rotate", "camera.position",
+            "orbit", "azimuth", "elevation",
+        ],
+    ),
+    ChecklistItem(
+        id="3d-webgl-vs-canvas",
+        domain="3d_visualization",
+        description="WebGL (Three.js) vs Canvas 2D 아키텍처 선택 명시",
+        must_satisfy=True,
+        detect_keywords=[
+            "WebGLRenderer", "three.js", "THREE.",
+            "Canvas2DContext", 'getContext("2d")', "getContext('2d')",
+        ],
+    ),
+    ChecklistItem(
+        id="3d-interactive-controls",
+        domain="3d_visualization",
+        description="줌/팬/리셋 인터랙티브 컨트롤 (사용자 입력 응답)",
+        must_satisfy=True,
+        detect_keywords=[
+            "zoom", "pan", "reset", "wheel", "controls.update",
+            "addEventListener", "mousewheel",
+        ],
+    ),
+    ChecklistItem(
+        id="3d-real-3d-not-isometric",
+        domain="3d_visualization",
+        description="진짜 3D (Z-축 회전) vs 가짜 2D isometric 구분 — BIM 본질",
+        must_satisfy=True,
+        detect_keywords=[
+            "rotateY", "rotation.z", "Vector3", "depthBuffer", "depth_buffer",
+            "PerspectiveCamera", "PointLight", "DirectionalLight",
+        ],
+    ),
+]
+
+
+# 도메인 → 템플릿 체크리스트 매핑.
+# 새 도메인 추가 시 본 dict 와 _DOMAIN_PATTERNS 양쪽 갱신.
+_DOMAIN_TEMPLATES: dict[str, list[ChecklistItem]] = {
+    "3d_visualization": _TEMPLATE_3D_CHECKLIST,
+}
+
+
+def _detect_domain(user_request: str) -> list[str]:
+    """사용자 자연어 요청 → 도메인 ID list (결정론 키워드 매칭).
+
+    여러 도메인 동시 매칭 가능 (예: "3D 데이터 시각화 대시보드" → 3d + data_viz).
+    매칭 0건 시 빈 list 반환 — 호출자는 도메인 체크리스트 사용 안 함.
+
+    Args:
+        user_request: 사용자 요청 원문.
+
+    Returns:
+        매칭된 도메인 ID list (e.g. ``["3d_visualization"]``).
+    """
+    if not user_request:
+        return []
+    lower = user_request.lower()
+    matches: list[str] = []
+    for domain, keywords in _DOMAIN_PATTERNS.items():
+        if any(kw.lower() in lower for kw in keywords):
+            matches.append(domain)
+    return matches
+
+
+def build_domain_checklist(user_request: str) -> list[ChecklistItem]:
+    """사용자 요청 → 도메인별 템플릿 체크리스트 합성.
+
+    동작:
+        1. ``_detect_domain(user_request)`` 으로 매칭 도메인 식별
+        2. 매칭된 각 도메인의 템플릿 체크리스트를 *합집합* 반환
+        3. 매칭 0 → 빈 list (Rule 0 자동 skip, 기존 동작 보존)
+
+    Args:
+        user_request: 사용자 요청 원문.
+
+    Returns:
+        ChecklistItem list — Convergence Judge ``judge_convergence(
+        domain_checklist=...)`` 에 그대로 전달 가능.
+
+    Note:
+        본 함수는 LLM 무관 — 결정론적. 동일 입력 → 동일 출력.
+    """
+    domains = _detect_domain(user_request)
+    if not domains:
+        return []
+    checklist: list[ChecklistItem] = []
+    for domain in domains:
+        template = _DOMAIN_TEMPLATES.get(domain, [])
+        checklist.extend(template)
+    return checklist
 
 
 # ---------------------------------------------------------------------------

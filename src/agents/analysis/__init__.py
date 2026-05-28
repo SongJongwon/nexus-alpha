@@ -33,6 +33,8 @@ from .requirement_expander import (
     REQUIREMENT_EXPANDER_GOAL,
     REQUIREMENT_EXPANDER_NAME,
     REQUIREMENT_EXPANDER_ROLE,
+    ChecklistItem,
+    build_domain_checklist,
     create_requirement_expander_agent,
 )
 from .system_refactoring_strategist import (
@@ -60,6 +62,8 @@ __all__ = [
     "REQUIREMENT_EXPANDER_GOAL",
     "REQUIREMENT_EXPANDER_NAME",
     "REQUIREMENT_EXPANDER_ROLE",
+    "ChecklistItem",
+    "build_domain_checklist",
     "SILENT_FAIL_THRESHOLD",
     "SYSTEM_REFACTORING_STRATEGIST_BACKSTORY",
     "SYSTEM_REFACTORING_STRATEGIST_GOAL",

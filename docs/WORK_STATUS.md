@@ -1,15 +1,14 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-28 v13 Phase 5.E 사전 준비 — 라이브 검증 wire + 가이드**
-> ⭐ **Phase 5.E 사전 준비 머지** (PR #225) — `--enable-tikitaka` CLI flag wire (scripts/run.py + iterative_loop.py + _maybe_convene_boardroom 전체 chain) + BoardroomPanel.tsx 빈 state 안전 처리 (rounds=[] / statements=[] 명시 안내) + 라이브 검증 가이드 [PHASE_5E_LIVE_VERIFICATION_GUIDE.md](PHASE_5E_LIVE_VERIFICATION_GUIDE.md). PM 본인 PC 실행 준비 완료.
-> 이전 (Phase 5.4 PR #224): Cross-Agent Consultant + 양방향 티키타카 + schema v1→v2
-> 이전 (Phase 5.1 PR #223): UI Boardroom Panel + decision.yaml viewer
-> 이전 (Phase 1~4 PR #217~#222): 자율 진화 루프 풀체인 작동
-> pytest: 1636 (회귀 0)
+> **마지막 업데이트**: **2026-05-28 v13 Phase 6.2 — Requirement Expander 3D 도메인 매처 + Convergence Judge Rule 0**
+> ⭐ **Phase 6.2 머지** (PR #226) — BIM 빌드 사례 분석으로 식별된 *시스템의 뇌세포 결함* (얕은 요구 분석 + 성급한 수렴) 격파. ChecklistItem dataclass + 3D 도메인 키워드 매처 + 4-항목 템플릿 체크리스트 + Convergence Judge **Rule 0** (Gap Analyst 가 COMPLETE 라도 도메인 미충족 시 IMPROVE_NEEDED 강제). 회귀 0 — `domain_checklist=None` default 방어. 제안서: [docs/architecture/phase6_proposal.md](architecture/phase6_proposal.md).
+> 이전 (Phase 5.E PR #225): `--enable-tikitaka` CLI wire + 라이브 검증 가이드
+> 이전 (Phase 5.4 PR #224): Cross-Agent Consultant + 양방향 티키타카
+> pytest: 1636 → **1676** (Phase 6.2 +40 신규, 회귀 0)
 
 ---
 
-## 🎯 2026-05-28 세션 — Phase 1~5.4 머지 사이클 요약
+## 🎯 2026-05-28 세션 — Phase 1~6.2 머지 사이클 요약
 
 | PR | 머지 | Phase | 효과 |
 |----|-------|-------|------|
@@ -21,7 +20,8 @@
 | #222 | 2026-05-28 | Phase 4 | 본부 0 Goal Alignment + Token Budget Optimizer — 이사회 의결권 활성화 + decision.yaml 의결 로그 |
 | #223 | 2026-05-28 | Phase 5.1 | UI Boardroom Panel + decision.yaml viewer — 3-pane 가시화 |
 | #224 | 2026-05-28 | Phase 5.4 | Cross-Agent Consultant + 양방향 티키타카 — 본부 10 47/52 도달 + schema v1→v2 (rounds + consensus) + UI rounds 카드 |
-| **#225** | **2026-05-28** | **Phase 5.E 사전 준비 ★** | **--enable-tikitaka CLI wire + BoardroomPanel.tsx 빈 state 안전 처리 + 라이브 검증 가이드 문서** |
+| #225 | 2026-05-28 | Phase 5.E 사전 준비 | --enable-tikitaka CLI wire + BoardroomPanel.tsx 빈 state 안전 처리 + 라이브 검증 가이드 문서 |
+| **#226** | **2026-05-28** | **Phase 6.2 ★** | **Requirement Expander 3D 도메인 매처 + Convergence Judge Rule 0 — 얕은 분석 + 성급한 수렴 결함 격파 (BIM 본질). PR #227 (Tech Scout 인프라) / #228 (BIM 벤치마크) 는 후속 sprint** |
 
 ---
 
