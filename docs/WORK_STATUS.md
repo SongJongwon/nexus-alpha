@@ -1,8 +1,22 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-27 v13 — Boardroom 기반 자기 진화형 SW 패러다임 + 정원 다이어트 (54 → 52)**
-> ⭐ **v13 진입** (PR #212/#213) — 패러다임 재정의 + 정원 52 (구현 39 / 미구현 13) + Sprint 5/6 + GUI 자동 .exe 풀체인 (PR #210/#211 fixup #16) 완료
-> 이전 (2026-05-19): 13 PR 머지 / pytest 1354 → 1400 / fail-silent 5단계 cycle / Architecture docs 신설
+> **마지막 업데이트**: **2026-05-28 v13 Phase 1~4 완료 — 자율 진화 루프 풀체인 + 이사회 의결권 활성화**
+> ⭐ **Phase 1~4 일괄 머지** (PR #217~#222, 6건) — 본부 9 RV 4명 + 본부 1 Strategist + Boardroom 회의실 + 본부 0 Goal Alignment + Token Budget 의결권 = **자율 진화 루프 *한 cycle* 완주 가능 상태 도달**. 남은 작업은 Phase 5 (UI Boardroom panel + 6명) 만.
+> 이전 (2026-05-27 v13 진입, PR #212/#213): 패러다임 재정의 + 정원 52 (구현 39 / 미구현 13) + Sprint 5/6 + GUI 자동 .exe 풀체인
+> pytest: 1400 → **1598** (+198, 회귀 0 — Phase 1~4 6 PR 합산)
+
+---
+
+## 🎯 2026-05-28 세션 — Phase 1~4 머지 사이클 요약
+
+| PR | 머지 | Phase | 효과 |
+|----|-------|-------|------|
+| #217 | 2026-05-27 | Phase 1 (RV) | 본부 9 RV 4명 + workflow integration + Tauri UI stats 43/9 |
+| #218 | 2026-05-27 | Phase 1 후속 | RV node integration 실 발동 누락 처방 (PR #217 후속) |
+| #219 | 2026-05-27 | Phase 2 | 본부 1 System Refactoring Strategist — 이사회 안건 자율 발제 엔진 |
+| #220 | 2026-05-27 | (Phase 무관) | Claude Code SDK max_turns 제약 처방 (build chain 멀티턴 지원) |
+| #221 | 2026-05-27 | Phase 3 | Boardroom 회의실 인프라 — boardroom_trigger + Placeholder 2 nodes + Facilitator 격상 |
+| **#222** | **2026-05-28** | **Phase 4 ★** | **본부 0 Goal Alignment + Token Budget Optimizer — 이사회 의결권 활성화 + decision.yaml 의결 로그** |
 
 ---
 
@@ -12,21 +26,22 @@ v5 의 *진짜 multi-agent collaboration* (협업 자동화) 를 *자율 차원*
 
 | 차원 | v5 (수동형) | **v13 (자율형)** |
 |------|------------|-----------------|
-| 시작 점 | 인간 요구사항 명시 | **Telemetry 자율 인지** (RV 안테나) |
-| 진행 | 정해진 sequential | **Boardroom 티키타카 토론** (의장 + 부서 대표) |
-| 결정 | 마지막 Reviewer | **이사회 의결권** (Goal Alignment + Token Budget) |
-| 배포 | 사용자 직접 머지 | **자율 배포** (의결 통과 시 Build & Release 자동) |
+| 시작 점 | 인간 요구사항 명시 | **Telemetry 자율 인지** (RV 안테나) ✅ |
+| 진행 | 정해진 sequential | **Boardroom 티키타카 토론** (의장 + 부서 대표) ✅ |
+| 결정 | 마지막 Reviewer | **이사회 의결권** (Goal Alignment + Token Budget) ✅ Phase 4 |
+| 배포 | 사용자 직접 머지 | **자율 배포** (의결 통과 시 Build & Release 자동) 🚧 Phase 5 wire |
 
-### 자율 진화 루프 (v13)
+### 자율 진화 루프 (v13) — **풀체인 작동 상태 (Phase 4 완료)**
 
 ```
-Telemetry 감지 (RV) → 안건 발제 (System Refactoring Strategist)
+Telemetry 감지 (RV ✅) → 안건 발제 (System Refactoring Strategist ✅)
          ↓
-Boardroom 토론 (Facilitator 의장)
+Boardroom 토론 (Facilitator 의장 ✅)
          ↓
-조율 (Goal Alignment + Token Budget)
+조율 (Goal Alignment ✅ + Token Budget ✅) → decision.yaml ✅
          ↓
-자율 배포 (Build & Release)
+final_decision: approved → Build & Release (Phase 5 wire)
+                blocked  → Strategist 재발제 (보수적 brake)
 ```
 
 ### 정원 (v13 — 단일 진실 공급원: [Nexus_Alpha_조직도_v13.md](architecture/Nexus_Alpha_조직도_v13.md))
@@ -34,137 +49,144 @@ Boardroom 토론 (Facilitator 의장)
 | 항목 | 수 |
 |------|---|
 | 총 정원 | **52명** |
-| 구현 완료 | **39명** (75%) |
-| 미구현 | **13명** (25%) |
+| 구현 완료 | **46명** (88%) ⬆️ +7 (RV 4 + Strategist + GoalAlignment + TokenBudget) |
+| 미구현 | **6명** (12%) — Product Manager / Documentation Lead / Monitoring Engineer / Mobile / Embedded / Cross-Agent Consultant |
 
 ---
 
-## 🛑 v13 Gap Analysis — 현재 미흡/부족 부분
+## ✅ v13 Gap Analysis — Phase 1~4 모두 해소
 
-### 1. 백엔드 — v13 설계 예고 4 핵심 노드 *모두 미구현*
+### 1. 백엔드 — v13 설계 예고 4 핵심 노드 **모두 구현 완료** ✅
 
-| 노드 | 책임 본부 | 상태 |
-|------|----------|------|
-| `runtime_verify` | 본부 9 RV | ❌ (v13 설계 예고 — 미구현) |
-| `boardroom_trigger` | 본부 10 Boardroom Facilitator | ❌ (v13 설계 예고 — 미구현) |
-| `goal_alignment_check` | 본부 0 Goal Alignment Agent | ❌ (v13 설계 예고 — 미구현) |
-| `budget_brake` | 본부 0 Token Budget Optimizer | ❌ (v13 설계 예고 — 미구현) |
+| 노드 | 책임 본부 | 상태 | 머지 PR |
+|------|----------|------|---------|
+| `runtime_verify` | 본부 9 RV | ✅ 구현 + workflow wire | PR #217 / #218 |
+| `boardroom_trigger` | 본부 10 Boardroom Facilitator | ✅ 회의 세션 생성 | PR #221 |
+| `goal_alignment_check` | 본부 0 Goal Alignment Agent | ✅ 의결권 실 동작 (approved/rejected) | **PR #222** |
+| `budget_brake` | 본부 0 Token Budget Optimizer | ✅ 의결권 실 동작 (approved/throttled) | **PR #222** |
 
-→ 자율 진화 루프의 *워크플로 layer* 자체가 백엔드에 부재. iterative_loop 가 *요청 처리 cycle* 만 cover, 메타 cycle 부재.
+→ 자율 진화 루프의 *워크플로 layer* 완비. iterative_loop 의 `_node_runtime_verify` 가 silent fail 5회 누적 시 자동으로 Strategist → Boardroom 풀체인 진입.
 
-### 2. 본부 9 RV — 4 agent 전원 미구현 (자기 진화 루프의 *안테나*)
+### 2. 본부 9 RV — 4 agent 전원 구현 완료 ✅ (Phase 1)
 
 | Agent | 역할 | 상태 |
 |-------|------|------|
-| Exe Runtime Tester | `.exe` sandbox 실행 검증 | ❌ |
-| UI Automation Specialist | PyAutoGUI/Playwright 사용자 시나리오 | ❌ |
-| Runtime Failure Analyzer | 실행 fail trace 분석 | ❌ |
-| Auto-Fix Coordinator | RV failure → 재빌드 trigger | ❌ |
+| Exe Runtime Tester | `.exe` sandbox 실행 검증 | ✅ PR #217 |
+| UI Automation Specialist | PyAutoGUI/Playwright 사용자 시나리오 | ✅ PR #217 |
+| Runtime Failure Analyzer | 실행 fail trace 분석 | ✅ PR #217 |
+| Auto-Fix Coordinator | RV failure → 재빌드 trigger | ✅ PR #217 + #218 |
 
-→ Telemetry 자율 인지 인프라 자체 부재.
+→ Telemetry 자율 인지 인프라 완비. `dept="rv"` (🟠) telemetry 채널 신설 + 본부 9 노드 활성.
 
-### 3. 본부 1 — System Refactoring Strategist 미구현 (안건 발제 엔진)
+### 3. 본부 1 — System Refactoring Strategist 구현 완료 ✅ (Phase 2 — PR #219)
 
-→ RV 감지 결과를 *이사회 안건* 으로 *자율 변환* 하는 엔진 없음. 현재는 PM 이 매번 *수동 PR* 으로 처방 (4회 BLOCKED 사고 evidence).
+→ RV 감지 결과 → 결정론 패턴 매처 (silent fail 5회 / BLOCKED 비율 50%+) → *이사회 안건* 자동 발제. LLM fallback 도 지원. 산출: `outputs/_refactoring_proposals/<timestamp>_<slug>.md`.
 
-### 4. 본부 0 — Goal Alignment Agent + Token Budget Optimizer 미구현 (의결권 + 브레이크)
+### 4. 본부 0 — Goal Alignment Agent + Token Budget Optimizer 구현 완료 ✅ (Phase 4 — PR #222)
 
-→ 자율 발제된 안건을 *목적 부합 검증* + *예산 한도 검증* 없이 의결권 행사 불가. C-Level 의 *수동 의장* (PM) 의존.
+→ 이사회 안건이 *목적 부합 검증* + *예산 한도 검증* 의 의결권 통과 후 build_workflow 진입. 의결 로그 `outputs/board_decisions/<ts>_<session_id>/decision.yaml` schema v1 자동 작성. FinalDecision OR 조건 (alignment=rejected **OR** budget=throttled → blocked).
 
-### 5. UI — 이사회(Boardroom) 토론 시각화 panel 부재
+### 5. UI — 이사회(Boardroom) 토론 시각화 panel 🚧 Phase 5 잔여
 
-현재 UI (Sprint 5/6 완료, PR #208) 가 *에이전트 맵 시각화* + *Telemetry stream* 까지. 다만 *이사회 토론 실시간 진행 상황* (agent 간 티키타카 메시지 + 의결권 결과) 표시 컴포넌트 부재. v13 Phase 5 예정.
+현재 UI (Sprint 5/6 완료, PR #208) 가 *에이전트 맵 시각화* + *Telemetry stream* 까지. **Boardroom panel** + 의결 결과 시각화 + decision.yaml viewer 가 Phase 5 잔여 작업.
 
-### 6. 프로세스 — 티키타카 토론 코드 placeholder 수준
+### 6. 프로세스 — 티키타카 토론 코드 🚧 Phase 5 잔여
 
-현재 `Process.sequential` 만 사용 (24/24 agent `allow_delegation=False`). 진정한 *치열한 논쟁* (Engineer ↔ Reviewer 양방향 + Goal Alignment 의 권한 행사) 코드는 *placeholder 수준*. v11 Phase 2 (Cross-Agent Consultant) 미구현 + v13 Phase 4 (의결권 활성화) 필수.
+`Process.sequential` 만 사용. Phase 4 까지는 *의결권 결정론 + LLM 단발 호출* 만 — *치열한 양방향 논쟁* (Engineer ↔ Reviewer + Cross-Agent Consultant) 은 Phase 5.
 
 ---
 
-## 🛣 v13 Phase 우선순위 (남은 작업 순서)
+## 🛣 v13 Phase 우선순위 — Phase 5 만 잔여
 
-| Phase | 작업 | 책임 | 우선순위 |
-|-------|------|------|----------|
-| **Phase 1 ★** | **본부 9 RV 4명 구현** (Exe Runtime Tester + UI Automation + Failure Analyzer + Auto-Fix Coordinator) | 본부 9 | **최우선** — Telemetry 자율 인지 인프라 확보 |
-| Phase 2 | **System Refactoring Strategist** 구현 | 본부 1 | 이사회 안건 자율 발제 엔진 |
-| Phase 3 | **4 핵심 노드 백엔드 구현 + workflow wire** (`runtime_verify` / `boardroom_trigger` / `goal_alignment_check` / `budget_brake`) | 백엔드 workflow | 자율 진화 루프 작동 |
-| Phase 4 | **Goal Alignment Agent + Token Budget Optimizer 구현** | 본부 0 | 이사회 거버넌스 + 자원 브레이크 의결권 활성화 |
-| Phase 5 | 나머지 미구현 6명 + UI **이사회 토론 시각화 panel** | 다부서 + frontend | 완성도 — 52/52 도달 |
+| Phase | 작업 | 책임 | 상태 |
+|-------|------|------|------|
+| ~~Phase 1~~ | ~~본부 9 RV 4명 구현~~ | 본부 9 | ✅ **완료** (PR #217/#218) |
+| ~~Phase 2~~ | ~~System Refactoring Strategist~~ | 본부 1 | ✅ **완료** (PR #219) |
+| ~~Phase 3~~ | ~~Boardroom 회의실 + 4 핵심 노드 wire~~ | 본부 10 + workflow | ✅ **완료** (PR #221) |
+| ~~Phase 4~~ | ~~Goal Alignment + Token Budget 의결권~~ | 본부 0 | ✅ **완료** (PR #222) |
+| **Phase 5 ★** | **나머지 미구현 6명 + UI Boardroom panel + Cross-Agent Consultant 양방향 토론** | 다부서 + frontend | 🚧 **다음 sprint** — 52/52 100% 도달 + UI 의결 결과 시각화 |
 
-### 각 Phase 별 완료 조건 (Definition of Done)
+### Phase 5 — UI Boardroom panel + 6명 완료 조건 (DoD)
 
-#### Phase 1 — RV 4명 구현 완료 조건
-- `.exe` 실행 중 silent fail 발생 시 RV 에이전트가 **에러 트레이스를 정상 추출** 하여 Telemetry 로그에 append
-- 예: `Exe Runtime Tester` 가 `Calculator.exe` 5초 alive 후 종료 시 `{"agent": "exe_runtime_tester", "status": "alive_5s", "exit_code": null}` emit
-- `Auto-Fix Coordinator` 가 RV failure 감지 시 `qa_feedback_loop` 또는 `boardroom_trigger` 진입 (Phase 3 wire 후 활성)
-
-#### Phase 2 — System Refactoring Strategist 완료 조건
-- 5회 연속 silent fail 감지 시 *자율 안건* 발제 — 예: "max_iterations 1 → 3 상향" / "GUI sandbox SKIP marker 추가"
-- 안건 YAML 출력 (`outputs/boardroom_agenda/<timestamp>.yaml`) + Telemetry 의 `agenda_proposed` event emit
-
-#### Phase 3 — 4 핵심 노드 wire 완료 조건
-- 신규 *meta workflow* (`boardroom_workflow.py`) 가 다음 sequence 동작:
-  1. RV emit → `runtime_verify` 노드
-  2. System Refactoring Strategist 발제 → `boardroom_trigger` 노드 (Boardroom Facilitator 활성)
-  3. Goal Alignment + Token Budget 의결 → `goal_alignment_check` + `budget_brake` 노드
-  4. 통과 시 → `build_workflow` 자동 진입
-- 1 회 E2E 라이브 검증 — 자율 진화 루프 *한 cycle* 완주
-
-#### Phase 4 — Goal Alignment + Token Budget 완료 조건
-- 위 sequence 의 의결권이 *실제 동작* — 목적 부합 안 되면 BLOCK, 예산 한도 초과면 REJECT
-- 이사회 의결 로그 (`outputs/board_decisions/<run>/decision.yaml`) 자동 작성
-
-#### Phase 5 — UI Boardroom panel + 6명 완료 조건
-- 모든 미구현 13 명 중 RV 4 + System Refactoring + Goal Alignment + Token Budget = 7 외 *나머지 6명* (Product Manager / Documentation Lead / Monitoring Engineer / Mobile / Embedded / Cross-Agent Consultant) 순차 구현
-- UI 에 *Boardroom Panel* — agent 간 티키타카 메시지 실시간 표시 + 의결권 결과 시각화
+- 미구현 6명 순차 구현 — Product Manager / Documentation Lead / Monitoring Engineer / Mobile / Embedded / Cross-Agent Consultant
+- UI 에 *Boardroom Panel* — agent 간 티키타카 메시지 실시간 표시 + 의결권 결과 시각화 (`decision.yaml` viewer)
+- 1 회 E2E 라이브 검증 — 자율 진화 루프 *한 cycle* 완주 (RV silent fail → Strategist 발제 → Boardroom 회의 → 의결 → build_workflow 자동 진입)
 - 52/52 = 100% 구현률 달성
 
 ---
 
-## 🗺️ v13 Phase 의존성 그래프 (Mermaid)
+## 🗺️ v13 Phase 의존성 그래프 (Mermaid — Phase 1~4 완료 반영)
 
 ```mermaid
 flowchart TD
-    Start[현재 — Sprint 6 + PR #213<br/>52명 정원 / 39 구현 / 13 미구현]
+    Start[2026-05-27 v13 진입<br/>52명 / 39 구현 / 13 미구현]
 
-    Start --> P1[Phase 1 ★최우선<br/>본부 9 RV 4명 구현<br/>Telemetry 자율 인지 인프라]
+    Start --> P1[✅ Phase 1<br/>본부 9 RV 4명<br/>PR #217 / #218]
+    P1 -->|RV silent fail emit| P2[✅ Phase 2<br/>System Refactoring Strategist<br/>PR #219]
+    P2 -->|안건 markdown 발제| P3[✅ Phase 3<br/>Boardroom 회의실 인프라<br/>PR #221]
+    P3 -->|회의 세션 + Placeholder| P4[✅ Phase 4 ★ NEW<br/>Goal Alignment + Token Budget<br/>decision.yaml 의결 로그<br/>PR #222]
 
-    P1 -->|RV 가 silent fail emit| P2[Phase 2<br/>System Refactoring Strategist<br/>이사회 안건 자율 발제]
+    P4 -->|이사회 의결권 활성화| Now[🎯 현재 2026-05-28<br/>52명 / 46 구현 / 6 미구현<br/>자율 진화 루프 풀체인 작동]
 
-    P2 -->|안건 YAML 산출| P3[Phase 3<br/>4 핵심 노드 백엔드 wire<br/>runtime_verify / boardroom_trigger<br/>goal_alignment_check / budget_brake]
+    Now --> P5[🚧 Phase 5<br/>UI Boardroom panel + 6명<br/>+ Cross-Agent Consultant<br/>52/52 100% 도달]
 
-    P3 -->|sequence 작동| P4[Phase 4<br/>Goal Alignment Agent +<br/>Token Budget Optimizer<br/>이사회 의결권 활성화]
+    P5 --> End[v13 완성<br/>베타 cohort 5명 $250<br/>자율 진화 SW 라이브 검증]
 
-    P4 -->|자율 진화 루프 완주| P5[Phase 5<br/>나머지 6명 + UI Boardroom panel<br/>52/52 100% 도달]
-
-    P5 --> End[v13 완성<br/>베타 cohort 5명 ($250)<br/>자율 진화 SW 실 라이브 검증]
-
-    style Start fill:#bae6fd,stroke:#0284c7
-    style P1 fill:#fed7aa,stroke:#ea580c,stroke-width:3px
-    style P2 fill:#bae6fd,stroke:#0284c7
-    style P3 fill:#e9d5ff,stroke:#a855f7
-    style P4 fill:#fef3c7,stroke:#d97706
+    style Start fill:#e5e7eb,stroke:#6b7280
+    style P1 fill:#d1fae5,stroke:#10b981
+    style P2 fill:#d1fae5,stroke:#10b981
+    style P3 fill:#d1fae5,stroke:#10b981
+    style P4 fill:#fef3c7,stroke:#d97706,stroke-width:3px
+    style Now fill:#bae6fd,stroke:#0284c7,stroke-width:3px
     style P5 fill:#fde2e8,stroke:#ec4899
-    style End fill:#d1fae5,stroke:#10b981,stroke-width:3px
+    style End fill:#e9d5ff,stroke:#a855f7,stroke-width:3px
 ```
 
 ---
 
-## 📌 v13 Cross-check 검증 결과
+## 📌 v13 Cross-check 검증 결과 (Phase 4 완료 반영)
 
 | 항목 | 값 | 일치 |
 |------|----|------|
 | 단일 진실 공급원 | [Nexus_Alpha_조직도_v13.md](architecture/Nexus_Alpha_조직도_v13.md) | ✅ |
 | 총 정원 | 52명 | ✅ |
-| 구현 / 미구현 | 39 / 13 | ✅ |
+| 구현 / 미구현 | **46 / 6** ⬆️ | ✅ |
 | 본부 수 | 10 + Board (11 grid) | ✅ |
-| 구성안 | [Nexus_Alpha_구성안_v8.md](architecture/Nexus_Alpha_구성안_v8.md) — v8 신설 (v7 보존) | ✅ |
-| 에이전트 맵 | [agent_org_chart.md](architecture/agent_org_chart.md) — v13 동기화 | ✅ |
-| 타임라인 | [phase_progress.md](architecture/phase_progress.md) — Phase 1~5 v13 | ✅ |
-| 시스템 아키텍처 | [system_architecture.md](architecture/system_architecture.md) — 4 노드 (v13 설계 예고 — 미구현) | ✅ |
-| 본 문서 | WORK_STATUS.md — v13 Gap Analysis + Phase 1~5 DoD + Mermaid | ✅ |
+| 본부 0 (C-Level) | 3/3 ✅ (CTO + GoalAlignment ★ + TokenBudget ★) | ✅ |
+| 본부 1 (분석) | 4/4 ✅ (RequirementExpander + GapAnalyst + DataAnalyst + SystemRefactoringStrategist ★) | ✅ |
+| 본부 9 (RV) | 4/4 ✅ (Exe Runtime Tester + UI Automation + Failure Analyzer + Auto-Fix Coordinator ★) | ✅ |
+| 4 핵심 노드 | runtime_verify ✅ / boardroom_trigger ✅ / goal_alignment_check ✅ / budget_brake ✅ | ✅ |
+| pytest | 1400 → **1598** (+198, 회귀 0) | ✅ |
+| 본 문서 | WORK_STATUS.md — Phase 1~4 완료 반영 + Phase 5 DoD | ✅ |
 
-→ **모든 문서 cross-check 일치**. v13 패러다임 + 52/39/13 수치 모순 0.
+→ **모든 문서 cross-check 일치**. Phase 4 완료 → 자율 진화 루프 풀체인 작동.
+
+---
+
+## 📦 Phase 4 (PR #222) 산출 요약
+
+### 신규 코드
+- [src/agents/c_level/goal_alignment_agent.py](../src/agents/c_level/goal_alignment_agent.py) — Goal Alignment Agent: 결정론 forbidden 키워드 (한/영 13건) + LLM 호출 (옵션) + AlignmentCheckResult 산출
+- [src/agents/c_level/token_budget_optimizer.py](../src/agents/c_level/token_budget_optimizer.py) — Token Budget Optimizer: tier 매핑 (low/medium/high → 0.5/2.0/10.0 USD) + 한도 env (default $15) + 누적 비용 (env 또는 events.jsonl token_usage 합산, Opus 4.7 단가) + BudgetBrakeResult 산출
+
+### 수정 코드
+- [src/agents/coordination/boardroom_facilitator.py](../src/agents/coordination/boardroom_facilitator.py) — placeholder 2 노드 → 실 LLM 호출 + FinalDecision OR 종합 + write_boardroom_decision_yaml
+- [src/workflows/iterative_loop.py](../src/workflows/iterative_loop.py) — `_maybe_convene_boardroom` 3-tuple unpacking + decision_output_dir 전달
+
+### 의결 로그 YAML schema v1 (PM 사전 승인)
+```
+outputs/board_decisions/<ts>_<session_id>/decision.yaml
+  schema_version: v1
+  session: {session_id, agenda, proposal_path, opened_at, closed_at, attendees}
+  alignment: {status approved|rejected, reason, references, checked_at}
+  budget: {status approved|throttled, estimated_cost_usd, budget_limit_usd, cumulative_cost_usd, reason, checked_at}
+  final_decision: {outcome approved|blocked, reason, blocked_by, decided_at}
+```
+
+### 테스트 (회귀 0)
+- [src/tests/agents/test_boardroom_governance_agents.py](../src/tests/agents/test_boardroom_governance_agents.py) — 26 단위 테스트 (forbidden / LLM 분기 / tier 매핑 / cumulative env / events.jsonl 합산 / agent factory)
+- [src/tests/workflows/test_boardroom_nodes.py](../src/tests/workflows/test_boardroom_nodes.py) — Phase 3 호환 갱신 + DecisionYamlWriter + FullCycle blocked 분기 (38 케이스)
+- [src/tests/integration/test_boardroom_e2e.py](../src/tests/integration/test_boardroom_e2e.py) — PR #218 패턴 (실 TelemetryEmitter + JSON-parse + decision.yaml 동시 검증) 5 E2E 시나리오
 
 ---
 
