@@ -1,11 +1,11 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-28 v13 Phase 6.1 — Tech Scout 인프라 (PyPI 가짜 패키지 가드)**
-> ⭐ **Phase 6.1 머지** (PR #229) — PyPI JSON API 직접 조회로 *환각 패키지 가드*. `validate_pypi_package(name)` + 7d TTL 캐싱 + MAX_SEARCHES=5 + 5xx resilience. `scout_and_validate(query)` 진입점 (LLM 호출 0, 비용 0). PM 검증 시연: `scout_and_validate("3D 시각화 Python")` → pythreejs/plotly/vispy/vtk/open3d 5/5 실존 확정. workflow 통합은 Phase 6.3 (PR #230) 에서.
-> 이전 (Phase 6.2 PR #226): Requirement Expander 3D 매처 + Convergence Judge Rule 0
+> **마지막 업데이트**: **2026-05-28 v13 Phase 6.3 — Tech Scout 통합 + Rule -1 + BIM 벤치마크**
+> ⭐ **Phase 6.3 머지** (PR #230) — Tech Scout workflow 통합 완료. `--enable-tech-scout` CLI flag + `_node_tech_scout` (run_chain 직후) + Engineer 산출 requirements.txt PyPI 일괄 검증. Convergence Judge **Rule -1** 신설 — 1차 가짜 → IMPROVE_NEEDED (PM 절충안), 2차 연속 → BLOCKED(FAKE_PACKAGE). BIM 벤치마크 E2E + 라이브 가이드 [PHASE_6_LIVE_VERIFICATION_GUIDE.md](PHASE_6_LIVE_VERIFICATION_GUIDE.md). 회귀 0 — `enable_tech_scout=False` default.
+> 이전 (Phase 6.1 PR #229): Tech Scout 인프라 (PyPI JSON + 캐싱)
 > 이전 (UI PR #228): 부서 대표 14명 시각 구별 (👑)
-> 이전 (LLM_PROVIDER 리포트 PR #227): docs-only
-> pytest: 1676 → **1706** (Phase 6.1 +30 신규, 회귀 0)
+> 이전 (Phase 6.2 PR #226): Requirement Expander 3D 매처 + Judge Rule 0
+> pytest: 1706 → **1727** (Phase 6.3 +21 신규, 회귀 0)
 
 ---
 
@@ -25,7 +25,8 @@
 | #226 | 2026-05-28 | Phase 6.2 | Requirement Expander 3D 도메인 매처 + Convergence Judge Rule 0 |
 | #227 | 2026-05-28 | (선행 리포트) | LLM_PROVIDER 노드별 분리 호환성 검증 리포트 (docs-only, Phase 6.1 진입 신호등 GREEN) |
 | #228 | 2026-05-28 | (UI) | 에이전트 카드 부서 대표 14명 시각 구별 (👑 + 금색 테두리 + 틴트) |
-| **#229** | **2026-05-28** | **Phase 6.1 ★** | **Tech Scout 인프라 — PyPI JSON API 가짜 패키지 가드 + 7d TTL 캐싱 + MAX_SEARCHES=5. requests>=2.31 추가. workflow 통합은 PR #230 (Phase 6.3) 에서.** |
+| #229 | 2026-05-28 | Phase 6.1 | Tech Scout 인프라 — PyPI JSON API 가짜 패키지 가드 + 7d TTL 캐싱 + MAX_SEARCHES=5. requests>=2.31 추가. |
+| **#230** | **2026-05-28** | **Phase 6.3 ★** | **Tech Scout workflow 통합 — `--enable-tech-scout` CLI + `_node_tech_scout` + Convergence Judge Rule -1 (1차 IMPROVE / 2차 BLOCKED). BIM 벤치마크 E2E + 라이브 가이드.** |
 
 ---
 

@@ -402,3 +402,106 @@ def scout_and_validate(
         skipped_count=skipped_count,
         elapsed_ms=elapsed_ms,
     )
+
+
+# ---------------------------------------------------------------------------
+# v13 Phase 6.3 (PR #230) — requirements.txt 파일 일괄 검증
+# ---------------------------------------------------------------------------
+# pip requirements 형식 — 각 줄에서 패키지 이름 추출.
+# 형식 예: "requests>=2.31.0", "numpy ; python_version>='3.10'",
+#         "git+https://...", "-e ./local", "# comment"
+import re as _re
+
+_PKG_NAME_RE = _re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+"""pip requirements 줄에서 패키지 이름 추출. extras/version 제외."""
+
+
+def _parse_requirements_lines(content: str) -> list[str]:
+    """requirements.txt 본문 → 패키지 이름 list (정규화 — 소문자 + 중복 제거).
+
+    무시 대상:
+        - 주석 (``#`` 시작)
+        - 빈 줄
+        - VCS URL (``git+``, ``hg+`` 등)
+        - 로컬 파일 (``-e .``, ``./local``)
+        - 옵션 라인 (``-r other.txt``)
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("-"):
+            # -e, -r, --index-url 등 옵션 라인
+            continue
+        if line.startswith(("git+", "hg+", "svn+", "bzr+", "./", "/")):
+            continue
+        match = _PKG_NAME_RE.match(line)
+        if not match:
+            continue
+        name = match.group(1).lower()
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def validate_requirements_txt(
+    req_path: Path,
+    *,
+    cache_dir: Path = DEFAULT_CACHE_DIR,
+    cache_ttl_days: int = DEFAULT_CACHE_TTL_DAYS,
+    max_packages: int = MAX_SEARCHES_PER_QUERY * 4,
+    session: Optional[requests.Session] = None,
+) -> list[PyPIResult]:
+    """Engineer 산출 requirements.txt 파일 → 각 패키지 PyPI 검증.
+
+    Phase 6.3 (PR #230) 의 핵심 — Engineer 가 환각 패키지 (``bim_repository``)
+    포함한 requirements.txt 산출 시 *각 패키지 PyPI 실존 검증*. 결과 list 의
+    ``exists=False`` 항목이 *가짜 패키지*.
+
+    Args:
+        req_path: requirements.txt 파일 경로.
+        cache_dir / cache_ttl_days: 캐시 정책 (Phase 6.1 과 동일).
+        max_packages: requirements.txt 의 *총* 패키지 상한 (기본 MAX_SEARCHES*4=20).
+            과다 의존성 안건은 truncate.
+        session: 옵션 ``requests.Session`` (테스트 mock 용).
+
+    Returns:
+        PyPIResult list. 빈 list 면 파일 부재 / 파싱 실패 / 패키지 0건.
+    """
+    if not req_path.exists() or not req_path.is_file():
+        return []
+    try:
+        content = req_path.read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return []
+    names = _parse_requirements_lines(content)
+    if not names:
+        return []
+    names = names[:max_packages]
+    results: list[PyPIResult] = []
+    for name in names:
+        result = validate_pypi_package(
+            name,
+            cache_dir=cache_dir,
+            cache_ttl_days=cache_ttl_days,
+            session=session,
+        )
+        results.append(result)
+    return results
+
+
+def extract_fake_packages(results: list[PyPIResult]) -> list[str]:
+    """검증 결과 → 가짜 패키지 이름 list (exists=False 만).
+
+    Phase 6.3 의 *판정 입력*:
+        - 빈 list → 가짜 없음 (모두 실존 또는 5xx 확정 불가)
+        - 1+ 항목 → judge_convergence 가 IMPROVE/BLOCKED 분기
+
+    Note:
+        ``exists=None`` (5xx / network 결함) 은 *확정 불가* 라 가짜 list 에서 제외.
+        보수적 — 5xx 변동성으로 인한 false BLOCKED 회피.
+    """
+    return [r.name for r in results if r.exists is False]

@@ -67,6 +67,8 @@ _NODE_DEPARTMENT: dict[str, str] = {
     "run_sandbox": ENGINEERING,
     # v13 Phase 1 2단계 — 본부 9 RV (system_architecture.md 계층 2.5 명세)
     "runtime_verify": RV,
+    # v13 Phase 6.3 (PR #230) — Tech Scout PyPI 가짜 패키지 가드
+    "tech_scout": LEARNING,
     # v13 Phase 3 — Boardroom 회의실 인프라 (boardroom_facilitator.py)
     "boardroom_trigger": PLANNING,         # 본부 10 Coordination — 의장 격상
     "goal_alignment_check": C_LEVEL,        # Placeholder (Phase 4 교체)

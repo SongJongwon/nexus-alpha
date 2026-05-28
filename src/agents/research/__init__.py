@@ -20,8 +20,10 @@ from .tech_scout import (
     PyPIResult,
     ScoutResult,
     extract_candidates_from_query,
+    extract_fake_packages,
     scout_and_validate,
     validate_pypi_package,
+    validate_requirements_txt,
 )
 
 __all__ = [
@@ -32,6 +34,8 @@ __all__ = [
     "PyPIResult",
     "ScoutResult",
     "extract_candidates_from_query",
+    "extract_fake_packages",
     "scout_and_validate",
     "validate_pypi_package",
+    "validate_requirements_txt",
 ]

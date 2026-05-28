@@ -261,6 +261,10 @@ class _LoopState(TypedDict, total=False):
     boardroom_session_path: Any  # Path | None — 회의록 markdown 경로
     # v13 Phase 5.4 (PR #224) — 양방향 티키타카 라운드 opt-in wire
     enable_tikitaka: bool  # --enable-tikitaka flag. False (default) 면 직렬 의결 (Phase 4 모드)
+    # v13 Phase 6.3 (PR #230) — Tech Scout PyPI 가짜 패키지 가드 opt-in wire
+    enable_tech_scout: bool  # --enable-tech-scout flag. False (default) 면 requirements.txt 검증 skip
+    fake_packages: Any  # list[str] | None — 이번 iter 의 가짜 패키지 list (Rule -1 입력)
+    consecutive_fake_iterations: int  # 가짜 패키지 연속 iter 카운트 — 2차 도달 시 BLOCKED(FAKE_PACKAGE)
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -1350,11 +1354,67 @@ def _apply_build_failure_override(
     )
 
 
+def _node_tech_scout(state: _LoopState) -> dict[str, Any]:
+    """v13 Phase 6.3 (PR #230) — Engineer 산출 requirements.txt PyPI 검증.
+
+    enable_tech_scout=True 시 _node_run_chain 직후 진입. chain_result.saved_dir/
+    requirements.txt 를 파싱 + 각 패키지 PyPI 실존 검증. 가짜 발견 시:
+        - consecutive_fake_iterations += 1
+        - state["fake_packages"] = [가짜 list]
+    가짜 없으면:
+        - consecutive_fake_iterations = 0 (reset — IMPROVE 누적 해제)
+        - state["fake_packages"] = []
+
+    enable_tech_scout=False 면 즉시 return (회귀 0).
+    """
+    if not state.get("enable_tech_scout", False):
+        return {}  # 기존 state 보존 (default OFF)
+
+    chain_result = state.get("chain_result")
+    if chain_result is None:
+        return {"fake_packages": []}
+
+    saved_dir = getattr(chain_result, "saved_dir", None)
+    if saved_dir is None:
+        return {"fake_packages": []}
+
+    req_path = Path(saved_dir) / "requirements.txt"
+    if not req_path.exists():
+        # requirements.txt 미산출 — 가짜 없음 (검증 대상 부재)
+        return {"fake_packages": [], "consecutive_fake_iterations": 0}
+
+    try:
+        from src.agents.research import (
+            extract_fake_packages,
+            validate_requirements_txt,
+        )
+
+        results = validate_requirements_txt(req_path)
+        fake_list = extract_fake_packages(results)
+    except Exception:  # noqa: BLE001 — Tech Scout 실패가 메인 cycle 차단 X
+        return {"fake_packages": [], "consecutive_fake_iterations": state.get(
+            "consecutive_fake_iterations", 0
+        )}
+
+    if fake_list:
+        prev_count = state.get("consecutive_fake_iterations", 0)
+        return {
+            "fake_packages": fake_list,
+            "consecutive_fake_iterations": prev_count + 1,
+        }
+    # 가짜 없음 — 카운터 reset
+    return {"fake_packages": [], "consecutive_fake_iterations": 0}
+
+
 def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
     """결정표 호출 (LLM 무관). budget 도 함께 차감.
 
     PR #162 (2026-05-18): build 실패 시 verdict override 추가 — ``_apply_build_failure_override``
     참조. Gap Analyst 가 COMPLETE 라 해도 PyInstaller .exe 산출 실패면 BLOCKED(BUILD_FAILED).
+
+    PR #230 (Phase 6.3): fake_packages + consecutive_fake_iterations 전달.
+        - Rule -1 발동 시 1차 IMPROVE / 2차 BLOCKED(FAKE_PACKAGE).
+        - 둘 다 default 0 / None 이면 회귀 0.
     """
     gap: GapReport = state["gap_report"]
     budget = state.get("budget_tokens_remaining", NO_BUDGET_GATE)
@@ -1367,6 +1427,9 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         gap,
         max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
         budget_tokens_remaining=budget,
+        # Phase 6.3 (PR #230) — Tech Scout fake_packages 전달
+        fake_packages=state.get("fake_packages"),
+        consecutive_fake_iterations=state.get("consecutive_fake_iterations", 0),
     )
     # PR #162 — build 실패 시 BLOCKED override
     decision = _apply_build_failure_override(decision, state.get("chain_result"))
@@ -1494,6 +1557,8 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     g.add_node("recall_past_knowledge", _telemetry_wrap("recall_past_knowledge", _node_recall_past_knowledge))  # PR #140
     g.add_node("kickoff_meeting", _telemetry_wrap("kickoff_meeting", _node_kickoff_meeting))                    # PR #138 full
     g.add_node("run_chain", _telemetry_wrap("run_chain", _node_run_chain))
+    # v13 Phase 6.3 (PR #230) — Tech Scout PyPI 가짜 패키지 가드 노드
+    g.add_node("tech_scout", _telemetry_wrap("tech_scout", _node_tech_scout))
     g.add_node("run_sandbox", _telemetry_wrap("run_sandbox", _node_run_sandbox))
     # v13 Phase 1 2단계 — 본부 9 Runtime Verification opt-in 노드 (default OFF).
     g.add_node("runtime_verify", _telemetry_wrap("runtime_verify", _node_runtime_verify))
@@ -1511,7 +1576,10 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     g.add_edge("expand_requirements", "recall_past_knowledge")
     g.add_edge("recall_past_knowledge", "kickoff_meeting")
     g.add_edge("kickoff_meeting", "run_chain")
-    g.add_edge("run_chain", "run_sandbox")
+    # v13 Phase 6.3 (PR #230) — run_chain 직후 tech_scout (requirements.txt PyPI 검증).
+    # enable_tech_scout=False (default) 면 _node_tech_scout 가 즉시 return {} — 회귀 0.
+    g.add_edge("run_chain", "tech_scout")
+    g.add_edge("tech_scout", "run_sandbox")
     # v13 Phase 1 2단계 — run_sandbox → runtime_verify → analyze_gap.
     # enable_rv=False (default) 면 runtime_verify 가 즉시 pass-through.
     g.add_edge("run_sandbox", "runtime_verify")
@@ -1554,6 +1622,7 @@ def run_iterative_loop(
     enable_strategist: bool = False,  # v13 Phase 2 — 본부 1 Strategist opt-in (default OFF)
     enable_boardroom: bool = False,  # v13 Phase 3 — 본부 10 Boardroom opt-in (default OFF)
     enable_tikitaka: bool = False,  # v13 Phase 5.4 — 양방향 라운드 토론 opt-in (default OFF, --enable-boardroom 함께 필요)
+    enable_tech_scout: bool = False,  # v13 Phase 6.3 — Tech Scout PyPI 가짜 패키지 가드 opt-in (default OFF)
     target_platform: str = "windows",
     enable_release_branch: bool = False,
     previous_version: str = "",
@@ -1684,6 +1753,10 @@ def run_iterative_loop(
             "boardroom_session_path": None,
             # v13 Phase 5.4 (PR #224 + #225) — 양방향 티키타카 라운드 초기 state
             "enable_tikitaka": enable_tikitaka,
+            # v13 Phase 6.3 (PR #230) — Tech Scout 가짜 패키지 가드 초기 state
+            "enable_tech_scout": enable_tech_scout,
+            "fake_packages": None,
+            "consecutive_fake_iterations": 0,
             "target_platform": target_platform,
             "enable_release_branch": enable_release_branch,
             "previous_version": previous_version,

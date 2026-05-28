@@ -234,6 +234,7 @@ def _make_args(**overrides) -> SimpleNamespace:
         "enable_strategist": False,  # v13 Phase 2 — 본부 1 Strategist opt-in (default OFF)
         "enable_boardroom": False,  # v13 Phase 3 — 본부 10 Boardroom opt-in (default OFF)
         "enable_tikitaka": False,  # v13 Phase 5.4 — 양방향 라운드 opt-in (default OFF)
+        "enable_tech_scout": False,  # v13 Phase 6.3 — PyPI 가짜 패키지 가드 opt-in (default OFF)
     }
     base.update(overrides)
     return SimpleNamespace(**base)
