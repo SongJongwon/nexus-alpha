@@ -112,9 +112,9 @@ class TestFullMetaLoopE2E:
         yaml_path = decision_subdirs[0] / "decision.yaml"
         assert yaml_path.exists(), "decision.yaml 파일 미생성"
 
-        # decision.yaml schema 검증
+        # decision.yaml schema 검증 (v1 PR #222 → v2 PR #224 진화)
         data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-        assert data["schema_version"] == "v1"
+        assert data["schema_version"] in {"v1", "v2"}
         assert data["session"]["agenda"].startswith("GUI sandbox")
         # Phase 4 의결권 실 동작 (pending_phase4 가 없는지 확인)
         assert data["alignment"]["status"] in {"approved", "rejected"}
