@@ -46,6 +46,14 @@ interface AgentInfo {
   model?: ModelTier
   tools?: string[]
   pipelines?: string[]
+  /**
+   * v13 PR #228 — 부서 대표 (이사회 참석자) 표시.
+   * true 면 카드에 👑 + 금색 테두리 + 밝은 틴트 (3중 시각 표시).
+   * 명단 = DEFAULT_BOARDROOM_ATTENDEES (boardroom_facilitator.py) +
+   * 각 본부 리드 1명 (조직도 v13 명시 없을 시 fallback).
+   * 미구현 (implemented=false) 에이전트는 본 필드 true 라도 왕관 미표시.
+   */
+  is_representative?: boolean
 }
 
 interface HeadquartersDef {
@@ -89,6 +97,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
         model: 'opus',
         tools: ['decision_record', 'architectural_pattern_db', 'Read'],
         pipelines: ['Track A', 'Track B'],
+        is_representative: true,
       },
       {
         name: 'Goal Alignment Agent',
@@ -98,6 +107,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
         implemented: true,
         hq: 'hq-0',
         tools: ['assess_alignment', 'decision_record', 'Read'],
+        is_representative: true,
       },
       {
         name: 'Token Budget Optimizer',
@@ -107,6 +117,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
         implemented: true,
         hq: 'hq-0',
         tools: ['assess_budget', 'decision_record', 'Read'],
+        is_representative: true,
       },
     ],
   },
@@ -131,6 +142,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
           'expand_requirements 노드에서 호출. 자연어 → 5필드 YAML (goal/inputs/outputs/constraints/acceptance_criteria) 로 *결정론적* 확장.',
         implemented: true,
         hq: 'hq-1',
+        is_representative: true,
       },
       {
         name: 'Gap Analyst',
@@ -156,6 +168,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
           'v13 ⭐ 자기 진화 루프의 *안건 발제* 노드. 런타임 로그 + Telemetry 데이터를 분석해 시스템 자율 개선안 (예: max_iterations 상향 / GUI sandbox SKIP 강화 / Token 한도 조정) 을 Boardroom 에 안건으로 제출. v12 의 Business Process Analyst + Use Case Specialist 삭제 (행정 오버헤드 다이어트) 후 자율 진화 차원으로 신설. Phase 2 구현 — Auto-Fix Coordinator escalate hook 활용, --enable-strategist opt-in.',
         implemented: true,
         hq: 'hq-1',
+        is_representative: true,
       },
     ],
   },
@@ -181,6 +194,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
         implemented: true,
         hq: 'hq-2',
         pipelines: ['Track A GUI'],
+        is_representative: true,
       },
       {
         name: 'Product Manager',
@@ -213,6 +227,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
         hq: 'hq-3',
         model: 'opus',
         pipelines: ['Track A'],
+        is_representative: true,
       },
       {
         name: 'Web Scraping Specialist',
@@ -294,6 +309,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
           'run_chain 내부 — Python Engineer 의 산출 코드를 *Pydantic schema + 5단 본문* 으로 검토.',
         implemented: true,
         hq: 'hq-4',
+        is_representative: true,
       },
       {
         name: 'Pytest Author',
@@ -382,6 +398,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
           'curate_knowledge 노드. workflow_dir 의 산출물을 knowledge_entry.yaml 로 큐레이션 + outputs/_index.yaml 누적.',
         implemented: true,
         hq: 'hq-5',
+        is_representative: true,
       },
       {
         name: 'RAG Searcher',
@@ -422,6 +439,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
         hq: 'hq-6',
         model: 'tbd',
         tools: ['subprocess', 'timeout_guard'],
+        is_representative: true,
       },
       {
         name: 'Monitoring Engineer',
@@ -452,6 +470,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
           'enable_gui_branch 시 호출. UI/UX Analyst 의 명세를 받아 *실제 widget 트리 코드* 생성. mockup vs 실제 일치 검증 대상.',
         implemented: true,
         hq: 'hq-7',
+        is_representative: true,
       },
       {
         name: 'GUI Designer',
@@ -488,6 +507,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
           '`pyinstaller` 호출 orchestration. dependency 분석 + entry 결정 + collect-all hitlist + 2단계 pre-PyInstaller validation.',
         implemented: true,
         hq: 'hq-8',
+        is_representative: true,
       },
       { name: 'Asset Manager', role: 'Binary packaging', implemented: true, hq: 'hq-8' },
       { name: 'Changelog Generator', role: 'Release notes', implemented: true, hq: 'hq-8' },
@@ -544,6 +564,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
         role: 'RV 재빌드 trigger (Phase C)',
         implemented: true,
         hq: 'hq-9',
+        is_representative: true,
       },
     ],
   },
@@ -568,6 +589,7 @@ const HEADQUARTERS: HeadquartersDef[] = [
           'v13 ⭐ kickoff_meeting 노드의 v12 Meeting Facilitator 가 v13 에서 격상. 단순 행정 회의가 아니라 C-Level (Goal Alignment + Token Budget + CTO) + 부서 대표 에이전트들이 모여 Telemetry 기반 시스템 개선안을 *치열하게 토론* + *타협점 도출* 하는 전략 이사회 프로세스 리드. 자율 진화 루프의 의장 노드.',
         implemented: true,
         hq: 'hq-10',
+        is_representative: true,
       },
       {
         name: 'Retrospective Lead',
@@ -1228,6 +1250,24 @@ function App() {
               )
             })}
           </nav>
+          {/* PR #228 — 부서 대표 (이사회 참석자) 범례. agent-map 메뉴 활성 시만. */}
+          {activeMenu === 'agent-map' && (
+            <div className="flex-shrink-0 border-t border-slate-800 px-3 py-2">
+              <div className="text-[9px] text-slate-500 uppercase tracking-wide mb-1">
+                범례
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                <span className="text-[14px] leading-none">👑</span>
+                <span>부서 대표 (이사회 참석)</span>
+              </div>
+              <div
+                className="mt-1 inline-flex items-center gap-1.5 text-[10px] text-slate-400 px-1.5 py-0.5 rounded border-2"
+                style={{ borderColor: '#f5c842', backgroundColor: 'rgba(245,200,66,0.10)' }}
+              >
+                <span>금색 테두리</span>
+              </div>
+            </div>
+          )}
           <div className="flex-shrink-0 border-t border-slate-800 p-3 space-y-2">
             <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
               자연어 요청
@@ -1317,21 +1357,28 @@ function App() {
                       {hq.agents.map((agent) => {
                         const isSelected = selectedAgent?.name === agent.name
                         const isAgentActive = agent.implemented && isActive
+                        // PR #228 — 부서 대표 (이사회 참석자) 표시. 미구현 시 X.
+                        const isRep = Boolean(
+                          agent.implemented && agent.is_representative,
+                        )
                         const model = effectiveModel(agent, hq)
                         const tools = effectiveTools(agent, hq)
                         const pipelines = effectivePipelines(agent, hq)
+                        // 외곽 className 결정 — Active(emerald 펄스) 우선,
+                        // 비-Active 면 isRep(금색 #f5c842 2px) > 기본(투명)
+                        const outlineClass = isAgentActive
+                          ? 'animate-card-pulse border-emerald-400'
+                          : isRep
+                            ? 'border-2 border-[#f5c842] bg-[#f5c842]/10'
+                            : 'border-transparent hover:bg-slate-800/40'
                         return (
                           <button
                             key={agent.name}
                             type="button"
                             onClick={() => setSelectedAgent(agent)}
-                            className={`relative flex flex-col items-center gap-0.5 p-1.5 rounded transition border ${
-                              isAgentActive
-                                ? 'animate-card-pulse border-emerald-400'
-                                : 'border-transparent hover:bg-slate-800/40'
-                            } ${isSelected ? 'ring-1 ring-sky-400 bg-slate-800/40' : ''} ${
-                              !agent.implemented ? 'opacity-70' : ''
-                            }`}
+                            className={`relative flex flex-col items-center gap-0.5 p-1.5 rounded transition border ${outlineClass} ${
+                              isSelected ? 'ring-1 ring-sky-400 bg-slate-800/40' : ''
+                            } ${!agent.implemented ? 'opacity-70' : ''}`}
                             title={[
                               agent.name,
                               `모델: ${model}`,
@@ -1340,10 +1387,21 @@ function App() {
                                 : isAgentActive
                                   ? `상태: WORKING — ${currentNode ?? ''}`
                                   : '상태: IDLE',
+                              isRep ? '👑 부서 대표 (이사회 참석)' : null,
                               `도구 ${tools.length}개`,
                               `파이프라인: ${pipelines.join(', ')}`,
-                            ].join('\n')}
+                            ]
+                              .filter(Boolean)
+                              .join('\n')}
                           >
+                            {isRep && (
+                              <span
+                                className="absolute -top-1 -right-1 text-[12px] z-10 leading-none drop-shadow"
+                                aria-label="부서 대표 (이사회 참석)"
+                              >
+                                👑
+                              </span>
+                            )}
                             <PixelCharacter
                               bgClass={hq.charBgClass}
                               bobbing={isAgentActive}
