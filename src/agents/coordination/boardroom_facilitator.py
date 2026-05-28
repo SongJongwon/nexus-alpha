@@ -44,6 +44,42 @@ import yaml
 # 산출 schemas
 # ---------------------------------------------------------------------------
 @dataclass
+class Statement:
+    """티키타카 라운드 1건의 발언 — Cross-Agent Consultant 산출 (v13 Phase 5.4).
+
+    Attributes:
+        agent: 발언자 (예: "SystemRefactoringStrategist", "CTO", "AutoFixCoordinator").
+        role: ``proposer`` / ``reviewer`` / ``dissenter`` / ``mediator``.
+            발언의 *맥락* — 안건 발제 / 1차 검토 / 반박 / 중재 / 동의.
+        content: 발언 내용 (한국어 1~3문장).
+        timestamp: 발언 시각 ISO8601 UTC.
+    """
+
+    agent: str
+    role: str
+    content: str
+    timestamp: str = field(default_factory=lambda: _now_ts())
+
+
+@dataclass
+class Round:
+    """이사회 1 라운드 — N개 Statement 의 결과 (v13 Phase 5.4).
+
+    Attributes:
+        round_num: 1, 2, 3 (최대 3 하드 캡).
+        statements: 라운드 내 모든 발언 (시간순).
+        dissent_detected: 반박 의견이 있는지 여부 — 다음 라운드 진입 조건.
+        started_at / ended_at: ISO8601.
+    """
+
+    round_num: int
+    statements: list[Statement] = field(default_factory=list)
+    dissent_detected: bool = False
+    started_at: str = field(default_factory=lambda: _now_ts())
+    ended_at: str = ""
+
+
+@dataclass
 class BoardroomSession:
     """이사회 회의 1건 — boardroom_trigger 산출.
 
@@ -57,6 +93,9 @@ class BoardroomSession:
         alignment_result: Phase 4 의결 결과.
         budget_result: Phase 4 의결 결과.
         final_decision: alignment + budget 종합.
+        rounds: Phase 5.4 ★ 티키타카 라운드 기록 (직렬 의결 모드에서는 빈 list).
+        consensus: Phase 5.4 ★ Facilitator 가 라운드 종합으로 도출한 타협안
+            (라운드 진행 안 했거나 미도출 시 None).
         closed_at: 세션 종료 시각.
     """
 
@@ -69,6 +108,8 @@ class BoardroomSession:
     alignment_result: Optional["AlignmentCheckResult"] = None
     budget_result: Optional["BudgetBrakeResult"] = None
     final_decision: Optional["FinalDecision"] = None
+    rounds: list[Round] = field(default_factory=list)
+    consensus: Optional[str] = None
     closed_at: str = ""
 
 
@@ -396,6 +437,23 @@ def write_boardroom_session_markdown(
     ]
     for a in session.attendees:
         lines.append(f"- {a}")
+    # v13 Phase 5.4 (PR #224) — 라운드 + consensus (있을 때만)
+    if session.rounds:
+        lines.extend(["", "## Tikitaka Rounds (Phase 5.4)", ""])
+        for r in session.rounds:
+            lines.append(
+                f"### Round {r.round_num} "
+                f"({'dissent ⚠️' if r.dissent_detected else 'consensus ✓'})"
+            )
+            lines.append("")
+            for s in r.statements:
+                lines.append(
+                    f"- **[{s.role}] {s.agent}** ({s.timestamp}): {s.content}"
+                )
+            lines.append("")
+        if session.consensus:
+            lines.extend(["### Consensus", "", f"{session.consensus}", ""])
+
     lines.extend([
         "",
         "## Goal Alignment Check",
@@ -447,9 +505,9 @@ def write_boardroom_session_markdown(
 
 # ---------------------------------------------------------------------------
 # 의결 로그 YAML writer — outputs/board_decisions/<ts>_<session_id>/decision.yaml
-# (v13 Phase 4, PR #222)
+# (v13 Phase 4 v1 → Phase 5.4 v2 — rounds + consensus 추가, PR #224)
 # ---------------------------------------------------------------------------
-DECISION_SCHEMA_VERSION = "v1"
+DECISION_SCHEMA_VERSION = "v2"
 
 
 def write_boardroom_decision_yaml(
@@ -457,8 +515,11 @@ def write_boardroom_decision_yaml(
 ) -> Path:
     """BoardroomSession 을 의결 로그 YAML 로 보존.
 
+    Schema v2 (Phase 5.4, PR #224) — v1 (Phase 4) 에 ``rounds`` + ``consensus``
+    추가. 직렬 의결 모드 (rounds=빈 list) 도 v2 schema 로 작성.
+
     Args:
-        session: alignment + budget + final_decision 채워진 session.
+        session: alignment + budget + final_decision + (옵션) rounds/consensus 채워진 session.
         output_dir: 부모 디렉터리 — None 이면 ``outputs/board_decisions``.
 
     Returns:
@@ -516,12 +577,163 @@ def write_boardroom_decision_yaml(
             if final is not None
             else None
         ),
+        # Phase 5.4 (PR #224) ★ rounds + consensus
+        "rounds": [
+            {
+                "round_num": r.round_num,
+                "started_at": r.started_at,
+                "ended_at": r.ended_at or _now_ts(),
+                "dissent_detected": r.dissent_detected,
+                "statements": [
+                    {
+                        "agent": s.agent,
+                        "role": s.role,
+                        "content": s.content,
+                        "timestamp": s.timestamp,
+                    }
+                    for s in r.statements
+                ],
+            }
+            for r in session.rounds
+        ],
+        "consensus": session.consensus,
     }
     yaml_text = yaml.safe_dump(
         payload, allow_unicode=True, sort_keys=False, default_flow_style=False
     )
     yaml_path.write_text(yaml_text, encoding="utf-8")
     return yaml_path
+
+
+# ---------------------------------------------------------------------------
+# v13 Phase 5.4 (PR #224) — 티키타카 라운드 sequence
+# ---------------------------------------------------------------------------
+MAX_BOARDROOM_ROUNDS = 3  # 무한 토론 방지 — 라운드 max 3 하드 캡
+
+
+def _proposal_to_context(proposal: Any) -> str:
+    """Proposal duck-typed object → prompt context 문자열."""
+    title = str(getattr(proposal, "title", "(제목 미지정)"))
+    rca = str(getattr(proposal, "root_cause_analysis", ""))
+    changes = getattr(proposal, "proposed_changes", []) or []
+    if isinstance(changes, (list, tuple)):
+        changes_text = "\n".join(f"- {c}" for c in changes)
+    else:
+        changes_text = str(changes)
+    return (
+        f"제목: {title}\n"
+        f"근본 원인 분석: {rca or '(미제공)'}\n"
+        f"제안 변경사항:\n{changes_text or '(없음)'}"
+    )
+
+
+def _run_tikitaka_rounds(
+    session: BoardroomSession,
+    llm_call: Optional[Callable[[str], str]],
+    events_path: Optional[Path],
+) -> None:
+    """티키타카 라운드 sequence — session.rounds 누적 + consensus 도출.
+
+    동작:
+        Round 1: proposer + 1차 reviewer 발언 수집
+        Round 2 (dissent 발견 시만): 반박자 재발언 + 추가 reviewer
+        Round 3 (여전히 dissent 시만): Facilitator 중재 (mediator)
+        consensus: 마지막 라운드 mediator 발언 OR 라운드 1 종합
+
+    안전 장치:
+        - 라운드 시작 시 budget 누적 확인 (assess_budget) — throttled 즉시 종료
+        - 라운드 max 3 (CrossAgentConsultant.conduct_round 검증)
+    """
+    # 순환 import 회피
+    from src.agents.coordination.cross_agent_consultant import (
+        conduct_round,
+        collect_dissent,
+    )
+    from src.agents.c_level.token_budget_optimizer import assess_budget
+
+    proposal_context = _proposal_to_context(session.proposal)
+    accumulated_statements: list[Statement] = []
+    dissenters: list[str] = []
+
+    for round_num in range(1, MAX_BOARDROOM_ROUNDS + 1):
+        # 라운드 시작 시 budget 누적 체크 — throttled 면 즉시 종료
+        check = assess_budget(session.proposal, events_path=events_path)
+        if check.status == "throttled":
+            # consensus 미도출 → final_decision 에서 blocked 처리됨
+            session.consensus = (
+                f"라운드 {round_num} 시작 전 budget throttled — 토론 중단"
+            )
+            _emit(
+                "cross_agent_consultant",
+                "done",
+                "planning",
+                f"throttled_at_round_{round_num} reason=budget brake",
+            )
+            return
+
+        _emit(
+            "cross_agent_consultant",
+            "working",
+            "planning",
+            f"round={round_num} speakers=tikitaka",
+        )
+
+        result = conduct_round(
+            round_num=round_num,
+            proposal_context=proposal_context,
+            prior_statements=accumulated_statements,
+            dissenters_from_prev=dissenters,
+            llm_call=llm_call,
+        )
+
+        session.rounds.append(result.round)
+        accumulated_statements.extend(result.round.statements)
+        dissenters = collect_dissent(
+            [
+                # AgentResponse 재구성 (round.statements 의 role 이 dissenter 거나
+                # content 에 dissent 키워드)
+                _AgentResponseLike(s)
+                for s in result.round.statements
+            ]
+        )
+
+        _emit(
+            "cross_agent_consultant",
+            "done",
+            "planning",
+            f"round={round_num} statements={len(result.round.statements)} "
+            f"dissent={result.round.dissent_detected}",
+        )
+
+        # 마지막 라운드 (mediator) 발언을 consensus 로 보존
+        if round_num == 3 or not result.proceed_to_next:
+            if result.round.statements:
+                last_stmt = result.round.statements[-1]
+                if last_stmt.role == "mediator":
+                    session.consensus = last_stmt.content
+                elif not session.consensus:
+                    # mediator 안 거치고 종료 — 마지막 발언 인용
+                    session.consensus = (
+                        f"라운드 {round_num} 종료 — dissent 없음. "
+                        f"마지막 발언 채택: {last_stmt.content}"
+                    )
+            return
+
+
+class _AgentResponseLike:
+    """conduct_round 의 statements 를 collect_dissent 가 받을 수 있게 어댑팅.
+
+    AgentResponse 의 ``is_dissent`` 속성을 흉내내는 가벼운 wrapper.
+    """
+
+    def __init__(self, statement: Statement) -> None:
+        from src.agents.coordination.cross_agent_consultant import _detect_dissent
+
+        self.agent = statement.agent
+        self.role = statement.role
+        self.is_dissent = statement.role == "dissenter" or _detect_dissent(
+            statement.content
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -535,17 +747,36 @@ def convene_full_boardroom_cycle(
     llm_call: Optional[Callable[[str], str]] = None,
     events_path: Optional[Path] = None,
     facilitator: Optional[BoardroomFacilitator] = None,
+    enable_tikitaka: bool = False,
 ) -> tuple[BoardroomSession, Path, Path]:
-    """안건 → 3 노드 순차 실행 → 회의록 + decision.yaml 저장.
+    """안건 → 회의 → 의결 → 회의록 + decision.yaml 저장.
+
+    Phase 4 모드 (enable_tikitaka=False, default — 회귀 0 보존):
+        boardroom_trigger → goal_alignment_check → budget_brake → 직렬 의결
+
+    Phase 5.4 ★ 티키타카 모드 (enable_tikitaka=True, PR #224):
+        boardroom_trigger
+          ↓
+        Round 1 (proposer + reviewers)
+          ↓ dissent?
+        Round 2 (dissenters 재발언)
+          ↓ dissent?
+        Round 3 (Facilitator 중재 — mediator)
+          ↓
+        goal_alignment_check + budget_brake (consensus 반영)
+          ↓
+        write markdown + decision.yaml (schema v2 rounds[] + consensus)
 
     Args:
-        proposal: ``RefactoringProposal`` duck-typed.
+        proposal: ``RefactoringProposal`` duck-typed (``.title`` + 옵션
+            ``.proposed_changes`` / ``.root_cause_analysis``).
         proposal_path: 안건 markdown 경로 (옵션).
-        output_dir: 회의록 markdown 저장 디렉터리 (옵션).
-        decision_output_dir: 의결 로그 YAML 부모 디렉터리 (옵션).
-        llm_call: 옵션 LLM caller — alignment + budget 양쪽에 동일하게 전달.
-        events_path: 누적 비용 산출용 events.jsonl 경로 (옵션).
-        facilitator: 기존 Facilitator 재사용 (옵션).
+        output_dir: 회의록 markdown 디렉터리.
+        decision_output_dir: decision.yaml 부모 디렉터리.
+        llm_call: 동기 LLM 호출 (alignment + budget + 라운드 발언 모두 동일).
+        events_path: events.jsonl (누적 비용 산출용).
+        facilitator: 기존 인스턴스 재사용 (옵션).
+        enable_tikitaka: True 면 Phase 5.4 양방향 라운드. default False 회귀 안전.
 
     Returns:
         (BoardroomSession, 회의록 markdown 경로, decision.yaml 경로).
@@ -554,6 +785,11 @@ def convene_full_boardroom_cycle(
     session = node_boardroom_trigger(
         proposal, proposal_path=proposal_path, facilitator=fac
     )
+
+    # Phase 5.4 ★ 티키타카 라운드 (옵션)
+    if enable_tikitaka:
+        _run_tikitaka_rounds(session, llm_call=llm_call, events_path=events_path)
+
     alignment = node_goal_alignment_check(
         session, facilitator=fac, llm_call=llm_call
     )

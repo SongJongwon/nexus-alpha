@@ -67,12 +67,31 @@ interface SessionSection {
   attendees?: string[]
 }
 
+// v13 Phase 5.4 (PR #224) — Statement + Round schema
+interface StatementSection {
+  agent?: string
+  role?: string  // proposer / reviewer / dissenter / mediator
+  content?: string
+  timestamp?: string
+}
+
+interface RoundSection {
+  round_num?: number
+  started_at?: string
+  ended_at?: string
+  dissent_detected?: boolean
+  statements?: StatementSection[]
+}
+
 interface DecisionYaml {
-  schema_version?: string
+  schema_version?: string  // "v1" (Phase 4) | "v2" (Phase 5.4)
   session?: SessionSection
   alignment?: AlignmentSection | null
   budget?: BudgetSection | null
   final_decision?: FinalDecisionSection | null
+  // v2 신규 (v1 yaml 에서는 undefined 또는 빈 list)
+  rounds?: RoundSection[]
+  consensus?: string | null
 }
 
 // =============================================================================
@@ -303,6 +322,9 @@ function DecisionViewer({ data }: { data: DecisionYaml }) {
   const alignment = data.alignment ?? null
   const budget = data.budget ?? null
   const final = data.final_decision ?? null
+  const rounds = data.rounds ?? []
+  const consensus = data.consensus ?? null
+  const isV2 = data.schema_version === 'v2'
 
   return (
     <div className="space-y-3 text-sm">
@@ -362,6 +384,39 @@ function DecisionViewer({ data }: { data: DecisionYaml }) {
           </div>
         )}
       </div>
+
+      {/* ============ Tikitaka Rounds (v2, PR #224) ============ */}
+      {isV2 && rounds.length > 0 && (
+        <SectionCard
+          icon="💬"
+          title="Tikitaka Rounds"
+          subtitle={`본부 10 Cross-Agent Consultant — ${rounds.length} 라운드 진행`}
+          statusBadge={
+            <span className="px-2 py-0.5 rounded border text-[10px] font-bold bg-purple-900/40 text-purple-300 border-purple-700">
+              v2
+            </span>
+          }
+        >
+          <div className="space-y-2.5">
+            {rounds.map((r, i) => (
+              <RoundCard key={r.round_num ?? i} round={r} />
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      {isV2 && consensus && (
+        <SectionCard
+          icon="🤝"
+          title="Consensus"
+          subtitle="Facilitator 종합 — 라운드 결과 타협안"
+          statusBadge={null}
+        >
+          <div className="text-[12px] text-emerald-200 italic leading-relaxed">
+            "{consensus}"
+          </div>
+        </SectionCard>
+      )}
 
       {/* ============ Alignment 카드 ============ */}
       <SectionCard
@@ -499,7 +554,7 @@ interface SectionCardProps {
   icon: string
   title: string
   subtitle: string
-  statusBadge: React.ReactNode
+  statusBadge: React.ReactNode | null
   children?: React.ReactNode
 }
 
@@ -525,6 +580,75 @@ function SectionCard({
         {statusBadge}
       </div>
       {children}
+    </div>
+  )
+}
+
+function roleBadgeClasses(role?: string): string {
+  switch (role) {
+    case 'proposer':
+      return 'bg-sky-900/40 text-sky-300 border-sky-700'
+    case 'reviewer':
+      return 'bg-slate-800 text-slate-300 border-slate-600'
+    case 'dissenter':
+      return 'bg-red-900/40 text-red-300 border-red-700'
+    case 'mediator':
+      return 'bg-emerald-900/40 text-emerald-300 border-emerald-700'
+    default:
+      return 'bg-slate-800 text-slate-400 border-slate-700'
+  }
+}
+
+interface RoundCardProps {
+  round: RoundSection
+}
+
+function RoundCard({ round }: RoundCardProps) {
+  const statements = round.statements ?? []
+  const dissent = Boolean(round.dissent_detected)
+  return (
+    <div
+      className={`rounded border p-2 ${
+        dissent
+          ? 'border-red-700/60 bg-red-950/15'
+          : 'border-slate-700 bg-slate-900/40'
+      }`}
+    >
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="text-xs font-bold text-slate-200">
+          Round {round.round_num ?? '?'}
+        </div>
+        <span
+          className={`text-[9px] px-1.5 py-0.5 rounded border ${
+            dissent
+              ? 'bg-red-900/40 text-red-300 border-red-700'
+              : 'bg-emerald-900/40 text-emerald-300 border-emerald-700'
+          }`}
+        >
+          {dissent ? 'dissent ⚠' : 'consensus ✓'}
+        </span>
+      </div>
+      <ul className="space-y-1">
+        {statements.map((s, i) => (
+          <li
+            key={i}
+            className="flex items-start gap-1.5 text-[11px] leading-snug"
+          >
+            <span
+              className={`flex-shrink-0 px-1 py-0 rounded border text-[9px] font-mono ${roleBadgeClasses(s.role)}`}
+              title={s.role ?? '?'}
+            >
+              {s.role?.[0]?.toUpperCase() ?? '?'}
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="font-mono text-slate-400 text-[10px]">
+                {s.agent ?? '?'}:
+              </span>{' '}
+              <span className="text-slate-200">{s.content ?? '(빈 발언)'}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

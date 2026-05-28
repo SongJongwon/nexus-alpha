@@ -375,13 +375,15 @@ class TestDecisionYamlWriter:
         assert yaml_path.name == "decision.yaml"
         assert s.session_id in yaml_path.parent.name
 
-    def test_decision_yaml_schema_v1_fields(self, tmp_path: Path) -> None:
-        """⭐ schema_version=v1 + 4 최상위 필드 (session/alignment/budget/final_decision)."""
+    def test_decision_yaml_schema_top_level_fields(self, tmp_path: Path) -> None:
+        """⭐ schema_version 현재값 (v2 Phase 5.4) + v1 4 필드 + v2 rounds/consensus."""
         s = self._make_complete_session()
         yaml_path = write_boardroom_decision_yaml(s, tmp_path)
         data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
         assert data["schema_version"] == DECISION_SCHEMA_VERSION
-        assert data["schema_version"] == "v1"
+        # v1 → v2 (PR #224) 의 점진 진화 — 본 PR 시점 "v2"
+        assert data["schema_version"] in {"v1", "v2"}
+        # v1 의 4 필드는 schema 진화 후에도 보존
         assert set(data.keys()) >= {
             "schema_version",
             "session",
