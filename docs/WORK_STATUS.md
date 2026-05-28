@@ -1,13 +1,13 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-28 v13 Phase 1~4 완료 — 자율 진화 루프 풀체인 + 이사회 의결권 활성화**
-> ⭐ **Phase 1~4 일괄 머지** (PR #217~#222, 6건) — 본부 9 RV 4명 + 본부 1 Strategist + Boardroom 회의실 + 본부 0 Goal Alignment + Token Budget 의결권 = **자율 진화 루프 *한 cycle* 완주 가능 상태 도달**. 남은 작업은 Phase 5 (UI Boardroom panel + 6명) 만.
-> 이전 (2026-05-27 v13 진입, PR #212/#213): 패러다임 재정의 + 정원 52 (구현 39 / 미구현 13) + Sprint 5/6 + GUI 자동 .exe 풀체인
-> pytest: 1400 → **1598** (+198, 회귀 0 — Phase 1~4 6 PR 합산)
+> **마지막 업데이트**: **2026-05-28 v13 Phase 5.1 — UI Boardroom Panel + decision.yaml viewer (사용자 가시화 도달)**
+> ⭐ **Phase 5.1 머지** (PR #223) — Tauri/React 데스크탑 앱에 *이사회 의결* 탭 신설. `outputs/board_decisions/*/decision.yaml` 의 3 섹션 (alignment / budget / final_decision) 카드 시각화 + 동일 session_id 회의록 markdown cross-reference. **Phase 4 산출물이 *눈에 보임*** — 베타 cohort 가 자율 진화 cycle 작동을 *데스크탑 GUI* 로 확인 가능 상태.
+> 이전 (2026-05-28 Phase 1~4 일괄): PR #217~#222 6건 — 본부 9 RV + 본부 1 Strategist + Boardroom + 본부 0 의결권 = 자율 진화 루프 풀체인 작동
+> pytest: 1598 (회귀 0) + Rust cargo test 4/4 PASS (Phase 5.1 신규)
 
 ---
 
-## 🎯 2026-05-28 세션 — Phase 1~4 머지 사이클 요약
+## 🎯 2026-05-28 세션 — Phase 1~5.1 머지 사이클 요약
 
 | PR | 머지 | Phase | 효과 |
 |----|-------|-------|------|
@@ -16,7 +16,8 @@
 | #219 | 2026-05-27 | Phase 2 | 본부 1 System Refactoring Strategist — 이사회 안건 자율 발제 엔진 |
 | #220 | 2026-05-27 | (Phase 무관) | Claude Code SDK max_turns 제약 처방 (build chain 멀티턴 지원) |
 | #221 | 2026-05-27 | Phase 3 | Boardroom 회의실 인프라 — boardroom_trigger + Placeholder 2 nodes + Facilitator 격상 |
-| **#222** | **2026-05-28** | **Phase 4 ★** | **본부 0 Goal Alignment + Token Budget Optimizer — 이사회 의결권 활성화 + decision.yaml 의결 로그** |
+| #222 | 2026-05-28 | Phase 4 | 본부 0 Goal Alignment + Token Budget Optimizer — 이사회 의결권 활성화 + decision.yaml 의결 로그 |
+| **#223** | **2026-05-28** | **Phase 5.1 ★** | **UI Boardroom Panel + decision.yaml viewer — Phase 4 산출물 시각화 (3-pane: 세션 list + decision viewer + 회의록 markdown)** |
 
 ---
 
@@ -86,17 +87,22 @@ final_decision: approved → Build & Release (Phase 5 wire)
 
 → 이사회 안건이 *목적 부합 검증* + *예산 한도 검증* 의 의결권 통과 후 build_workflow 진입. 의결 로그 `outputs/board_decisions/<ts>_<session_id>/decision.yaml` schema v1 자동 작성. FinalDecision OR 조건 (alignment=rejected **OR** budget=throttled → blocked).
 
-### 5. UI — 이사회(Boardroom) 토론 시각화 panel 🚧 Phase 5 잔여
+### 5. UI — 이사회 의결 panel ✅ Phase 5.1 완료 (PR #223)
 
-현재 UI (Sprint 5/6 완료, PR #208) 가 *에이전트 맵 시각화* + *Telemetry stream* 까지. **Boardroom panel** + 의결 결과 시각화 + decision.yaml viewer 가 Phase 5 잔여 작업.
+데스크탑 앱 (Tauri + React) 사이드바에 *이사회 의결* 메뉴 신설 — 3-pane 레이아웃:
+- 좌: `outputs/board_decisions/*/decision.yaml` 세션 list (timestamp desc, 30s 폴링)
+- 중: decision.yaml viewer — alignment / budget / final_decision 3 카드 (색상 강조: approved 🟢 / rejected·throttled 🔴 / blocked 🔴)
+- 우: 동일 session_id 의 회의록 markdown 원문 (cross-reference)
 
-### 6. 프로세스 — 티키타카 토론 코드 🚧 Phase 5 잔여
+→ Phase 4 산출물이 *데스크탑 GUI 에서 가시화*. 베타 cohort 가 자율 진화 cycle 작동을 *눈으로* 확인 가능.
 
-`Process.sequential` 만 사용. Phase 4 까지는 *의결권 결정론 + LLM 단발 호출* 만 — *치열한 양방향 논쟁* (Engineer ↔ Reviewer + Cross-Agent Consultant) 은 Phase 5.
+### 6. 프로세스 — 티키타카 양방향 토론 🚧 Phase 5.4 잔여
+
+`Process.sequential` + `allow_delegation=False` 만 사용 — *치열한 양방향 논쟁* (Engineer ↔ Reviewer + Cross-Agent Consultant) 미구현. Phase 5.4 잔여.
 
 ---
 
-## 🛣 v13 Phase 우선순위 — Phase 5 만 잔여
+## 🛣 v13 Phase 우선순위 — Phase 5.2~5.4 잔여
 
 | Phase | 작업 | 책임 | 상태 |
 |-------|------|------|------|
@@ -104,14 +110,19 @@ final_decision: approved → Build & Release (Phase 5 wire)
 | ~~Phase 2~~ | ~~System Refactoring Strategist~~ | 본부 1 | ✅ **완료** (PR #219) |
 | ~~Phase 3~~ | ~~Boardroom 회의실 + 4 핵심 노드 wire~~ | 본부 10 + workflow | ✅ **완료** (PR #221) |
 | ~~Phase 4~~ | ~~Goal Alignment + Token Budget 의결권~~ | 본부 0 | ✅ **완료** (PR #222) |
-| **Phase 5 ★** | **나머지 미구현 6명 + UI Boardroom panel + Cross-Agent Consultant 양방향 토론** | 다부서 + frontend | 🚧 **다음 sprint** — 52/52 100% 도달 + UI 의결 결과 시각화 |
+| ~~Phase 5.1~~ | ~~UI Boardroom Panel + decision.yaml viewer~~ | frontend | ✅ **완료** (PR #223) |
+| **Phase 5.2** | **백엔드 6명 중 가치 높은 3명** (Product Manager / Documentation Lead / Monitoring Engineer) | 본부 2/5/6 | 🚧 다음 sub-PR |
+| **Phase 5.3** | **Mobile + Embedded Specialist + Cross-Agent Consultant** | 본부 3/10 | 🚧 후순위 (수요 낮음) |
+| **Phase 5.4** | **양방향 delegation + 티키타카 토론 wiring** | CrewAI delegation 인프라 | 🚧 v11 Phase 2 처분 |
+| **Phase 5.E** | **E2E 라이브 검증** — 자율 진화 루프 1 cycle 완주 evidence | PM 본인 PC | 🚧 ~25-40min |
 
-### Phase 5 — UI Boardroom panel + 6명 완료 조건 (DoD)
+### Phase 5.1 완료 조건 (Definition of Done) ✅
 
-- 미구현 6명 순차 구현 — Product Manager / Documentation Lead / Monitoring Engineer / Mobile / Embedded / Cross-Agent Consultant
-- UI 에 *Boardroom Panel* — agent 간 티키타카 메시지 실시간 표시 + 의결권 결과 시각화 (`decision.yaml` viewer)
-- 1 회 E2E 라이브 검증 — 자율 진화 루프 *한 cycle* 완주 (RV silent fail → Strategist 발제 → Boardroom 회의 → 의결 → build_workflow 자동 진입)
-- 52/52 = 100% 구현률 달성
+- ✅ Tauri commands: `list_board_decisions` / `read_board_decision` / `list_boardroom_sessions` / `read_boardroom_session` — Rust cargo test 4/4 PASS
+- ✅ React BoardroomPanel.tsx 3-pane 컴포넌트 + 30s 폴링 갱신
+- ✅ App.tsx 사이드바 메뉴 "이사회 의결" 활성화 + hq-0 카드 GoalAlignment/TokenBudget `implemented: true` 갱신
+- ✅ Empty state (디렉터리 미존재) graceful — "자율 진화 루프 1 cycle 완주하면 자동 생성" 안내
+- ✅ Frontend build (tsc + vite) PASS, lint 본 PR 추가 코드 0 errors
 
 ---
 
@@ -128,23 +139,26 @@ flowchart TD
 
     P4 -->|이사회 의결권 활성화| Now[🎯 현재 2026-05-28<br/>52명 / 46 구현 / 6 미구현<br/>자율 진화 루프 풀체인 작동]
 
-    Now --> P5[🚧 Phase 5<br/>UI Boardroom panel + 6명<br/>+ Cross-Agent Consultant<br/>52/52 100% 도달]
+    Now --> P51[✅ Phase 5.1 ★ NEW<br/>UI Boardroom Panel<br/>+ decision.yaml viewer<br/>PR #223]
 
-    P5 --> End[v13 완성<br/>베타 cohort 5명 $250<br/>자율 진화 SW 라이브 검증]
+    P51 --> P52[🚧 Phase 5.2~5.4<br/>백엔드 6명 + 양방향 delegation<br/>+ E2E 라이브 검증<br/>52/52 100% 도달]
+
+    P52 --> End[v13 완성<br/>베타 cohort 5명 $250<br/>자율 진화 SW 라이브 검증]
 
     style Start fill:#e5e7eb,stroke:#6b7280
     style P1 fill:#d1fae5,stroke:#10b981
     style P2 fill:#d1fae5,stroke:#10b981
     style P3 fill:#d1fae5,stroke:#10b981
-    style P4 fill:#fef3c7,stroke:#d97706,stroke-width:3px
-    style Now fill:#bae6fd,stroke:#0284c7,stroke-width:3px
-    style P5 fill:#fde2e8,stroke:#ec4899
+    style P4 fill:#d1fae5,stroke:#10b981
+    style Now fill:#bae6fd,stroke:#0284c7
+    style P51 fill:#fef3c7,stroke:#d97706,stroke-width:3px
+    style P52 fill:#fde2e8,stroke:#ec4899
     style End fill:#e9d5ff,stroke:#a855f7,stroke-width:3px
 ```
 
 ---
 
-## 📌 v13 Cross-check 검증 결과 (Phase 4 완료 반영)
+## 📌 v13 Cross-check 검증 결과 (Phase 5.1 완료 반영)
 
 | 항목 | 값 | 일치 |
 |------|----|------|
@@ -156,10 +170,12 @@ flowchart TD
 | 본부 1 (분석) | 4/4 ✅ (RequirementExpander + GapAnalyst + DataAnalyst + SystemRefactoringStrategist ★) | ✅ |
 | 본부 9 (RV) | 4/4 ✅ (Exe Runtime Tester + UI Automation + Failure Analyzer + Auto-Fix Coordinator ★) | ✅ |
 | 4 핵심 노드 | runtime_verify ✅ / boardroom_trigger ✅ / goal_alignment_check ✅ / budget_brake ✅ | ✅ |
-| pytest | 1400 → **1598** (+198, 회귀 0) | ✅ |
-| 본 문서 | WORK_STATUS.md — Phase 1~4 완료 반영 + Phase 5 DoD | ✅ |
+| UI 이사회 의결 panel | ✅ (PR #223 — Tauri 4 commands + BoardroomPanel.tsx 3-pane) | ✅ |
+| pytest | 1598 (회귀 0) | ✅ |
+| Rust cargo test (Phase 5.1 신규) | 4/4 PASS (parse_boardroom_name + decision.yaml schema v1 round-trip) | ✅ |
+| 본 문서 | WORK_STATUS.md — Phase 1~5.1 완료 반영 + Phase 5.2~5.4 DoD | ✅ |
 
-→ **모든 문서 cross-check 일치**. Phase 4 완료 → 자율 진화 루프 풀체인 작동.
+→ **모든 문서 cross-check 일치**. Phase 5.1 완료 → 자율 진화 루프 작동이 *사용자에게 보임*.
 
 ---
 
