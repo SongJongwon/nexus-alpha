@@ -1,14 +1,15 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-28 v13 Phase 6.2 — Requirement Expander 3D 도메인 매처 + Convergence Judge Rule 0**
-> ⭐ **Phase 6.2 머지** (PR #226) — BIM 빌드 사례 분석으로 식별된 *시스템의 뇌세포 결함* (얕은 요구 분석 + 성급한 수렴) 격파. ChecklistItem dataclass + 3D 도메인 키워드 매처 + 4-항목 템플릿 체크리스트 + Convergence Judge **Rule 0** (Gap Analyst 가 COMPLETE 라도 도메인 미충족 시 IMPROVE_NEEDED 강제). 회귀 0 — `domain_checklist=None` default 방어. 제안서: [docs/architecture/phase6_proposal.md](architecture/phase6_proposal.md).
-> 이전 (Phase 5.E PR #225): `--enable-tikitaka` CLI wire + 라이브 검증 가이드
-> 이전 (Phase 5.4 PR #224): Cross-Agent Consultant + 양방향 티키타카
-> pytest: 1636 → **1676** (Phase 6.2 +40 신규, 회귀 0)
+> **마지막 업데이트**: **2026-05-28 v13 Phase 6.1 — Tech Scout 인프라 (PyPI 가짜 패키지 가드)**
+> ⭐ **Phase 6.1 머지** (PR #229) — PyPI JSON API 직접 조회로 *환각 패키지 가드*. `validate_pypi_package(name)` + 7d TTL 캐싱 + MAX_SEARCHES=5 + 5xx resilience. `scout_and_validate(query)` 진입점 (LLM 호출 0, 비용 0). PM 검증 시연: `scout_and_validate("3D 시각화 Python")` → pythreejs/plotly/vispy/vtk/open3d 5/5 실존 확정. workflow 통합은 Phase 6.3 (PR #230) 에서.
+> 이전 (Phase 6.2 PR #226): Requirement Expander 3D 매처 + Convergence Judge Rule 0
+> 이전 (UI PR #228): 부서 대표 14명 시각 구별 (👑)
+> 이전 (LLM_PROVIDER 리포트 PR #227): docs-only
+> pytest: 1676 → **1706** (Phase 6.1 +30 신규, 회귀 0)
 
 ---
 
-## 🎯 2026-05-28 세션 — Phase 1~6.2 머지 사이클 요약
+## 🎯 2026-05-28 세션 — Phase 1~6.1 머지 사이클 요약
 
 | PR | 머지 | Phase | 효과 |
 |----|-------|-------|------|
@@ -21,7 +22,10 @@
 | #223 | 2026-05-28 | Phase 5.1 | UI Boardroom Panel + decision.yaml viewer — 3-pane 가시화 |
 | #224 | 2026-05-28 | Phase 5.4 | Cross-Agent Consultant + 양방향 티키타카 — 본부 10 47/52 도달 + schema v1→v2 (rounds + consensus) + UI rounds 카드 |
 | #225 | 2026-05-28 | Phase 5.E 사전 준비 | --enable-tikitaka CLI wire + BoardroomPanel.tsx 빈 state 안전 처리 + 라이브 검증 가이드 문서 |
-| **#226** | **2026-05-28** | **Phase 6.2 ★** | **Requirement Expander 3D 도메인 매처 + Convergence Judge Rule 0 — 얕은 분석 + 성급한 수렴 결함 격파 (BIM 본질). PR #227 (Tech Scout 인프라) / #228 (BIM 벤치마크) 는 후속 sprint** |
+| #226 | 2026-05-28 | Phase 6.2 | Requirement Expander 3D 도메인 매처 + Convergence Judge Rule 0 |
+| #227 | 2026-05-28 | (선행 리포트) | LLM_PROVIDER 노드별 분리 호환성 검증 리포트 (docs-only, Phase 6.1 진입 신호등 GREEN) |
+| #228 | 2026-05-28 | (UI) | 에이전트 카드 부서 대표 14명 시각 구별 (👑 + 금색 테두리 + 틴트) |
+| **#229** | **2026-05-28** | **Phase 6.1 ★** | **Tech Scout 인프라 — PyPI JSON API 가짜 패키지 가드 + 7d TTL 캐싱 + MAX_SEARCHES=5. requests>=2.31 추가. workflow 통합은 PR #230 (Phase 6.3) 에서.** |
 
 ---
 

@@ -47,6 +47,11 @@ rich>=13.0.0
 # 6.20+ 부터 Python 3.13 안정 지원.
 pyinstaller>=6.20.0
 
+# v13 Phase 6.1 (PR #229) — Tech Scout 인프라
+# PyPI JSON API 호출 (https://pypi.org/pypi/<pkg>/json) 으로 패키지 실존 검증.
+# 옵션 B (PM 의사결정 #1) — LLM 무관, 비용 0, 가짜 패키지 가드 핵심.
+requests>=2.31.0
+
 # QA 도구 (Phase 7 — PR #44 / PR #52)
 # GUI 자동화 + 스크린샷 캡처. gui_test_executor 가 GUI 산출물 검증에 사용.
 # 본 PR #52 에서 정식 의존성 화 — 미설치 시 graceful skip 되지만, GUI 풀체인의
