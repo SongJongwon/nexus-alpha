@@ -624,6 +624,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
             enable_strategist=args.enable_strategist,
             enable_boardroom=args.enable_boardroom,
             enable_tikitaka=args.enable_tikitaka,
+            enable_tech_scout=args.enable_tech_scout,
             enable_release_branch=args.release,
             enable_executor=args.build,
             enable_publish=args.release,
@@ -1105,6 +1106,17 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "sequence 진행. dissent 자동 감지로 Round 1→2→3 진입. decision.yaml "
             "schema v2 (rounds[] + consensus) 산출. "
             "default OFF — --enable-boardroom 와 함께 사용 (boardroom 비활성 시 무시)."
+        ),
+    )
+    parser.add_argument(
+        "--enable-tech-scout", dest="enable_tech_scout", action="store_true", default=False,
+        help=(
+            "v13 Phase 6.3 — Tech Scout PyPI 가짜 패키지 가드 opt-in. "
+            "Engineer 산출 requirements.txt 의 각 패키지를 PyPI JSON API (https://"
+            "pypi.org/pypi/<pkg>/json) 로 실존 검증. 가짜 발견 시: 1차 IMPROVE_NEEDED "
+            "+ '실존 패키지 찾아라' 힌트 (재 iter), 2차 연속 시 BLOCKED(FAKE_PACKAGE) "
+            "강제 (PM 의사결정 #5 절충안 — 무한 루프 차단). "
+            "default OFF — LLM 호출 0, 비용 0, 7d TTL 캐싱, MAX_SEARCHES=5/query."
         ),
     )
     parser.add_argument(

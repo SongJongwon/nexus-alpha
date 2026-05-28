@@ -192,10 +192,17 @@ def judge_convergence(
     domain_checklist: Optional[list[ChecklistItem]] = None,
     engineer_output_excerpt: str = "",
     qa_result_excerpt: str = "",
+    fake_packages: Optional[list[str]] = None,
+    consecutive_fake_iterations: int = 0,
 ) -> JudgmentDecision:
     """Gap Analyst 보고서 + 안전 조건을 받아 루프 종료 verdict 를 반환한다.
 
     결정 규칙 (우선순위 순):
+        -1. ★ v13 Phase 6.3 (PR #230) — fake_packages 비어있지 않음:
+            - consecutive_fake_iterations >= 2 → BLOCKED(FAKE_PACKAGE) 강제
+              (PM 의사결정 #5 절충안 — 2차 연속 환각, 무한 루프 예산 낭비 방지)
+            - 그 외 (1차) → IMPROVE_NEEDED + "실존 패키지 찾아라" 힌트
+            (fake_packages=None or [] 면 자동 skip — 회귀 0 보장)
         0. ★ v13 Phase 6.2 — domain_checklist 미충족 항목 있음 → IMPROVE_NEEDED 강제
            (domain_checklist=None or [] 면 자동 skip — 회귀 0 보장)
         1. must_fix == 0 → COMPLETE
@@ -229,6 +236,44 @@ def judge_convergence(
         본 함수는 LLM 을 호출하지 않는다. 따라서 동일 입력에 대해 항상 동일
         출력을 반환하며 ms 단위로 동작한다. Agent narration 은 별도 단계.
     """
+    # ★ Rule -1: fake_packages 발견 (Phase 6.3, PR #230) — Rule 0 보다 우선
+    # PM 의사결정 #5 절충안:
+    #   - consecutive_fake_iterations >= 2 → BLOCKED(FAKE_PACKAGE) (무한 루프 차단)
+    #   - 1차 → IMPROVE_NEEDED + "실존 패키지 찾아라" 힌트
+    if fake_packages:
+        fake_preview = ", ".join(fake_packages[:5])
+        if consecutive_fake_iterations >= 2:
+            return JudgmentDecision(
+                verdict=Verdict.BLOCKED,
+                blocked_cause=BlockedCause.FAKE_PACKAGE,
+                reason=(
+                    f"Fake/hallucinated packages detected {consecutive_fake_iterations} "
+                    f"consecutive iterations: {fake_preview}. Engineer 가 PyPI 실존 패키지 "
+                    f"로 교체 못 함 — 2차 BLOCKED (PM 의사결정 #5 절충안)."
+                ),
+                next_action=(
+                    "Escalate to user. Engineer 가 환각 패키지를 PyPI 실존 패키지로 "
+                    "교체하는 데 반복 실패 — 사용자가 요구사항 또는 의존성 명세 재정의 필요. "
+                    "후보 가짜 list: " + fake_preview
+                ),
+                must_fix_count=gap.unsatisfied_blockers + gap.unsatisfied_majors,
+            )
+        else:
+            return JudgmentDecision(
+                verdict=Verdict.IMPROVE_NEEDED,
+                blocked_cause=BlockedCause.NONE,
+                reason=(
+                    f"Fake packages detected (1st occurrence): {fake_preview}. "
+                    f"Engineer 가 PyPI 실존 패키지로 교체 필요 — 1차 IMPROVE."
+                ),
+                next_action=(
+                    "Re-enter loop. Engineer must replace these fake packages with real "
+                    "PyPI packages (https://pypi.org/pypi/<name>/json 으로 실존 확인): "
+                    + fake_preview
+                ),
+                must_fix_count=gap.unsatisfied_blockers + gap.unsatisfied_majors,
+            )
+
     # ★ Rule 0: 도메인 체크리스트 미충족 → IMPROVE_NEEDED 강제 (Rule 1 보다 우선)
     if domain_checklist:
         unsatisfied = _validate_domain_checklist(
