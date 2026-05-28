@@ -259,6 +259,8 @@ class _LoopState(TypedDict, total=False):
     # v13 Phase 3 (PR #221) — 본부 10 Boardroom 회의실 인프라 opt-in wire
     enable_boardroom: bool  # --enable-boardroom flag. False (default) 면 안건 발제해도 회의 X
     boardroom_session_path: Any  # Path | None — 회의록 markdown 경로
+    # v13 Phase 5.4 (PR #224) — 양방향 티키타카 라운드 opt-in wire
+    enable_tikitaka: bool  # --enable-tikitaka flag. False (default) 면 직렬 의결 (Phase 4 모드)
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -1050,11 +1052,13 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
                 proposal_path = new_proposal_path
                 # v13 Phase 3 — Strategist 안건 작성 직후 Boardroom 회의 자동 소집
                 # (enable_boardroom=True 시만; 의결권은 Phase 4 활성화)
+                # v13 Phase 5.4 (PR #224) — enable_tikitaka 면 라운드 sequence 진행
                 if state.get("enable_boardroom", False):
                     try:
                         new_session_path = _maybe_convene_boardroom(
                             proposal_path=new_proposal_path,
                             outputs_dir=state.get("outputs_dir", ""),
+                            enable_tikitaka=state.get("enable_tikitaka", False),
                         )
                         if new_session_path is not None:
                             boardroom_session_path = new_session_path
@@ -1149,17 +1153,24 @@ def _maybe_trigger_strategist(
 def _maybe_convene_boardroom(
     proposal_path: Path,
     outputs_dir: str,
+    enable_tikitaka: bool = False,
 ) -> Optional[Path]:
-    """v13 Phase 3+4 — Strategist 안건 작성 후 Boardroom 회의 자동 소집.
+    """v13 Phase 3+4+5.4 — Strategist 안건 작성 후 Boardroom 회의 자동 소집.
 
     동작:
         1. proposal markdown 첫 줄 (# title) 추출 → duck-typed proposal 구성
            (estimated_cost / proposed_changes 는 기본값 — Phase 4 budget 평가용)
         2. ``convene_full_boardroom_cycle`` 호출 — boardroom_trigger →
-           goal_alignment_check (Goal Alignment Agent 실 의결) →
-           budget_brake (Token Budget Optimizer 실 의결) → FinalDecision
+           (옵션: tikitaka 3 라운드) → goal_alignment_check → budget_brake →
+           FinalDecision
         3. 회의록 markdown ``outputs/_boardroom_sessions/`` + 의결 YAML
-           ``outputs/board_decisions/`` 양쪽 저장
+           ``outputs/board_decisions/`` 양쪽 저장 (schema v2)
+
+    Args:
+        proposal_path: Strategist 가 발제한 안건 markdown 경로.
+        outputs_dir: 산출 디렉터리 부모.
+        enable_tikitaka: True 면 Phase 5.4 양방향 라운드 진행. default False —
+            Phase 4 직렬 의결 모드.
 
     Returns:
         회의록 markdown 경로 (실패 시 None).
@@ -1193,6 +1204,7 @@ def _maybe_convene_boardroom(
         proposal_path=str(proposal_path),
         output_dir=boardroom_dir,
         decision_output_dir=decision_dir,
+        enable_tikitaka=enable_tikitaka,
     )
     return md_path
 
@@ -1541,6 +1553,7 @@ def run_iterative_loop(
     enable_rv: bool = False,  # v13 Phase 1 2단계 — 본부 9 RV opt-in (default OFF, 1477 PASS 보호)
     enable_strategist: bool = False,  # v13 Phase 2 — 본부 1 Strategist opt-in (default OFF)
     enable_boardroom: bool = False,  # v13 Phase 3 — 본부 10 Boardroom opt-in (default OFF)
+    enable_tikitaka: bool = False,  # v13 Phase 5.4 — 양방향 라운드 토론 opt-in (default OFF, --enable-boardroom 함께 필요)
     target_platform: str = "windows",
     enable_release_branch: bool = False,
     previous_version: str = "",
@@ -1669,6 +1682,8 @@ def run_iterative_loop(
             # v13 Phase 3 (PR #221) — Boardroom 회의실 인프라 초기 state
             "enable_boardroom": enable_boardroom,
             "boardroom_session_path": None,
+            # v13 Phase 5.4 (PR #224 + #225) — 양방향 티키타카 라운드 초기 state
+            "enable_tikitaka": enable_tikitaka,
             "target_platform": target_platform,
             "enable_release_branch": enable_release_branch,
             "previous_version": previous_version,

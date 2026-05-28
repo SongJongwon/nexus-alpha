@@ -623,6 +623,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
             enable_rv=args.enable_rv,
             enable_strategist=args.enable_strategist,
             enable_boardroom=args.enable_boardroom,
+            enable_tikitaka=args.enable_tikitaka,
             enable_release_branch=args.release,
             enable_executor=args.build,
             enable_publish=args.release,
@@ -1094,6 +1095,16 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Strategist 안건 발제 시 Boardroom Facilitator 가 BoardroomSession 생성 + "
             "goal_alignment_check/budget_brake Placeholder 실행 + 회의록 markdown 저장. "
             "default OFF — Phase 4 의결권 활성화 전까지 회의록 보존만 (자동 적용 X)."
+        ),
+    )
+    parser.add_argument(
+        "--enable-tikitaka", dest="enable_tikitaka", action="store_true", default=False,
+        help=(
+            "v13 Phase 5.4 — Boardroom 진입 후 *3 라운드 양방향 토론* opt-in. "
+            "Cross-Agent Consultant 가 proposer → reviewer → dissenter → mediator "
+            "sequence 진행. dissent 자동 감지로 Round 1→2→3 진입. decision.yaml "
+            "schema v2 (rounds[] + consensus) 산출. "
+            "default OFF — --enable-boardroom 와 함께 사용 (boardroom 비활성 시 무시)."
         ),
     )
     parser.add_argument(

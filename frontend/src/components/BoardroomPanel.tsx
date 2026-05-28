@@ -405,6 +405,29 @@ function DecisionViewer({ data }: { data: DecisionYaml }) {
         </SectionCard>
       )}
 
+      {/* ⭐ Phase 5.E empty state — v2 yaml 인데 rounds=[] 인 경우 명시 안내 */}
+      {isV2 && rounds.length === 0 && (
+        <SectionCard
+          icon="💬"
+          title="Tikitaka Rounds"
+          subtitle="본부 10 Cross-Agent Consultant"
+          statusBadge={
+            <span className="px-2 py-0.5 rounded border text-[10px] font-bold bg-slate-800 text-slate-400 border-slate-700">
+              skipped
+            </span>
+          }
+        >
+          <div className="text-[11px] text-slate-400 leading-relaxed">
+            이번 회의는 <span className="text-slate-300 font-mono">enable_tikitaka=False</span> 로 진행 — Phase 4 직렬 의결 모드 (alignment → budget 단방향).
+            <br />
+            <br />
+            티키타카 활성 방법:{' '}
+            <span className="text-slate-300 font-mono">--enable-tikitaka</span> flag (
+            <span className="text-slate-300 font-mono">--enable-boardroom</span> 과 함께)
+          </div>
+        </SectionCard>
+      )}
+
       {isV2 && consensus && (
         <SectionCard
           icon="🤝"
@@ -628,27 +651,33 @@ function RoundCard({ round }: RoundCardProps) {
           {dissent ? 'dissent ⚠' : 'consensus ✓'}
         </span>
       </div>
-      <ul className="space-y-1">
-        {statements.map((s, i) => (
-          <li
-            key={i}
-            className="flex items-start gap-1.5 text-[11px] leading-snug"
-          >
-            <span
-              className={`flex-shrink-0 px-1 py-0 rounded border text-[9px] font-mono ${roleBadgeClasses(s.role)}`}
-              title={s.role ?? '?'}
+      {statements.length === 0 ? (
+        <div className="text-[10px] text-slate-500 italic px-1">
+          (라운드 발언 미수집 — budget throttle 또는 LLM 호출 실패 가능)
+        </div>
+      ) : (
+        <ul className="space-y-1">
+          {statements.map((s, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-1.5 text-[11px] leading-snug"
             >
-              {s.role?.[0]?.toUpperCase() ?? '?'}
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="font-mono text-slate-400 text-[10px]">
-                {s.agent ?? '?'}:
-              </span>{' '}
-              <span className="text-slate-200">{s.content ?? '(빈 발언)'}</span>
-            </span>
-          </li>
-        ))}
-      </ul>
+              <span
+                className={`flex-shrink-0 px-1 py-0 rounded border text-[9px] font-mono ${roleBadgeClasses(s.role)}`}
+                title={s.role ?? '?'}
+              >
+                {s.role?.[0]?.toUpperCase() ?? '?'}
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="font-mono text-slate-400 text-[10px]">
+                  {s.agent ?? '?'}:
+                </span>{' '}
+                <span className="text-slate-200">{s.content ?? '(빈 발언)'}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
