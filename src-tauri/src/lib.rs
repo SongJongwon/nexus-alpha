@@ -399,6 +399,166 @@ fn read_new_lines(path: &Path, last_offset: u64) -> std::io::Result<(Vec<String>
     Ok((lines, size))
 }
 
+// ---------------------------------------------------------------------------
+// v13 Phase 5.1 (PR #223) — Boardroom panel commands
+//
+// 의결 로그 YAML (PR #222, Phase 4 산출): outputs/board_decisions/<ts>_<session_id>/decision.yaml
+// 회의록 markdown (PR #221, Phase 3 산출): outputs/_boardroom_sessions/<ts>_<session_id>.md
+// 두 산출물 양쪽 모두 listing + read 가능해야 frontend Boardroom panel 이 cross-reference.
+// ---------------------------------------------------------------------------
+
+/// 회의 세션 / 의결 로그 1건의 list 항목 — frontend list 사이드바 표시용.
+#[derive(Debug, Clone, Serialize)]
+pub struct BoardroomListItem {
+    /// 디렉터리 또는 파일 이름 (예: "20260528_120000_a1b2c3d4e5f6").
+    pub name: String,
+    /// timestamp ISO8601 (파일/디렉터리 이름의 앞부분 파싱).
+    pub timestamp: String,
+    /// session_id 12자 hex (이름 뒷부분 파싱).
+    pub session_id: String,
+    /// 절대 경로 (decision.yaml 또는 .md).
+    pub path: String,
+}
+
+fn parse_boardroom_name(name: &str) -> Option<(String, String)> {
+    // 예: "20260528_120000_a1b2c3d4e5f6"
+    // 또는 "20260528_120000_a1b2c3d4e5f6.md"
+    let stem = name.strip_suffix(".md").unwrap_or(name);
+    let parts: Vec<&str> = stem.splitn(3, '_').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let date = parts[0];
+    let time = parts[1];
+    let session_id = parts[2];
+    if date.len() != 8 || time.len() != 6 {
+        return None;
+    }
+    let iso = format!(
+        "{}-{}-{}T{}:{}:{}Z",
+        &date[0..4],
+        &date[4..6],
+        &date[6..8],
+        &time[0..2],
+        &time[2..4],
+        &time[4..6],
+    );
+    Some((iso, session_id.to_string()))
+}
+
+/// `outputs/board_decisions/*/decision.yaml` list.
+///
+/// 최근 (timestamp desc) 순으로 최대 50건. PR #222 Phase 4 산출 viewer 용.
+#[tauri::command]
+async fn list_board_decisions() -> Result<Vec<BoardroomListItem>, String> {
+    let project_root = resolve_project_root()?;
+    let dir = project_root.join("outputs").join("board_decisions");
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut items = Vec::new();
+    let entries = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let yaml_path = path.join("decision.yaml");
+        if !yaml_path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if let Some((timestamp, session_id)) = parse_boardroom_name(&name) {
+            items.push(BoardroomListItem {
+                name,
+                timestamp,
+                session_id,
+                path: yaml_path.to_string_lossy().into_owned(),
+            });
+        }
+    }
+    items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    items.truncate(50);
+    Ok(items)
+}
+
+/// `outputs/board_decisions/<name>/decision.yaml` 의 내용을 *JSON value* 로 변환.
+///
+/// frontend 가 JSON 으로 받아 즉시 렌더링. serde_yaml → serde_json::Value 변환.
+#[tauri::command]
+async fn read_board_decision(name: String) -> Result<serde_json::Value, String> {
+    let project_root = resolve_project_root()?;
+    let yaml_path = project_root
+        .join("outputs")
+        .join("board_decisions")
+        .join(&name)
+        .join("decision.yaml");
+    if !yaml_path.exists() {
+        return Err(format!("decision.yaml 미발견: {}", yaml_path.display()));
+    }
+    let text = std::fs::read_to_string(&yaml_path)
+        .map_err(|e| format!("decision.yaml read 실패: {e}"))?;
+    let yaml_value: serde_yaml::Value =
+        serde_yaml::from_str(&text).map_err(|e| format!("YAML parse 실패: {e}"))?;
+    let json_text = serde_json::to_string(&yaml_value)
+        .map_err(|e| format!("YAML→JSON 변환 실패: {e}"))?;
+    let json_value: serde_json::Value = serde_json::from_str(&json_text)
+        .map_err(|e| format!("JSON parse 실패 (내부): {e}"))?;
+    Ok(json_value)
+}
+
+/// `outputs/_boardroom_sessions/*.md` list (timestamp desc, 최대 50건).
+///
+/// PR #221 Phase 3 회의록 — decision.yaml 과 session_id 로 cross-reference.
+#[tauri::command]
+async fn list_boardroom_sessions() -> Result<Vec<BoardroomListItem>, String> {
+    let project_root = resolve_project_root()?;
+    let dir = project_root.join("outputs").join("_boardroom_sessions");
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut items = Vec::new();
+    let entries = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) if n.ends_with(".md") => n.to_string(),
+            _ => continue,
+        };
+        if let Some((timestamp, session_id)) = parse_boardroom_name(&name) {
+            items.push(BoardroomListItem {
+                name,
+                timestamp,
+                session_id,
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+    }
+    items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    items.truncate(50);
+    Ok(items)
+}
+
+/// `outputs/_boardroom_sessions/<name>.md` 의 raw markdown 텍스트.
+#[tauri::command]
+async fn read_boardroom_session(name: String) -> Result<String, String> {
+    let project_root = resolve_project_root()?;
+    let md_path = project_root
+        .join("outputs")
+        .join("_boardroom_sessions")
+        .join(&name);
+    if !md_path.exists() {
+        return Err(format!("회의록 미발견: {}", md_path.display()));
+    }
+    std::fs::read_to_string(&md_path).map_err(|e| format!("회의록 read 실패: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -409,7 +569,79 @@ pub fn run() {
             claude_auth_login,
             claude_auth_logout,
             open_exe,
+            list_board_decisions,
+            read_board_decision,
+            list_boardroom_sessions,
+            read_boardroom_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_boardroom_name_extracts_timestamp_and_session_id() {
+        let parsed = parse_boardroom_name("20260528_120000_a1b2c3d4e5f6");
+        assert_eq!(
+            parsed,
+            Some(("2026-05-28T12:00:00Z".to_string(), "a1b2c3d4e5f6".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_boardroom_name_handles_md_suffix() {
+        let parsed = parse_boardroom_name("20260528_120000_abcdef123456.md");
+        assert_eq!(
+            parsed,
+            Some(("2026-05-28T12:00:00Z".to_string(), "abcdef123456".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_boardroom_name_rejects_malformed() {
+        assert!(parse_boardroom_name("not-a-valid-name").is_none());
+        assert!(parse_boardroom_name("20260528_12_short").is_none());
+        assert!(parse_boardroom_name("2026_120000_sessionid").is_none());
+    }
+
+    #[test]
+    fn read_board_decision_parses_phase4_schema_v1() {
+        // Phase 4 PR #222 schema v1 의 round-trip 검증 — serde_yaml → serde_json.
+        let yaml = r#"
+schema_version: "v1"
+session:
+  session_id: "a1b2c3d4e5f6"
+  agenda: "GUI sandbox 강화"
+  attendees:
+    - CTO
+    - GoalAlignmentAgent
+    - TokenBudgetOptimizer
+alignment:
+  status: "approved"
+  reason: "mission 부합"
+  references:
+    - "mission.md"
+budget:
+  status: "approved"
+  estimated_cost_usd: 2.0
+  budget_limit_usd: 15.0
+  cumulative_cost_usd: 3.17
+final_decision:
+  outcome: "approved"
+  reason: "둘 다 통과"
+  blocked_by: []
+"#;
+        let parsed: serde_yaml::Value = serde_yaml::from_str(yaml).expect("YAML parse 실패");
+        let json_text = serde_json::to_string(&parsed).expect("JSON 변환 실패");
+        let json: serde_json::Value =
+            serde_json::from_str(&json_text).expect("JSON parse 실패");
+        assert_eq!(json["schema_version"], "v1");
+        assert_eq!(json["alignment"]["status"], "approved");
+        assert_eq!(json["budget"]["estimated_cost_usd"], 2.0);
+        assert_eq!(json["final_decision"]["outcome"], "approved");
+        assert_eq!(json["final_decision"]["blocked_by"].as_array().unwrap().len(), 0);
+    }
 }

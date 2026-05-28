@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
+import { BoardroomPanel } from './components/BoardroomPanel'
+
 // =============================================================================
 // Sprint 6 — Agent Office (조직도 v12 11 본부 + 54 멤버 + UI polish)
 // =============================================================================
@@ -90,19 +92,21 @@ const HEADQUARTERS: HeadquartersDef[] = [
       },
       {
         name: 'Goal Alignment Agent',
-        role: 'v13 ⭐ 이사회 의장 — 시스템 목적 + 보안 거버넌스 최종 조율 (미구현)',
+        role: 'v13 ⭐ 이사회 의장 — 시스템 목적 + 보안 거버넌스 최종 조율',
         goalDetailed:
-          'v13 ⭐ (이전 CEO) Boardroom 이사회의 의장 역임. 시스템의 궁극적 목적 + 보안 거버넌스 최종 조율. Telemetry 기반 자율 진화 안건의 *목적 부합 여부* 최종 판정.',
-        implemented: false,
+          'v13 ⭐ (이전 CEO) Boardroom 이사회의 의장 역임. 시스템의 궁극적 목적 + 보안 거버넌스 최종 조율. Telemetry 기반 자율 진화 안건의 *목적 부합 여부* 최종 판정. Phase 4 (PR #222) 구현 — forbidden 키워드 (한/영 13건) 결정론 + LLM 옵션 → approved/rejected.',
+        implemented: true,
         hq: 'hq-0',
+        tools: ['assess_alignment', 'decision_record', 'Read'],
       },
       {
         name: 'Token Budget Optimizer',
-        role: 'v13 ⭐ 기술재무관 — LLM 비용 + 컴퓨팅 자원 한도 브레이크 (미구현)',
+        role: 'v13 ⭐ 기술재무관 — LLM 비용 + 컴퓨팅 자원 한도 브레이크',
         goalDetailed:
-          'v13 ⭐ (이전 CFO) Boardroom 이사회의 기술재무관. LLM 호출 비용 + 컴퓨팅 자원 한도 기반 *브레이크* 역할. 자율 진화 안건의 토큰 견적 + 예산 한도 검증.',
-        implemented: false,
+          'v13 ⭐ (이전 CFO) Boardroom 이사회의 기술재무관. LLM 호출 비용 + 컴퓨팅 자원 한도 기반 *브레이크* 역할. 자율 진화 안건의 토큰 견적 + 예산 한도 검증. Phase 4 (PR #222) 구현 — tier 매핑 (low/medium/high → 0.5/2.0/10.0 USD) + 한도 env (default $15) + 누적 비용 (events.jsonl Opus 4.7 단가) → approved/throttled.',
+        implemented: true,
         hq: 'hq-0',
+        tools: ['assess_budget', 'decision_record', 'Read'],
       },
     ],
   },
@@ -652,7 +656,14 @@ const EMPTY_AUTH: AuthStatus = {
 const MAX_LINES = 200
 const MAX_MESSAGES = 80
 
-type MenuKey = 'agent-map' | 'system' | 'monitor' | 'catalog' | 'usage' | 'settings'
+type MenuKey =
+  | 'agent-map'
+  | 'boardroom'
+  | 'system'
+  | 'monitor'
+  | 'catalog'
+  | 'usage'
+  | 'settings'
 
 interface MenuItem {
   key: MenuKey
@@ -662,6 +673,8 @@ interface MenuItem {
 
 const MENU_ITEMS: MenuItem[] = [
   { key: 'agent-map', label: '에이전트 맵', enabled: true },
+  // v13 Phase 5.1 (PR #223) — Boardroom panel + decision.yaml viewer
+  { key: 'boardroom', label: '이사회 의결', enabled: true },
   { key: 'system', label: '시스템 개요', enabled: false },
   { key: 'monitor', label: '실시간 모니터', enabled: false },
   { key: 'catalog', label: '카탈로그', enabled: false },
@@ -1255,12 +1268,17 @@ function App() {
         </aside>
 
         {/* === Center Office === */}
-        <main className="flex-1 min-w-0 overflow-y-auto p-3 bg-[#0d1117]">
-          {activeMenu !== 'agent-map' ? (
+        <main className="flex-1 min-w-0 overflow-hidden bg-[#0d1117] flex flex-col">
+          {activeMenu === 'boardroom' ? (
+            <div className="flex-1 min-h-0">
+              <BoardroomPanel />
+            </div>
+          ) : activeMenu !== 'agent-map' ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">
               "{MENU_ITEMS.find((m) => m.key === activeMenu)?.label}" 메뉴는 준비 중입니다.
             </div>
           ) : (
+            <div className="flex-1 min-h-0 overflow-y-auto p-3">
             <div
               className={`grid gap-3 ${
                 filter === 'all'
@@ -1355,6 +1373,7 @@ function App() {
                   </section>
                 )
               })}
+            </div>
             </div>
           )}
         </main>
