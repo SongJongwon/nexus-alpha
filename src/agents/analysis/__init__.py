@@ -34,6 +34,7 @@ from .requirement_expander import (
     REQUIREMENT_EXPANDER_NAME,
     REQUIREMENT_EXPANDER_ROLE,
     ChecklistItem,
+    _detect_platform,
     build_domain_checklist,
     create_requirement_expander_agent,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "REQUIREMENT_EXPANDER_NAME",
     "REQUIREMENT_EXPANDER_ROLE",
     "ChecklistItem",
+    "_detect_platform",
     "build_domain_checklist",
     "SILENT_FAIL_THRESHOLD",
     "SYSTEM_REFACTORING_STRATEGIST_BACKSTORY",

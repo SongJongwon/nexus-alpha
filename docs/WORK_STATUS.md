@@ -1,7 +1,21 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P0 회귀 수정 = PR #234 (Rule 0 종료조건 override 가드 + 라우터 iteration 가드 + 회귀 테스트). pytest 1756 → 1770 (+14). 다음 = P1 플랫폼 드리프트 가드레일 → 재실행.**
+> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P0(#234) + P1(#235) 완료 — Rule 0 종료조건 override 가드 + 플랫폼 드리프트 가드레일. pytest 1756 → 1770 → 1788 (+32). 다음 = P0+P1 적용 main 재실행 (A+B 결합 효과 + 본질 보존 검증).**
 > 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
+
+### 🛡 PR #235 (2026-05-29) — P1 플랫폼 드리프트 가드레일 (web 킥오프 시 PyQt/Tkinter 금지)
+
+> 크래시 분석 §7 P1 (옵션 3: 예방 + 탐지 + 매처 플랫폼 인식). P0 가 *종료* 보장, P1 은 *실제 web/Three.js 수렴* 유도. 명시 플랫폼(web)이 Track 기본값(Track A 데스크탑 편향)을 이긴다.
+
+| 변경 | 내용 |
+|------|------|
+| `requirement_expander.py` | `_detect_platform(request)` 추가 — web/desktop/unspecified 결정론 분류 (둘다/없음=unspecified, 회귀 안전). |
+| `iterative_loop.py` | expand 노드가 `platform_intent` state 산출(기존 `target_platform`=빌드OS와 별개 신규 키). `_node_run_chain` 이 web 의도 시 `_build_platform_constraint` 로 **데스크탑 GUI 금지 + Three.js 강제** 제약을 iter 1부터 주입. judge 노드에 platform_intent 전달. |
+| `convergence_judge.py` | **PLATFORM_DRIFT rule** (Rule -1↔Rule 0 사이): web 의도인데 `detect_desktop_markers`(import PyQt/PySide/tkinter, QApplication 등) 감지 → IMPROVE_NEEDED 강제 + 구체 reason("PyQt 말고 Three.js로 재작성") + `platform_drift` 플래그 보존. P0 하드 캡과 호환(cap 도달 시 여전히 BLOCKED). |
+| 회귀 테스트 | 신규 `test_platform_drift_guardrail.py` (P1-T1~T5, 18). pytest **1770 → 1788 (+18, 회귀 0)**. |
+| 보존 | Track A/B·domain_checklist=None·Rule 0·P0 가드 전부 불변. desktop/unspecified 면 제약 미주입+드리프트 검사 skip. |
+| P1-T3 증명 | "Three.js BIM 뷰어"→web → web+PyQt 산출 시 PLATFORM_DRIFT IMPROVE(platform_drift=True), iter==max 시 BLOCKED(ITERATION_CAP) 보존, desktop+PyQt → COMPLETE(drift=False). |
+| 보류 | P2(B 부작용 — 잘못된 플랫폼 코드 첨부 시 경고, recursion_limit↔max_iter 정합) — 별도 PR. |
 
 ### 🔧 PR #234 (2026-05-29) — P0 Rule 0 종료조건 override 회귀 수정
 

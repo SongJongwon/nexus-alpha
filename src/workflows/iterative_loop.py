@@ -269,6 +269,10 @@ class _LoopState(TypedDict, total=False):
     # build_domain_checklist(user_request) 가 expand_requirements 시 1회 산출 → judge 매 iter 입력.
     # 3D 같은 도메인 키워드 매칭 시 채워짐. 아니면 [] → Rule 0 skip → 회귀 0.
     domain_checklist: Any  # list[ChecklistItem] | None
+    # v13 Phase 6.E P1 (PR #235) — 플랫폼 의도 (web/desktop/unspecified).
+    # expand_requirements 가 _detect_platform 으로 1회 산출. web 이면 엔지니어
+    # 프롬프트에 데스크탑 GUI 금지 제약 주입 + judge PLATFORM_DRIFT 탐지 활성.
+    platform_intent: str
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -439,7 +443,10 @@ def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
     """
     from crewai import Crew, Task
 
-    from src.agents.analysis import build_domain_checklist  # noqa: PLC0415
+    from src.agents.analysis import (  # noqa: PLC0415
+        _detect_platform,
+        build_domain_checklist,
+    )
 
     expander = create_requirement_expander_agent(verbose=False)
     task = Task(
@@ -458,6 +465,11 @@ def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
         domain_checklist = build_domain_checklist(state["user_request"])
     except Exception:  # noqa: BLE001
         domain_checklist = []  # 결정론 매처 결함도 회귀 0 보장
+    # Phase 6.E P1 (PR #235) ★ — 플랫폼 의도 산출 (web/desktop/unspecified, 결정론)
+    try:
+        platform_intent = _detect_platform(state["user_request"])
+    except Exception:  # noqa: BLE001
+        platform_intent = "unspecified"  # 결함도 회귀 0 (제약 미주입)
     return {
         "spec_markdown": spec_md,
         "iteration": 0,  # 곧 run_chain 에서 1로 증가
@@ -467,6 +479,7 @@ def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
         "iteration_artifacts": [],
         "gap_report_raw": "",
         "domain_checklist": domain_checklist,
+        "platform_intent": platform_intent,
     }
 
 
@@ -786,6 +799,35 @@ def _build_prev_code_context(
     )
 
 
+def _build_platform_constraint(platform_intent: str) -> str:
+    """v13 Phase 6.E P1 (PR #235) — 플랫폼 드리프트 예방 제약 텍스트.
+
+    ``platform_intent == "web"`` 이면 엔지니어 프롬프트에 *데스크탑 GUI 금지 +
+    Three.js/WebGL 강제* 하드 제약을 반환한다. iter 1 부터 주입되어 Track A/B 의
+    데스크탑 .exe 기본값(특히 Track A "Calculator-style" 데스크탑 편향)보다 우선한다.
+
+    Args:
+        platform_intent: ``_detect_platform`` 산출 ("web" | "desktop" | "unspecified").
+
+    Returns:
+        web 면 제약 텍스트, 그 외엔 빈 string (회귀 0 — 기존 동작 불변).
+
+    배경:
+        crash analysis 2026-05-29 — "Three.js BIM 뷰어"(web) 요청에 엔지니어가
+        7/7 PyQt 데스크탑으로 드리프트. 명시 플랫폼(web)이 Track 기본값을 이기게 함.
+    """
+    if platform_intent != "web":
+        return ""
+    return (
+        "\n\n## 🚫 플랫폼 제약 (P1, 최우선 — Track 기본값 무시)\n"
+        "타겟 = **web / 브라우저**. 반드시 **Three.js + WebGL + HTML/JS/CSS** 로 "
+        "구현하세요.\n"
+        "**PyQt / PySide / Tkinter 등 데스크탑 GUI 프레임워크는 절대 금지** "
+        "(.exe 데스크탑 셸 포함).\n"
+        "Track A/B 의 데스크탑 산출 기본값보다 *이 플랫폼 제약이 우선* 합니다."
+    )
+
+
 def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     """analyze_and_implement (Track A) 또는 automate_workflow (Track B) 체인 호출.
 
@@ -802,12 +844,15 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     prev_code_context = ""
     if next_iter > 1:
         prev_code_context = _build_prev_code_context(state.get("chain_result"))
+    # ★ Phase 6.E P1 (PR #235) — 플랫폼 드리프트 예방: web 의도면 데스크탑 GUI 금지
+    # 하드 제약을 iter 1 부터 주입. Track A/B 데스크탑 기본값보다 우선.
+    # platform_intent != "web" 이면 빈 문자열 → 회귀 0 (기존 동작 불변).
+    platform_constraint = _build_platform_constraint(state.get("platform_intent", "unspecified"))
+    base_request = f"{state['user_request']}{platform_constraint}"
     if feedback or prev_code_context:
-        request_with_feedback = (
-            f"{state['user_request']}\n\n{feedback}{prev_code_context}"
-        )
+        request_with_feedback = f"{base_request}\n\n{feedback}{prev_code_context}"
     else:
-        request_with_feedback = state["user_request"]
+        request_with_feedback = base_request
 
     outputs_dir = Path(state["outputs_dir"]) if state.get("outputs_dir") else DEFAULT_OUTPUTS_DIR
 
@@ -1578,6 +1623,8 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         domain_checklist=state.get("domain_checklist"),
         engineer_output_excerpt=engineer_excerpt,
         qa_result_excerpt=qa_excerpt,
+        # Phase 6.E P1 (PR #235) — 플랫폼 드리프트 탐지 (web 의도 시 데스크탑 마커 검사)
+        platform_intent=state.get("platform_intent", "unspecified"),
     )
     # PR #162 — build 실패 시 BLOCKED override
     decision = _apply_build_failure_override(decision, state.get("chain_result"))
@@ -1922,6 +1969,8 @@ def run_iterative_loop(
             "consecutive_fake_iterations": 0,
             # v13 Phase 6.E (PR #231) — Rule 0 wire. expand_requirements 가 채움.
             "domain_checklist": None,
+            # v13 Phase 6.E P1 (PR #235) — 플랫폼 의도. expand_requirements 가 채움.
+            "platform_intent": "unspecified",
             "target_platform": target_platform,
             "enable_release_branch": enable_release_branch,
             "previous_version": previous_version,

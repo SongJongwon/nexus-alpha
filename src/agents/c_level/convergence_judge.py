@@ -124,6 +124,8 @@ class JudgmentDecision:
         domain_unsatisfied: v13 Phase 6.2 (PR #226) — Rule 0 미충족 항목 ID list.
             기본 빈 list. 호출자가 ``domain_checklist=`` 주입 안 하면 항상 [].
             다음 iter Engineer prompt 에 주입되어 *명시적 미충족 안내* 역할.
+        platform_drift: v13 Phase 6.E P1 (PR #235) — web 의도인데 데스크탑 GUI
+            마커 산출 감지 시 True. 기본 False (회귀 0). PLATFORM_DRIFT rule 이 채움.
     """
 
     verdict: Verdict
@@ -132,6 +134,7 @@ class JudgmentDecision:
     next_action: str
     must_fix_count: int
     domain_unsatisfied: list[str] = field(default_factory=list)
+    platform_drift: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +187,33 @@ def _validate_domain_checklist(
     return unsatisfied
 
 
+# v13 Phase 6.E P1 (PR #235) — 데스크탑 GUI 프레임워크 마커 (web 의도 드리프트 탐지)
+_DESKTOP_GUI_MARKERS: list[str] = [
+    "import pyqt", "from pyqt", "import pyside", "from pyside",
+    "import tkinter", "from tkinter", "qapplication", "qmainwindow",
+    "qwidget", "qtwidgets", "tk()",
+]
+
+
+def detect_desktop_markers(text: str) -> list[str]:
+    """산출 텍스트에서 데스크탑 GUI 프레임워크 마커를 결정론 탐지 (대소문자 무시).
+
+    web 플랫폼 의도인데 PyQt/PySide/Tkinter 등 데스크탑 GUI 가 산출된 *플랫폼
+    드리프트* 를 식별하기 위함 (crash analysis 2026-05-29). 단순 도메인 키워드
+    미충족과 구분해 *실행 가능한* IMPROVE 피드백을 만든다.
+
+    Args:
+        text: Engineer 산출 코드 발췌 (+QA 결과) 텍스트.
+
+    Returns:
+        매칭된 데스크탑 마커 list (대표 원문). 빈 list 면 드리프트 없음.
+    """
+    if not text:
+        return []
+    haystack = str(text).lower()
+    return [m for m in _DESKTOP_GUI_MARKERS if m in haystack]
+
+
 def _judge_convergence_natural(
     gap: GapReport,
     *,
@@ -194,6 +224,7 @@ def _judge_convergence_natural(
     qa_result_excerpt: str = "",
     fake_packages: Optional[list[str]] = None,
     consecutive_fake_iterations: int = 0,
+    platform_intent: str = "unspecified",
 ) -> JudgmentDecision:
     """Gap Analyst 보고서 + 안전 조건을 받아 *자연* verdict 를 반환한다 (Rule -1~5).
 
@@ -276,6 +307,31 @@ def _judge_convergence_natural(
                     + fake_preview
                 ),
                 must_fix_count=gap.unsatisfied_blockers + gap.unsatisfied_majors,
+            )
+
+    # ★ P1 (PR #235) — 플랫폼 드리프트: web 의도인데 데스크탑 GUI 산출 → IMPROVE 강제.
+    # Rule 0(도메인 키워드) 보다 우선 — *실행 가능한* 피드백("PyQt 말고 Three.js")을
+    # 주기 위함. platform_intent != "web" 이면 skip (회귀 0 — desktop/unspecified 허용).
+    if platform_intent == "web":
+        drift_markers = detect_desktop_markers(
+            str(engineer_output_excerpt) + " " + str(qa_result_excerpt)
+        )
+        if drift_markers:
+            preview = ", ".join(drift_markers[:4])
+            return JudgmentDecision(
+                verdict=Verdict.IMPROVE_NEEDED,
+                blocked_cause=BlockedCause.NONE,
+                reason=(
+                    f"PLATFORM_DRIFT: web 요청인데 데스크탑 GUI 마커 감지 ({preview}). "
+                    f"Three.js/WebGL/HTML 로 재작성 필요 (단순 도메인 키워드 미충족 아님)."
+                ),
+                next_action=(
+                    "Re-enter loop. 타겟=web/브라우저 — Three.js + WebGL + HTML/JS/CSS 로 "
+                    "재작성하고 PyQt/PySide/Tkinter 등 데스크탑 GUI 를 제거하세요. "
+                    f"감지된 데스크탑 마커: {preview}"
+                ),
+                must_fix_count=gap.unsatisfied_blockers + gap.unsatisfied_majors,
+                platform_drift=True,
             )
 
     # ★ Rule 0: 도메인 체크리스트 미충족 → IMPROVE_NEEDED 강제 (Rule 1 보다 우선)
@@ -406,6 +462,7 @@ def judge_convergence(
     qa_result_excerpt: str = "",
     fake_packages: Optional[list[str]] = None,
     consecutive_fake_iterations: int = 0,
+    platform_intent: str = "unspecified",
 ) -> JudgmentDecision:
     """루프 종료 verdict 반환 — 자연 결정표(`_judge_convergence_natural`) + **P0 하드 종료 가드**.
 
@@ -438,6 +495,7 @@ def judge_convergence(
         qa_result_excerpt=qa_result_excerpt,
         fake_packages=fake_packages,
         consecutive_fake_iterations=consecutive_fake_iterations,
+        platform_intent=platform_intent,
     )
 
     # ★ P0 하드 종료 가드: IMPROVE_NEEDED + iteration cap 도달 → 강제 BLOCKED(ITERATION_CAP)
@@ -461,6 +519,8 @@ def judge_convergence(
             ),
             must_fix_count=decision.must_fix_count,
             domain_unsatisfied=decision.domain_unsatisfied,
+            # P1 (PR #235) — 플랫폼 드리프트 플래그도 cap 종료 시 보존
+            platform_drift=decision.platform_drift,
         )
 
     return decision
