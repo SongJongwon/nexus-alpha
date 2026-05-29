@@ -749,17 +749,62 @@ def _adapt_automate_to_chain_result(automate_result: Any) -> Any:
     )
 
 
+def _build_prev_code_context(
+    prev_chain_result: Any, *, max_chars: int = 15_000
+) -> str:
+    """v13 Phase 6.E (PR #232) — 이전 iter 코드 발췌 prompt 텍스트.
+
+    PR 1 의 ``_extract_engineer_output_excerpt`` 재사용 — 이전 iter chain_result
+    의 ``saved_dir/code/*.py + 13_gui_code_output.md + 03_engineer_output.md``
+    를 합쳐 prompt 에 첨부 가능한 한국어 wrapper 로 포장.
+
+    반환:
+        - 발췌 0 (chain_result None / saved_dir 없음 / 파일 없음): 빈 string
+        - 발췌 있음: "## 이전 iteration 산출 코드..." prefix + 코드 본문
+
+    의도:
+        Engineer 가 *이전 iter 에서 뭘 만들던 중* 이었는지 prompt 컨텍스트로
+        받아, 다음 iter 에서 *전체를 백지에서 다시 작성하지 않게* 차단.
+        Phase 6.E 라이브 검증의 iter 2 퇴행 (BIM viewport.py → Nexus GUI
+        복사본) 원인 = 코드 컨텍스트 손실. 본 helper 가 그 갭 해결.
+    """
+    excerpt = _extract_engineer_output_excerpt(
+        prev_chain_result, max_chars=max_chars
+    )
+    if not excerpt:
+        return ""
+    return (
+        "\n\n## 이전 iteration 산출 코드 (참고 — 유지/개선 기준)\n\n"
+        "아래는 직전 iteration 에서 Engineer 가 산출한 코드입니다.\n"
+        "**기존 구조와 식별자(파일명/클래스/함수 시그니처)를 최대한 유지** 하면서 "
+        "보정 지시의 must-fix 항목만 개선하세요.\n"
+        "전체를 백지에서 다시 작성하는 것은 **퇴행** 이며 사용자가 이전 결과를 "
+        "잃습니다 (Phase 6.E PR #232 명세).\n\n"
+        "--- 이전 iter 코드 발췌 ---\n"
+        f"{excerpt}\n"
+        "--- 끝 ---\n"
+    )
+
+
 def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     """analyze_and_implement (Track A) 또는 automate_workflow (Track B) 체인 호출.
 
     iteration 마다 실행. PR #158 — ``state["track"]`` 가 "B" 면 Track B 분기 (Track A
     의 WorkflowResult 와 호환되는 SimpleNamespace 로 어댑터).
+
+    v13 Phase 6.E (PR #232) — iter 2+ 진입 시 ``state["chain_result"]`` (이전
+    iter 의 산출) 를 발췌해 prompt 에 첨부. *백지 재시작 차단*.
     """
     next_iter = state["iteration"] + 1
     feedback = state.get("feedback", "")
-    if feedback:
+    # ★ Phase 6.E (PR #232) — iter 2+ 진입 시 이전 chain_result 의 코드 첨부.
+    # iter 1 진입 시 state["chain_result"] = None → 빈 context → 회귀 0.
+    prev_code_context = ""
+    if next_iter > 1:
+        prev_code_context = _build_prev_code_context(state.get("chain_result"))
+    if feedback or prev_code_context:
         request_with_feedback = (
-            f"{state['user_request']}\n\n{feedback}"
+            f"{state['user_request']}\n\n{feedback}{prev_code_context}"
         )
     else:
         request_with_feedback = state["user_request"]
