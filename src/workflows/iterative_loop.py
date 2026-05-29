@@ -1618,12 +1618,27 @@ def _node_escalate(state: _LoopState) -> dict[str, Any]:
 def _route_after_judge(state: _LoopState) -> str:
     """Convergence Judge verdict 에 따라 다음 노드 결정.
 
+    P0 회귀 수정 (PR #234) — 그래프 레벨 **하드 iteration 가드 (이중 방어선)**:
+        judge 가 (결함·회귀로) IMPROVE_NEEDED 를 줘도 ``iteration >= max_iterations``
+        이면 loop back 을 막고 종료 노드(escalate)로 라우팅한다. convergence_judge 의
+        post-가드가 1차 방어, 본 라우터 가드가 2차 방어 — judge 가 우회/회귀되어도
+        무한 IMPROVE → GraphRecursionError 크래시(2026-05-29 사고)를 차단한다.
+        COMPLETE 는 cap 무관 정상 종료(finalize) 허용 — 가드보다 먼저 검사.
+
     Returns:
         "finalize" | "prepare_feedback" | "escalate"
     """
     decision: JudgmentDecision = state["decision"]
     if decision.verdict == Verdict.COMPLETE:
         return "finalize"
+
+    # ★ P0 하드 iteration 가드 (defense-in-depth): cap 도달 시 verdict 무관 종료.
+    gap = state.get("gap_report")
+    current_iter = getattr(gap, "iteration", 0) if gap is not None else 0
+    max_iter = state.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+    if current_iter >= max_iter:
+        return "escalate"  # cap 도달 — IMPROVE 라도 loop back 금지
+
     if decision.verdict == Verdict.IMPROVE_NEEDED:
         return "prepare_feedback"
     return "escalate"  # BLOCKED

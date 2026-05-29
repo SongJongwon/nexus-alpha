@@ -217,15 +217,39 @@ class TestRule0OverridesComplete:
 
 
 # =============================================================================
-# 4. Rule 0 < Rule 4 우선순위 — iteration cap 보다 우선
+# 4. ★ P0 회귀 수정 (PR #234) — Rule 0 IMPROVE 가 iteration cap 을 선점하지 못함
 # =============================================================================
 class TestRule0VsIterationCap:
-    """⭐ Rule 0 가 Rule 4 (ITERATION_CAP) 보다 우선 — 도메인 미충족이 더 명시적 신호."""
+    """⭐ P0 회귀 수정 (crash 분석 2026-05-29): 이전엔 Rule 0(도메인 미충족 IMPROVE)가
+    ITERATION_CAP 을 *선점* 해 종료 규칙이 dead code 가 되어 무한 IMPROVE →
+    GraphRecursionError 크래시였다. 하드 종료 가드가 'IMPROVE + iter>=max →
+    BLOCKED(ITERATION_CAP)' 로 강제 전환하되, COMPLETE override 와 iter<max 정상
+    IMPROVE 는 보존한다.
 
-    def test_rule_0_overrides_iteration_cap(self) -> None:
-        # must_fix > 0 + iter 가 max 도달 + domain 미충족
-        # Rule 4 (ITERATION_CAP) 발동 직전이지만 Rule 0 가 우선
+    ⚠️ 회귀 노트: 본 클래스의 ``test_rule_0_overrides_iteration_cap`` (구버전)은
+    버그 동작(iter==max 인데 IMPROVE)을 '정답'으로 박제하고 있어 pytest 가 크래시를
+    못 잡은 통합 갭의 원인이었다. P0 수정으로 corrected 동작 검증으로 교체한다.
+    """
+
+    def test_domain_unsatisfied_at_cap_forces_blocked(self) -> None:
+        """★ 핵심: 도메인 미충족 + iter==max → BLOCKED(ITERATION_CAP) (NOT IMPROVE)."""
         gap = GapReport(unsatisfied_blockers=1, iteration=5)
+        checklist = _make_3d_checklist()
+        decision = judge_convergence(
+            gap,
+            max_iterations=5,
+            domain_checklist=checklist,
+            engineer_output_excerpt="",  # 키워드 0매칭 → 영구 미충족
+        )
+        # 하드 가드 — Rule 0 의 IMPROVE 가 cap 에서 BLOCKED 로 강제 전환
+        assert decision.verdict == Verdict.BLOCKED
+        assert decision.blocked_cause == BlockedCause.ITERATION_CAP
+        # domain_unsatisfied 보존 (캡 종료라도 미충족 상태를 알게)
+        assert len(decision.domain_unsatisfied) == 2
+
+    def test_domain_unsatisfied_below_cap_still_improves(self) -> None:
+        """iter < max → Rule 0 정상 IMPROVE (회귀 0 — 가드 미발동)."""
+        gap = GapReport(unsatisfied_blockers=1, iteration=4)
         checklist = _make_3d_checklist()
         decision = judge_convergence(
             gap,
@@ -233,7 +257,6 @@ class TestRule0VsIterationCap:
             domain_checklist=checklist,
             engineer_output_excerpt="",
         )
-        # Rule 0 가 우선 — IMPROVE_NEEDED + domain_unsatisfied 채워짐
         assert decision.verdict == Verdict.IMPROVE_NEEDED
         assert len(decision.domain_unsatisfied) == 2
 

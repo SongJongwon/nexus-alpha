@@ -184,7 +184,7 @@ def _validate_domain_checklist(
     return unsatisfied
 
 
-def judge_convergence(
+def _judge_convergence_natural(
     gap: GapReport,
     *,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -195,7 +195,11 @@ def judge_convergence(
     fake_packages: Optional[list[str]] = None,
     consecutive_fake_iterations: int = 0,
 ) -> JudgmentDecision:
-    """Gap Analyst 보고서 + 안전 조건을 받아 루프 종료 verdict 를 반환한다.
+    """Gap Analyst 보고서 + 안전 조건을 받아 *자연* verdict 를 반환한다 (Rule -1~5).
+
+    ⚠️ 본 함수는 **하드 종료 가드 미적용** 의 raw 결정표다. 공개 API 는
+    ``judge_convergence`` 이며, 그것이 본 함수 결과에 P0 종료 가드를 덧씌운다.
+    직접 호출 금지 (테스트의 자연 verdict 검증 목적 외).
 
     결정 규칙 (우선순위 순):
         -1. ★ v13 Phase 6.3 (PR #230) — fake_packages 비어있지 않음:
@@ -390,6 +394,76 @@ def judge_convergence(
         ),
         must_fix_count=must_fix,
     )
+
+
+def judge_convergence(
+    gap: GapReport,
+    *,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    budget_tokens_remaining: int = NO_BUDGET_GATE,
+    domain_checklist: Optional[list[ChecklistItem]] = None,
+    engineer_output_excerpt: str = "",
+    qa_result_excerpt: str = "",
+    fake_packages: Optional[list[str]] = None,
+    consecutive_fake_iterations: int = 0,
+) -> JudgmentDecision:
+    """루프 종료 verdict 반환 — 자연 결정표(`_judge_convergence_natural`) + **P0 하드 종료 가드**.
+
+    P0 회귀 수정 (PR #234, 출처 ``docs/diagnostics/phase6e_rerun_crash_analysis_20260529.md``):
+        자연 결정표의 Rule 0(도메인 체크리스트 미충족 → IMPROVE_NEEDED), Rule -1(fake 1차),
+        Rule 5 가 ITERATION_CAP(Rule 4)·STAGNATION(Rule 2) 보다 먼저 IMPROVE_NEEDED 를
+        early-return 하면, 도메인이 *영구 미충족* (예: web 요청에 PyQt 산출) 인 경우 종료
+        규칙이 dead code 가 되어 max_iterations 가 무력화 → 무한 IMPROVE → LangGraph
+        GraphRecursionError 크래시. (2026-05-29 재실행 사고.)
+
+    **하드 종료 가드 (종료 > 품질 원칙)**:
+        자연 verdict 가 ``IMPROVE_NEEDED`` 인데 ``gap.iteration >= max_iterations`` 이면
+        → ``BLOCKED(ITERATION_CAP)`` 로 강제 전환. ``domain_unsatisfied`` 는 보존하여
+        "도메인 미충족 상태로 캡 종료" 를 호출자가 알 수 있게 한다.
+
+    보존 원칙 (깨지 않음):
+        - **COMPLETE 는 절대 전환 안 함** — 마지막 iter 의 정당한 완료(도메인 충족 +
+          must_fix=0)를 허용. 가드는 IMPROVE_NEEDED 에만 적용 (post-check).
+        - iter < max 의 정상 IMPROVE(Rule 0 COMPLETE override 포함)는 그대로 IMPROVE.
+        - ``iteration >= max 면 무조건 BLOCKED`` pre-check 는 금지 (정당 COMPLETE 차단).
+
+    Args/Returns/Note 는 `_judge_convergence_natural` docstring 참조 (시그니처 동일).
+    """
+    decision = _judge_convergence_natural(
+        gap,
+        max_iterations=max_iterations,
+        budget_tokens_remaining=budget_tokens_remaining,
+        domain_checklist=domain_checklist,
+        engineer_output_excerpt=engineer_output_excerpt,
+        qa_result_excerpt=qa_result_excerpt,
+        fake_packages=fake_packages,
+        consecutive_fake_iterations=consecutive_fake_iterations,
+    )
+
+    # ★ P0 하드 종료 가드: IMPROVE_NEEDED + iteration cap 도달 → 강제 BLOCKED(ITERATION_CAP)
+    if (
+        decision.verdict == Verdict.IMPROVE_NEEDED
+        and gap.iteration >= max_iterations
+    ):
+        return JudgmentDecision(
+            verdict=Verdict.BLOCKED,
+            blocked_cause=BlockedCause.ITERATION_CAP,
+            reason=(
+                f"Iteration cap reached (iter={gap.iteration} >= max={max_iterations}) "
+                f"while verdict was still IMPROVE_NEEDED — forced BLOCKED(ITERATION_CAP) "
+                f"by P0 hard termination guard. Underlying: {decision.reason}"
+            ),
+            next_action=(
+                "Notify user of iteration cap. Return current partial result. "
+                "Improvement was still pending at cap — likely requirement/platform "
+                "mismatch (e.g. domain checklist permanently unsatisfiable). "
+                f"Underlying next_action: {decision.next_action}"
+            ),
+            must_fix_count=decision.must_fix_count,
+            domain_unsatisfied=decision.domain_unsatisfied,
+        )
+
+    return decision
 
 
 # ---------------------------------------------------------------------------

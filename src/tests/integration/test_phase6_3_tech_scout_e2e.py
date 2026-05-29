@@ -163,8 +163,27 @@ class TestRuleMinusOneFakePackage:
         )
         assert decision2.verdict == Verdict.COMPLETE
 
-    def test_rule_minus_one_overrides_rule_4_iteration_cap(self) -> None:
-        """⭐ Rule -1 가 Rule 4 (ITERATION_CAP) 보다 우선 — 가짜가 더 명시적."""
+    def test_rule_minus_one_1st_occurrence_below_cap_improves(self) -> None:
+        """1차 가짜 + iter < max → IMPROVE_NEEDED (Rule -1 정상, 회귀 0)."""
+        gap = GapReport(unsatisfied_blockers=1, iteration=3)
+        decision = judge_convergence(
+            gap,
+            max_iterations=5,
+            fake_packages=["fake1"],
+            consecutive_fake_iterations=0,  # 1차
+        )
+        assert decision.verdict == Verdict.IMPROVE_NEEDED
+
+    def test_rule_minus_one_1st_occurrence_at_cap_blocked_by_p0_guard(self) -> None:
+        """★ P0 회귀 수정 (PR #234): 1차 가짜라도 iter==max 면 하드 종료 가드가
+        BLOCKED(ITERATION_CAP) 로 강제 전환.
+
+        이전엔 Rule -1 1차 IMPROVE 가 Rule 4(ITERATION_CAP)를 *선점* 해(Rule 0 와
+        동일한 cap-override 버그 패턴) max_iterations 를 넘겨 무한 IMPROVE 위험이
+        있었다. P0 가드("IMPROVE + iter>=max → BLOCKED, must_fix 조건 무관")가
+        '종료 > 품질' 원칙으로 교정한다. (가짜 패키지의 1차 IMPROVE 기회는
+        iter < max 일 때만 의미 — 위 below_cap test 가 보존 검증.)
+        """
         gap = GapReport(unsatisfied_blockers=1, iteration=5)
         decision = judge_convergence(
             gap,
@@ -172,8 +191,8 @@ class TestRuleMinusOneFakePackage:
             fake_packages=["fake1"],
             consecutive_fake_iterations=0,  # 1차
         )
-        # Rule 4 ITERATION_CAP 발동 직전이지만 Rule -1 가 우선
-        assert decision.verdict == Verdict.IMPROVE_NEEDED
+        assert decision.verdict == Verdict.BLOCKED
+        assert decision.blocked_cause == BlockedCause.ITERATION_CAP
 
 
 # =============================================================================

@@ -131,7 +131,8 @@ gantt
 | ⭐ **v13 Phase 6.E B: iter 간 코드 prompt 첨부** | **2026-05-29 (PR #232)** | **Engineer 가 *직전 iter 산출* 인지 → blank slate 재시작 차단 (코드 머지)** — 라이브 미검증 |
 | 🛠 **"에이전트 자기 수정 능력 강화" A+B 코드 머지** | **2026-05-29 (A+B 결합)** | **PR #231 + #232 — 두 root cause 코드 처방 (라이브 실증 PENDING)** |
 | 💥 **A+B 재실행 크래시 (GraphRecursionError)** | 2026-05-29 | 근본원인 = Rule 0 종료조건 override 회귀(PR #231) → 루프 7회 폭주 → recursion 초과. A·B 둘 다 발동했으나 A가 비종료 유발, B는 PyQt 드리프트 고착. [크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md) |
-| 🔧 **P0 회귀 수정 (1순위)** | NEXT | Rule 0가 ITERATION_CAP override 못 하게 + 라우터 iteration 가드 + 회귀 테스트 → 그 후 P1(플랫폼 드리프트 가드레일) → 재실행 |
+| ✅ **P0 회귀 수정 (PR #234)** | 2026-05-29 | Rule 0 종료조건 override 가드(`judge_convergence` post-가드: IMPROVE+iter≥max→BLOCKED(ITERATION_CAP)) + 라우터 iteration 이중 방어선 + 회귀 테스트(+14, pytest 1770). 버그 박제 단위 테스트 2건 교정. |
+| 🔧 **P1 (1순위 NEXT)** | NEXT | 플랫폼 드리프트 가드레일(web 킥오프→PyQt 금지) + 매처 언어맹목성 완화 → 그 후 재실행 |
 | 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | (재실행 PASS 후) 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
 
 ---
@@ -282,3 +283,4 @@ xychart-beta
 | **2026-05-28** | ⭐ **v13 Phase 1~6.E 모두 완료 반영 — A+B 마일스톤 ("에이전트 자기 수정 능력 강화") + Phase 6.2/6.1/6.3/6.E A/B 5건 추가 + pytest 1756 + 다음 마일스톤 = 베타 cohort 라이브 검증** |
 | **2026-05-29** | 🔧 **머지 날짜·검증 상태 정정 — #231/#232 머지일 2026-05-28 → 2026-05-29 (git 실측 09:22/09:35), "A+B 마일스톤 완성/도달" → "코드 머지 완료, 라이브 검증 PENDING" 조정. 1차 런(2026-05-28)은 A+B 머지 前 실행으로 INVALID 확정 (verdict 리포트). 다음 마일스톤 = A+B 라이브 재실행 verdict (1순위) 추가** |
 | **2026-05-29** | 💥 **재실행 크래시 분석 반영 — A+B 머지된 main 재실행이 GraphRecursionError 로 크래시. 근본원인 = Rule 0 종료조건 override 회귀(PR #231, Rule 0 가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP 보다 먼저 return → 종료 dead code → max_iter 무력화). recursion_limit=50 은 증상. 다음 마일스톤 = P0 회귀 수정 ([크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md))** |
+| **2026-05-29** | ✅ **P0 회귀 수정 = PR #234 — `judge_convergence` post-가드(IMPROVE+iter≥max→BLOCKED(ITERATION_CAP), domain_unsatisfied 보존, COMPLETE 불변) + `_route_after_judge` 그래프 레벨 iteration 이중 방어선 + 회귀 테스트 신규/교정(+14, pytest 1756→1770, 회귀 0). 단위 테스트가 cap-override 를 정답으로 박제한 통합 갭 2건 교정. 다음 = P1 플랫폼 드리프트 가드레일** |
