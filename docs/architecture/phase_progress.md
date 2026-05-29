@@ -1,7 +1,7 @@
 # 📈 Nexus Alpha — Phase Progress Timeline (v13 동기화)
 
-> **갱신일**: 2026-05-29 (재실행 크래시 — Phase 6.E A+B **코드 머지 완료, 라이브 미검증**. 재실행이 GraphRecursionError 로 크래시, 근본원인 = **Rule 0 우선순위 버그**(종료조건 override 회귀, PR #231))
-> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E A+B 코드 머지 완료 (라이브 미검증 — 재실행 크래시)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **P0 회귀 수정 PR**(Rule 0 우선순위 + 라우터 iteration 가드 + 회귀 테스트) → 재실행.
+> **갱신일**: 2026-05-29 (P0(#234)+P1(#235) **라이브 검증 완료 — 둘 다 작동 확정**. 재실행은 BLOCKED(미수렴), 원인=P1이 닿지 않는 하류 3중 결함(extraction 단절·B↔P1 충돌·QA). iter2에서 완전한 Three.js SPA 실제 산출 = web 능력 증명)
+> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E (P0/P1 라이브 검증 ✅, 재실행 BLOCKED — 하류 3중 결함)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **P2-A(extraction) + P2-B(B↔P1 충돌)** → 재실행.
 
 ---
 
@@ -133,7 +133,8 @@ gantt
 | 💥 **A+B 재실행 크래시 (GraphRecursionError)** | 2026-05-29 | 근본원인 = Rule 0 종료조건 override 회귀(PR #231) → 루프 7회 폭주 → recursion 초과. A·B 둘 다 발동했으나 A가 비종료 유발, B는 PyQt 드리프트 고착. [크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md) |
 | ✅ **P0 회귀 수정 (PR #234)** | 2026-05-29 | Rule 0 종료조건 override 가드(`judge_convergence` post-가드: IMPROVE+iter≥max→BLOCKED(ITERATION_CAP)) + 라우터 iteration 이중 방어선 + 회귀 테스트(+14, pytest 1770). 버그 박제 단위 테스트 2건 교정. |
 | ✅ **P1 플랫폼 드리프트 가드레일 (PR #235)** | 2026-05-29 | `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT(탐지, IMPROVE 강제+platform_drift 플래그) + 회귀 테스트(+18, pytest 1788). P0 가드 호환. |
-| 🔄 **재실행 (1순위 NEXT)** | NEXT | P0+P1 적용 main 에서 BIM 안건 재실행 — graceful 종료 + A/B 시그니처 + web/Three.js 본질 수렴(드리프트 0) 검증 |
+| ✅ **P0/P1 라이브 검증 (재실행 verdict)** | 2026-05-29 | P0 100%(크래시 0, graceful BLOCKED) + P1 100%(예방 5/5 + PLATFORM_DRIFT 4회). **iter2 완전한 Three.js SPA 실제 산출 = web 능력 증명**. BLOCKED 원인=하류 3중 결함. [P0P1 verdict](../diagnostics/phase6e_rerun_P0P1_verdict_20260529.md) |
+| 🔧 **P2-A + P2-B (1순위 NEXT)** | NEXT | P2-A: GUI 코드 extraction 수정(web .ts/.html을 code/에 저장, "SPA→스파" 오해 차단). P2-B: 옵션 B platform-aware(web 의도 시 PyQt 발췌 미첨부) → 그 후 재실행 |
 | 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | (재실행 PASS 후) 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
 
 ---
@@ -286,3 +287,4 @@ xychart-beta
 | **2026-05-29** | 💥 **재실행 크래시 분석 반영 — A+B 머지된 main 재실행이 GraphRecursionError 로 크래시. 근본원인 = Rule 0 종료조건 override 회귀(PR #231, Rule 0 가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP 보다 먼저 return → 종료 dead code → max_iter 무력화). recursion_limit=50 은 증상. 다음 마일스톤 = P0 회귀 수정 ([크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md))** |
 | **2026-05-29** | ✅ **P0 회귀 수정 = PR #234 — `judge_convergence` post-가드(IMPROVE+iter≥max→BLOCKED(ITERATION_CAP), domain_unsatisfied 보존, COMPLETE 불변) + `_route_after_judge` 그래프 레벨 iteration 이중 방어선 + 회귀 테스트 신규/교정(+14, pytest 1756→1770, 회귀 0). 단위 테스트가 cap-override 를 정답으로 박제한 통합 갭 2건 교정. 다음 = P1 플랫폼 드리프트 가드레일** |
 | **2026-05-29** | ✅ **P1 플랫폼 드리프트 가드레일 = PR #235 — `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT rule(탐지: web+데스크탑마커→IMPROVE 강제+platform_drift 플래그, P0 가드 호환) + 신규 테스트(+18, pytest 1770→1788, 회귀 0). 명시 플랫폼이 Track 기본값 우선. 다음 = P0+P1 적용 재실행** |
+| **2026-05-29** | 🧪 **P0/P1 라이브 검증 verdict — P0 100%(크래시 0, graceful BLOCKED(ITERATION_CAP)) + P1 100%(예방 5/5 + PLATFORM_DRIFT 4회) 둘 다 작동 확정. iter2 완전한 Three.js+Vite+TS SPA(10파일) 실제 산출 = web 능력 증명. 재실행 BLOCKED 원인 = P1이 닿지 않는 하류 3중 결함(A: extraction 단절 "SPA→스파" 오해로 web 코드 손실, B: 옵션 B#232↔P1#235 충돌로 stale PyQt 재주입, C: QA 단일토큰 stagnation). (a)iteration 부족 가설 기각. 다음 = P2-A(extraction)+P2-B(B platform-aware)** |

@@ -56,25 +56,38 @@
 
 ## 📋 PENDING (우선순위 순)
 
-> **2026-05-29 재정렬 (크래시 분석 §7)**: 재실행이 Rule 0 종료조건 override 회귀로 크래시 → 라이브 재실행은 아래 수정 전까지 보류. 우선순위가 **P0 → P1 → 재실행 → P2** 로 변경됨.
+> **2026-05-29 재정렬 (P0/P1 라이브 검증 verdict)**: P0(#234)+P1(#235) 머지·라이브 검증 완료 — **둘 다 100% 작동**(크래시 0 + PLATFORM_DRIFT 4회). 재실행은 BLOCKED(미수렴)이나 원인은 P1이 닿지 않는 **하류 3중 결함**. 우선순위 = **P2-A → P2-B → 재실행 → P3 → P4**. 상세: [P0P1 verdict](diagnostics/phase6e_rerun_P0P1_verdict_20260529.md).
 
-### ★ P0 (최우선) — Rule 0 종료조건 override 회귀 수정
-**근거**: 재실행 크래시의 근본원인. web 도메인 요청은 무엇이든 동일 크래시 재현 구조 (블로커).
-- **P0-a**: `convergence_judge.py` 규칙 순서 — `iteration >= max_iterations`(Rule 4 ITERATION_CAP)를 Rule 0보다 **앞으로**, 또는 Rule 0가 iteration 인지해 cap 도달 시 BLOCKED 반환. (Rule 2 STAGNATION 도 동일하게 Rule 0에 가려짐 — 함께 점검)
-- **P0-b**: `iterative_loop.py` `_route_after_judge`(:1618) / 그래프에 **hard iteration 가드** — verdict 무관하게 `iteration >= max` 면 강제 종료 (defense-in-depth, judge 결함 시에도 무한루프 차단).
-- **P0-c**: **회귀 테스트** — domain_checklist 영구 미충족 시나리오에서 max_iterations 에 BLOCKED(ITERATION_CAP)로 *graceful 종료* (GraphRecursionError 없이) 검증.
+### ✅ P0 (완료, PR #234) — Rule 0 종료조건 override 회귀 수정
+판정: 라이브 검증 **100% 작동** — graceful BLOCKED(ITERATION_CAP), GraphRecursionError 0, iter 5 종료(크래시 런 7폭주 해소).
 
-### ★ P1 — 플랫폼 드리프트 가드레일 + 매처 언어맹목성 완화
-**근거**: P0만으론 "깔끔한 BLOCKED"일 뿐 BIM 본질엔 도달 못 함. 수렴 실패의 진짜 입력.
-- **P1-a**: 킥오프 `platform==web` 이면 엔지니어 PyQt6/Tkinter 금지 · Three.js+Vite 강제 (런 retrospective.md 자체 제안).
-- **P1-b**: 도메인 체크리스트 `detect_keywords` 가 Three.js/JS 전용 → 비-web 산출 영구 미충족. 플랫폼-인지형 매처 또는 N회 연속 미충족 시 BLOCKED.
+### ✅ P1 (완료, PR #235) — 플랫폼 드리프트 가드레일
+판정: 라이브 검증 **100% 작동** — platform_intent=web 감지 + 데스크탑 금지 제약 5/5 주입(예방) + PLATFORM_DRIFT **4회 발동**(탐지).
 
-### ★ 재실행 (P0+P1 머지 후) — A+B 결합 효과 + 본질 보존 검증
-P0(graceful 종료) + P1(드리프트 차단) 머지 후 동일 BIM 안건 재실행. **검증 게이트**: graceful 종료(크래시 0) + A/B 시그니처 등장 + iter 간 web/Three.js 본질 유지(드리프트 0).
+### 🎯 긍정 신호 — web 능력 증명
+재실행 **iter2에서 완전한 Three.js+Vite+TypeScript+web-ifc-three SPA(10파일)를 실제 산출**. 시스템은 web 을 *할 수 있다*. 남은 건 그 정답을 디스크에 건지고(P2-A) 다음 iter 가 망치지 않게(P2-B) 하는 것.
 
-### P2 (후속) — B 부작용 + recursion_limit 정합
-- B가 *잘못된 플랫폼* 직전 코드를 첨부해 드리프트 고착 → 플랫폼 불일치 시 경고 주입 또는 정합 시에만 발췌.
-- `recursion_limit` floor 50 ↔ max_iter=5 정합 (P0 후 무해하나 명시 정합 옵션).
+### ★ P2-A (최우선) — GUI 코드 extraction 파이프라인 수정
+**근거**: iter2 정답 web 코드가 code/ 에 저장 안 됨 (전체 run web 파일 0개). **"SPA(single-page-app)"→"스파(마사지샵)" 오해** → tkinter test stub 만 persist (executor: "no valid entry — only test files, LLM may have misunderstood"). *정답을 냈는데 손실* — 가장 치명적.
+- web 산출(.ts/.html/index.html/package.json)을 code/ 에 정상 추출·저장.
+- "SPA" 용어 오해 차단 (single-page-app 컨텍스트 보존).
+
+### ★ P2-B (최우선) — 옵션 B(#232) ↔ P1(#235) 충돌 해소
+**근거**: iter3~5 에서 옵션 B 가 stale PyQt 코드 재주입 + "기존 구조 유지=퇴행 방지" 지시가 P1 "PyQt 금지"와 정면 충돌 → 재드리프트. (B 재평가 — §아래)
+- web 의도 시: 데스크탑(PyQt/Tkinter) 직전 코드 발췌를 **미첨부**, 또는 "이 코드는 플랫폼 위반 — 구조 참고 금지, 백지 web 재작성 필요" 경고로 대체.
+- platform-aware `_build_prev_code_context`.
+
+### 재실행 (P2-A+P2-B 머지 후) — web 본질 수렴 검증
+**검증 게이트**: graceful 종료 + **web 산출이 code/ 에 materialize**(.ts/.html 존재) + iter 간 PyQt 재드리프트 0 + 동작하는 배포물.
+
+### P3 (후속) — GUI Code Generator 크루 framing
+프롬프트뿐 아니라 **크루 도구/정체성 레벨**에서 web 의도 시 Vite/TS 스캐폴드 강제. P2-A/B 후에도 재드리프트 잔존 시.
+
+### P4 (후속) — QA 단일토큰 입력 결함 + recursion_limit 정합
+Code Reviewer 가 `"NEEDS_REVISION"` 단일 토큰만 받는 systematic failure (PR #28/#30/#32 재현) — gap stagnation 의 한 축. `recursion_limit` floor 50 ↔ max_iter 정합도 함께.
+
+### ★ B(#232) 재평가
+iter 간 코드 첨부(옵션 B)가 **web 의도 시 stale PyQt 재주입으로 P1 을 무력화하는 부작용 실증**(재실행 iter3~5). B 는 동일 플랫폼 맥락(PyQt→PyQt)에선 유효하나 플랫폼 드리프트 맥락에선 역효과 → **P2-B 에서 platform-aware 수정 필요**.
 
 > 아래 기존 1~3순위(BIM 재실행 / C / D)는 위 재정렬로 *후속* 으로 격하. C(dep 매핑)·D(Product Manager)는 backlog 유지.
 
@@ -241,4 +254,4 @@ docs/backlog/phase6e_followups.md §C 읽고
 
 ---
 
-**한 줄 요약**: 🩺 재실행 크래시 분석 완료 — 근본원인 = **Rule 0 종료조건 override 회귀(PR #231)** (GraphRecursionError). A+B 라이브 미검증. 1순위 = **P0**(Rule 0 우선순위 + 라우터 iteration 가드 + 회귀 테스트) → **P1**(플랫폼 드리프트 가드레일) → 재실행 → P2. 상세 [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md).
+**한 줄 요약**: 🧪 P0(#234)+P1(#235) 라이브 검증 **둘 다 100% 작동**(크래시 0 + PLATFORM_DRIFT 4회), **iter2에서 완전한 Three.js SPA 실제 산출 = web 능력 증명**. 재실행 BLOCKED 원인 = P1이 닿지 않는 **하류 3중 결함**(A: extraction "SPA→스파" 오해로 web 코드 손실 / B: 옵션 B#232↔P1#235 충돌 / C: QA 단일토큰). 1순위 = **P2-A(extraction) + P2-B(B platform-aware)** → 재실행 → P3(크루 framing) → P4(QA). 상세 [P0P1 verdict](diagnostics/phase6e_rerun_P0P1_verdict_20260529.md).

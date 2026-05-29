@@ -1,7 +1,24 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P0(#234) + P1(#235) 완료 — Rule 0 종료조건 override 가드 + 플랫폼 드리프트 가드레일. pytest 1756 → 1770 → 1788 (+32). 다음 = P0+P1 적용 main 재실행 (A+B 결합 효과 + 본질 보존 검증).**
+> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P0(#234)+P1(#235) 라이브 검증 완료 — 둘 다 작동 확정(크래시 0 + PLATFORM_DRIFT 4회 발동). 재실행은 BLOCKED(ITERATION_CAP, 미수렴) — 원인=P1이 닿지 않는 하류 3중 결함. 다음 = P2-A(extraction) + P2-B(B↔P1 충돌).**
 > 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
+
+### 🧪 P0/P1 재실행 verdict (2026-05-29) — 둘 다 작동, BLOCKED 원인은 하류 3중 결함
+
+> P0+P1 적용 main 재실행(`run_id=20e515d7de93`) 채점. 상세: [P0P1 verdict](diagnostics/phase6e_rerun_P0P1_verdict_20260529.md). **read-only 채점 — 코드 변경 없음.**
+
+| 항목 | 결과 |
+|------|------|
+| **P0 (#234)** | ✅ **100% 작동** — GraphRecursionError 0, graceful BLOCKED(ITERATION_CAP), iter 5 종료(크래시 런 7폭주 해소), result+run_end 정상. |
+| **P1 (#235)** | ✅ **100% 작동** — platform_intent=web 감지 + 데스크탑 금지 제약 iter1~5 전부 주입(예방) + PLATFORM_DRIFT **4회 발동**(탐지, 데스크탑 마커 정상 검출). |
+| 🎯 **능력 증명** | **iter2에서 완전한 Three.js+Vite+TypeScript+web-ifc-three SPA(10파일) 실제 산출** — 시스템은 web 을 *할 수 있다*. |
+| ⚠️ BLOCKED 원인 | P1이 닿지 않는 **하류 3중 결함** (max-iter 증액으론 수렴 불가, (a)iteration 부족 가설 기각): |
+| (A) extraction 단절 | iter2 정답 web 코드가 code/ 에 저장 안 됨. **"SPA(single-page-app)"→"스파(마사지샵)" 오해** → tkinter stub만 persist. 전체 run web 파일 0개. (최우선) |
+| (B) 옵션 B(#232)↔P1(#235) 충돌 | B 가 stale PyQt 코드 재주입 + "기존 구조 유지=퇴행 방지" 지시가 P1 "PyQt 금지" 무력화 → iter3~5 재드리프트. (최우선) |
+| (C) QA 단일토큰 입력 | Code Reviewer 가 `"NEEDS_REVISION"` 단일 토큰만 받음 (PR #28/#30/#32 systematic failure 재현) → gap 5회 0 satisfied stagnation. |
+| 다음 처방 | **P2-A**(extraction 수정) + **P2-B**(B platform-aware) 최우선 → P3(크루 framing) → P4(QA). |
+
+> ★ **B(#232) 재평가**: iter 간 코드 첨부(옵션 B)가 **web 의도 시 stale PyQt 코드를 재주입해 P1 을 무력화하는 부작용 실증**됨 (재실행 iter3~5). B 자체는 PyQt→PyQt 같은 동일 플랫폼 맥락에선 유효하나, 플랫폼 드리프트 맥락에선 역효과. **P2-B 에서 platform-aware 수정 필요** (web 의도 시 데스크탑 발췌 미첨부 또는 "플랫폼 위반 — 백지 재작성" 경고로 대체).
 
 ### 🛡 PR #235 (2026-05-29) — P1 플랫폼 드리프트 가드레일 (web 킥오프 시 PyQt/Tkinter 금지)
 
