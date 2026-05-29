@@ -151,6 +151,53 @@ def _detect_domain(user_request: str) -> list[str]:
     return matches
 
 
+# ---------------------------------------------------------------------------
+# v13 Phase 6.E P1 (PR #235) — 플랫폼 의도 결정론 매처
+#
+# 배경 (crash analysis 2026-05-29): "Three.js BIM 뷰어"(web) 요청인데 엔지니어가
+# 7/7 PyQt 데스크탑으로 드리프트 → Three.js/WebGL 0매칭 → Rule 0 영구 IMPROVE →
+# (P0 가드로) BLOCKED. P1 은 *실제로 web/Three.js 로 수렴* 하게 만든다.
+#   - 예방: target=web 이면 엔지니어 프롬프트에 데스크탑 GUI 금지 제약 주입
+#   - 탐지: web 의도인데 데스크탑 마커 산출 → Convergence Judge PLATFORM_DRIFT
+# 회귀 0: unspecified 면 제약 미주입 + 드리프트 검사 skip (기존 동작 보존).
+# ---------------------------------------------------------------------------
+_WEB_PLATFORM_KEYWORDS: list[str] = [
+    "three.js", "threejs", "webgl", "web", "브라우저", "browser", "html", "canvas",
+]
+_DESKTOP_PLATFORM_KEYWORDS: list[str] = [
+    "pyqt", "pyside", "tkinter", "데스크탑", "데스크톱",
+]
+
+
+def _detect_platform(user_request: str) -> str:
+    """사용자 요청 → 플랫폼 의도 ("web" | "desktop" | "unspecified") 결정론 매칭.
+
+    동작:
+        - web 시그널만 → "web"
+        - 데스크탑 시그널만 → "desktop"
+        - 둘 다 또는 둘 다 없음 → "unspecified" (모호 — 제약 미주입, 회귀 0)
+
+    Args:
+        user_request: 사용자 요청 원문.
+
+    Returns:
+        "web" | "desktop" | "unspecified".
+
+    Note:
+        LLM 무관 결정론. 명시 플랫폼이 Track 기본값(Track A 데스크탑 편향)을 이긴다.
+    """
+    if not user_request:
+        return "unspecified"
+    lower = user_request.lower()
+    has_web = any(kw in lower for kw in _WEB_PLATFORM_KEYWORDS)
+    has_desktop = any(kw in lower for kw in _DESKTOP_PLATFORM_KEYWORDS)
+    if has_web and not has_desktop:
+        return "web"
+    if has_desktop and not has_web:
+        return "desktop"
+    return "unspecified"
+
+
 def build_domain_checklist(user_request: str) -> list[ChecklistItem]:
     """사용자 요청 → 도메인별 템플릿 체크리스트 합성.
 

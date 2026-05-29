@@ -132,7 +132,8 @@ gantt
 | 🛠 **"에이전트 자기 수정 능력 강화" A+B 코드 머지** | **2026-05-29 (A+B 결합)** | **PR #231 + #232 — 두 root cause 코드 처방 (라이브 실증 PENDING)** |
 | 💥 **A+B 재실행 크래시 (GraphRecursionError)** | 2026-05-29 | 근본원인 = Rule 0 종료조건 override 회귀(PR #231) → 루프 7회 폭주 → recursion 초과. A·B 둘 다 발동했으나 A가 비종료 유발, B는 PyQt 드리프트 고착. [크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md) |
 | ✅ **P0 회귀 수정 (PR #234)** | 2026-05-29 | Rule 0 종료조건 override 가드(`judge_convergence` post-가드: IMPROVE+iter≥max→BLOCKED(ITERATION_CAP)) + 라우터 iteration 이중 방어선 + 회귀 테스트(+14, pytest 1770). 버그 박제 단위 테스트 2건 교정. |
-| 🔧 **P1 (1순위 NEXT)** | NEXT | 플랫폼 드리프트 가드레일(web 킥오프→PyQt 금지) + 매처 언어맹목성 완화 → 그 후 재실행 |
+| ✅ **P1 플랫폼 드리프트 가드레일 (PR #235)** | 2026-05-29 | `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT(탐지, IMPROVE 강제+platform_drift 플래그) + 회귀 테스트(+18, pytest 1788). P0 가드 호환. |
+| 🔄 **재실행 (1순위 NEXT)** | NEXT | P0+P1 적용 main 에서 BIM 안건 재실행 — graceful 종료 + A/B 시그니처 + web/Three.js 본질 수렴(드리프트 0) 검증 |
 | 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | (재실행 PASS 후) 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
 
 ---
@@ -284,3 +285,4 @@ xychart-beta
 | **2026-05-29** | 🔧 **머지 날짜·검증 상태 정정 — #231/#232 머지일 2026-05-28 → 2026-05-29 (git 실측 09:22/09:35), "A+B 마일스톤 완성/도달" → "코드 머지 완료, 라이브 검증 PENDING" 조정. 1차 런(2026-05-28)은 A+B 머지 前 실행으로 INVALID 확정 (verdict 리포트). 다음 마일스톤 = A+B 라이브 재실행 verdict (1순위) 추가** |
 | **2026-05-29** | 💥 **재실행 크래시 분석 반영 — A+B 머지된 main 재실행이 GraphRecursionError 로 크래시. 근본원인 = Rule 0 종료조건 override 회귀(PR #231, Rule 0 가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP 보다 먼저 return → 종료 dead code → max_iter 무력화). recursion_limit=50 은 증상. 다음 마일스톤 = P0 회귀 수정 ([크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md))** |
 | **2026-05-29** | ✅ **P0 회귀 수정 = PR #234 — `judge_convergence` post-가드(IMPROVE+iter≥max→BLOCKED(ITERATION_CAP), domain_unsatisfied 보존, COMPLETE 불변) + `_route_after_judge` 그래프 레벨 iteration 이중 방어선 + 회귀 테스트 신규/교정(+14, pytest 1756→1770, 회귀 0). 단위 테스트가 cap-override 를 정답으로 박제한 통합 갭 2건 교정. 다음 = P1 플랫폼 드리프트 가드레일** |
+| **2026-05-29** | ✅ **P1 플랫폼 드리프트 가드레일 = PR #235 — `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT rule(탐지: web+데스크탑마커→IMPROVE 강제+platform_drift 플래그, P0 가드 호환) + 신규 테스트(+18, pytest 1770→1788, 회귀 0). 명시 플랫폼이 Track 기본값 우선. 다음 = P0+P1 적용 재실행** |
