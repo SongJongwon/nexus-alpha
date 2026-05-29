@@ -144,28 +144,91 @@ class WorkflowResult:
 # ---------------------------------------------------------------------------
 
 
-def _extract_code_blocks(markdown: str, code_dir: Path) -> list[Path]:
-    """```python 블록을 추출해 `code_dir` 아래에 파일로 저장한다.
+# v13 Phase 6.E P2-A (PR #236) — web 코드 추출 지원 (fence 언어 → 기본 확장자)
+_FENCE_LANG_EXT: dict[str, str] = {
+    "python": ".py", "py": ".py",
+    "typescript": ".ts", "ts": ".ts", "tsx": ".tsx",
+    "javascript": ".js", "js": ".js", "jsx": ".jsx",
+    "html": ".html", "css": ".css", "json": ".json",
+}
+# Track A(CLI)/pytest/release 경로는 python-only (회귀 0). GUI web 경로만 확장.
+_PY_ONLY_LANGS: tuple[str, ...] = ("python", "py")
+_WEB_CODE_LANGS: tuple[str, ...] = (
+    "python", "py", "typescript", "ts", "tsx",
+    "javascript", "js", "jsx", "html", "css", "json",
+)
+_WEB_FILE_EXTS: frozenset[str] = frozenset(
+    {".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".json"}
+)
+# file: 헤더 — #(py) / //(ts,js) / <!--(html) / /*(css) 주석 스타일 모두 지원.
+_FILE_HEADER_RE = re.compile(
+    r"\s*(?:#|//|<!--|/\*)\s*file:\s*([^\s*>]+\.[A-Za-z0-9]+)", re.IGNORECASE
+)
 
-    블록 첫 줄에 `# file: <상대경로>` 헤더 주석이 있으면 해당 이름을 사용하고,
-    없으면 `block01.py`, `block02.py` 순으로 자동 번호를 매긴다.
+
+def _extract_code_blocks(
+    markdown: str,
+    code_dir: Path,
+    *,
+    languages: tuple[str, ...] = _PY_ONLY_LANGS,
+) -> list[Path]:
+    """fenced 코드 블록을 추출해 `code_dir` 아래에 파일로 저장한다.
+
+    블록 첫 줄에 ``# file:`` / ``// file:`` / ``<!-- file:`` / ``/* file:`` 헤더가
+    있으면 그 이름(확장자 포함)을 사용하고, 없으면 fence 언어 기본 확장자로
+    ``block01.<ext>`` 순번을 매긴다.
+
+    ``languages``: 추출 대상 fence 언어 집합. 기본 python-only (Track A CLI/pytest/
+    release 경로 회귀 0). GUI web 경로는 ``_WEB_CODE_LANGS`` 를 넘겨 .ts/.html/.css
+    등 web 산출을 정상 추출 — v13 Phase 6.E P2-A (PR #236): "완전한 Three.js SPA 를
+    산출하고도 ```python 펜스만 추출해 web 코드를 0개 저장하던" 손실 수정.
     """
     code_dir.mkdir(parents=True, exist_ok=True)
-    pattern = re.compile(r"```python\s*\n(.*?)\n```", re.DOTALL)
+    pattern = re.compile(r"```([A-Za-z0-9_+-]*)\s*\n(.*?)\n```", re.DOTALL)
+    allowed = {lang.lower() for lang in languages}
     saved: list[Path] = []
-    for idx, block in enumerate(pattern.findall(markdown), start=1):
+    for idx, (lang_raw, block) in enumerate(pattern.findall(markdown), start=1):
+        lang = lang_raw.strip().lower()
+        if lang not in allowed:
+            continue
         first_line = block.splitlines()[0] if block.strip() else ""
-        name_match = re.match(r"#\s*file:\s*(\S+\.py)", first_line)
-        if name_match:
-            safe_name = (
-                name_match.group(1).replace("/", "__").replace("\\", "__")
-            )
+        header = _FILE_HEADER_RE.match(first_line)
+        if header:
+            safe_name = header.group(1).replace("/", "__").replace("\\", "__")
             file_path = code_dir / safe_name
         else:
-            file_path = code_dir / f"block{idx:02d}.py"
+            ext = _FENCE_LANG_EXT.get(lang, ".py")
+            # headerless json 은 예시 데이터일 수 있어 저장 안 함 (file: 헤더 필수)
+            if ext == ".json":
+                continue
+            file_path = code_dir / f"block{idx:02d}{ext}"
         file_path.write_text(block, encoding="utf-8")
         saved.append(file_path)
     return saved
+
+
+def _detect_extraction_loss(
+    gui_code_output: str, saved_paths: list[Path]
+) -> Optional[str]:
+    """GUI web 산출에 web 파일 헤더가 다수인데 추출된 web 파일이 0개면 경고 반환.
+
+    v13 Phase 6.E P2-A (PR #236) — "정답 web 코드를 조용히 버리는" 손실 방지.
+    iter2 사례(완전한 Three.js SPA 산출 → code/ 에 web 0개, tkinter stub 만 남음)
+    재발 시 가시화. 손실 없으면 None.
+    """
+    web_headers = [
+        h
+        for h in _FILE_HEADER_RE.findall(gui_code_output or "")
+        if Path(h).suffix.lower() in _WEB_FILE_EXTS
+    ]
+    saved_web = [p for p in saved_paths if p.suffix.lower() in _WEB_FILE_EXTS]
+    if len(web_headers) >= 2 and not saved_web:
+        return (
+            f"⚠ extraction loss — gui_code_output 에 web 파일 헤더 "
+            f"{len(web_headers)}개({web_headers[:5]}) 인데 추출된 web 파일 0개. "
+            "web 산출이 code/ 에 저장되지 못했습니다 (P2-A 손실 가드)."
+        )
+    return None
 
 
 # PR #66 — Update Checker 실 통합 (방어선 4 패턴 재사용)
@@ -1346,8 +1409,18 @@ def _run_gui_branch_chain(
         (workflow_dir / "14_pytest_suite.md").write_text(pytest_suite, encoding="utf-8")
 
     # 코드 추출 — GUI Code Generator 산출 + (PR #58) Pytest Author 산출 합산
-    code_paths = _extract_code_blocks(gui_code_output, workflow_dir / "code")
+    # v13 Phase 6.E P2-A (PR #236) — GUI 산출은 web(.ts/.html/.css/...) 포함 추출.
+    code_paths = _extract_code_blocks(
+        gui_code_output, workflow_dir / "code", languages=_WEB_CODE_LANGS
+    )
+    # P2-A 손실 가드 — web 산출인데 web 파일 0개 추출 시 경고 아티팩트 기록 (조용한 손실 방지).
+    _loss_warning = _detect_extraction_loss(gui_code_output, code_paths)
+    if _loss_warning:
+        (workflow_dir / "13b_extraction_warning.txt").write_text(
+            _loss_warning, encoding="utf-8"
+        )
     if pytest_suite:
+        # pytest 산출은 python-only 유지 (test_*.py)
         code_paths += _extract_code_blocks(pytest_suite, workflow_dir / "code")
 
     return WorkflowResult(
