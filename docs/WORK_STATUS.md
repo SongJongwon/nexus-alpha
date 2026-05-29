@@ -1,7 +1,19 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E 재실행 크래시 (GraphRecursionError) — 근본원인 Rule 0 종료조건 override 회귀(PR #231). A+B 미검증. P0 회귀 수정 필요.**
-> 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**. 다음 = **P0 회귀 수정**(Rule 0 우선순위 + 라우터 iteration 가드 + 회귀 테스트).
+> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P0 회귀 수정 = PR #234 (Rule 0 종료조건 override 가드 + 라우터 iteration 가드 + 회귀 테스트). pytest 1756 → 1770 (+14). 다음 = P1 플랫폼 드리프트 가드레일 → 재실행.**
+> 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
+
+### 🔧 PR #234 (2026-05-29) — P0 Rule 0 종료조건 override 회귀 수정
+
+> 크래시 분석 §7 P0. "종료 > 품질" 원칙 — 하드 캡을 독립 게이트로.
+
+| 변경 | 내용 |
+|------|------|
+| `convergence_judge.py` | 자연 결정표를 `_judge_convergence_natural` 로 분리 + 공개 `judge_convergence` 에 **post-결정 하드 가드**: 자연 verdict 가 IMPROVE_NEEDED 인데 `gap.iteration >= max_iterations` → **BLOCKED(ITERATION_CAP) 강제**(domain_unsatisfied 보존). COMPLETE 는 절대 전환 안 함 (정당 완료 허용). |
+| `iterative_loop.py` `_route_after_judge` | 그래프 레벨 **이중 방어선** — verdict 무관 `iteration >= max` 면 loop back 금지(escalate). COMPLETE 우선. |
+| 회귀 테스트 | 신규 `test_iterative_loop_termination.py` (T1~T5, 12) + `test_convergence_judge_rule0.py`·`test_phase6_3_tech_scout_e2e.py` 의 **버그 박제 테스트 2건 교정**(cap-override 를 정답으로 박제 → corrected). pytest **1756 → 1770 (+14, 회귀 0)**. |
+| 발견 | pytest 가 크래시를 못 잡은 통합 갭 = 단위 테스트가 `Rule 0/Rule -1 가 ITERATION_CAP 선점`을 *정답으로 박제*. 두 곳 모두 교정. T1 증명: 도메인 영구 미충족이어도 iter 1~4 IMPROVE → iter 5(=max) BLOCKED(ITERATION_CAP). |
+| 보류 | P1(플랫폼 드리프트 가드레일 + 매처 언어맹목성), P2(B 부작용, recursion_limit 정합) — 별도 PR. |
 > ⭐ **PR #231 (옵션 A) + #232 (옵션 B) 머지** — PM 진단 처방 (BIM 라이브 검증의 iter 퇴행 사고) 두 root cause 를 *코드 차원에서* 처방 (라이브 실증은 재실행 verdict 대기):
 >   1. **A (PR #231)** — Rule 0 가 *드디어* 프로덕션에서 작동 (PR #226 코드만 머지됐던 갭 해소). domain_checklist + engineer_output_excerpt 전달. BIM 본질 시나리오 검증 — Gap Analyst COMPLETE 도 override.
 >   2. **B (PR #232)** — `_node_run_chain` prompt 에 *이전 iter 코드 발췌* 자동 첨부. iter 2 의 *blank slate 재시작 차단* (BIM viewport.py → Nexus GUI 퇴행 사고 처방).
