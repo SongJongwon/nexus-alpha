@@ -265,6 +265,10 @@ class _LoopState(TypedDict, total=False):
     enable_tech_scout: bool  # --enable-tech-scout flag. False (default) 면 requirements.txt 검증 skip
     fake_packages: Any  # list[str] | None — 이번 iter 의 가짜 패키지 list (Rule -1 입력)
     consecutive_fake_iterations: int  # 가짜 패키지 연속 iter 카운트 — 2차 도달 시 BLOCKED(FAKE_PACKAGE)
+    # v13 Phase 6.E (PR #231) — Rule 0 workflow wire (PM 진단 처방 A)
+    # build_domain_checklist(user_request) 가 expand_requirements 시 1회 산출 → judge 매 iter 입력.
+    # 3D 같은 도메인 키워드 매칭 시 채워짐. 아니면 [] → Rule 0 skip → 회귀 0.
+    domain_checklist: Any  # list[ChecklistItem] | None
 
     # Requirement Expander 산출 (1회만)
     spec_markdown: str
@@ -427,8 +431,15 @@ def _detect_stagnation(satisfied_history: list[int]) -> bool:
 # 노드 함수들 — 각각 LangGraph 의 한 노드를 구현
 # ---------------------------------------------------------------------------
 def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
-    """Requirement Expander 호출. 1회만 실행."""
+    """Requirement Expander 호출. 1회만 실행.
+
+    v13 Phase 6.E (PR #231) — 도메인 체크리스트 동시 산출:
+        user_request 키워드 매칭 (예: BIM/3D/Three.js) → 3D 도메인 4 항목 체크리스트.
+        Rule 0 가 매 iter 의 judge 시점에 활용. 매칭 0 시 빈 list → Rule 0 skip.
+    """
     from crewai import Crew, Task
+
+    from src.agents.analysis import build_domain_checklist  # noqa: PLC0415
 
     expander = create_requirement_expander_agent(verbose=False)
     task = Task(
@@ -442,6 +453,11 @@ def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
     )
     result = Crew(agents=[expander], tasks=[task], verbose=False).kickoff()
     spec_md = getattr(result, "raw", None) or str(result)
+    # Phase 6.E ★ — 도메인 체크리스트 산출 (LLM 무관 결정론, 항상 안전)
+    try:
+        domain_checklist = build_domain_checklist(state["user_request"])
+    except Exception:  # noqa: BLE001
+        domain_checklist = []  # 결정론 매처 결함도 회귀 0 보장
     return {
         "spec_markdown": spec_md,
         "iteration": 0,  # 곧 run_chain 에서 1로 증가
@@ -450,6 +466,7 @@ def _node_expand_requirements(state: _LoopState) -> dict[str, Any]:
         "feedback_history": [],
         "iteration_artifacts": [],
         "gap_report_raw": "",
+        "domain_checklist": domain_checklist,
     }
 
 
@@ -1354,6 +1371,83 @@ def _apply_build_failure_override(
     )
 
 
+def _extract_engineer_output_excerpt(
+    chain_result: Any, *, max_chars: int = 30_000
+) -> str:
+    """v13 Phase 6.E (PR #231) — Engineer 산출 코드 발췌 (Rule 0 매칭 대상).
+
+    saved_dir 의 ``code/*.py`` (Track A) + ``13_gui_code_output.md`` (GUI 분기) +
+    ``03_engineer_output.md`` (Track B) 를 합쳐 첫 ``max_chars`` 까지 반환.
+    실패 silent — 빈 string. Rule 0 가 빈 string 시 모든 항목 미충족 판정 →
+    *3D 요구 시 IMPROVE_NEEDED 강제* (의도된 동작).
+    """
+    if chain_result is None:
+        return ""
+    saved_dir = getattr(chain_result, "saved_dir", None)
+    if saved_dir is None:
+        return ""
+    try:
+        saved_path = Path(saved_dir)
+    except Exception:  # noqa: BLE001
+        return ""
+    if not saved_path.is_dir():
+        return ""
+    parts: list[str] = []
+    total = 0
+    code_dir = saved_path / "code"
+    if code_dir.is_dir():
+        for py in sorted(code_dir.glob("*.py")):
+            if total >= max_chars:
+                break
+            try:
+                text = py.read_text(encoding="utf-8", errors="ignore")
+                parts.append(f"# {py.name}\n{text}")
+                total += len(text)
+            except Exception:  # noqa: BLE001
+                continue
+    for md_name in ("13_gui_code_output.md", "03_engineer_output.md"):
+        if total >= max_chars:
+            break
+        md_path = saved_path / md_name
+        if md_path.is_file():
+            try:
+                text = md_path.read_text(encoding="utf-8", errors="ignore")
+                parts.append(f"## {md_name}\n{text}")
+                total += len(text)
+            except Exception:  # noqa: BLE001
+                continue
+    full = "\n\n".join(parts)
+    return full[:max_chars]
+
+
+def _extract_qa_review_excerpt(
+    chain_result: Any, *, max_chars: int = 10_000
+) -> str:
+    """v13 Phase 6.E (PR #231) — QA review 발췌 (Rule 0 보조 매칭 대상)."""
+    if chain_result is None:
+        return ""
+    saved_dir = getattr(chain_result, "saved_dir", None)
+    if saved_dir is None:
+        return ""
+    try:
+        saved_path = Path(saved_dir)
+    except Exception:  # noqa: BLE001
+        return ""
+    if not saved_path.is_dir():
+        return ""
+    parts: list[str] = []
+    for md_name in ("04_qa_review.md", "14_pytest_suite.md"):
+        md_path = saved_path / md_name
+        if md_path.is_file():
+            try:
+                text = md_path.read_text(encoding="utf-8", errors="ignore")
+                parts.append(f"## {md_name}\n{text}")
+            except Exception:  # noqa: BLE001
+                continue
+    full = "\n\n".join(parts)
+    return full[:max_chars]
+
+
 def _node_tech_scout(state: _LoopState) -> dict[str, Any]:
     """v13 Phase 6.3 (PR #230) — Engineer 산출 requirements.txt PyPI 검증.
 
@@ -1423,6 +1517,11 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
     if budget != NO_BUDGET_GATE:
         budget = max(0, budget - DEFAULT_TOKENS_PER_ITERATION) if budget > 0 else 0
 
+    # Phase 6.E (PR #231) — Rule 0 wire: 매 iter chain_result 의 코드/QA 발췌
+    chain_result_for_excerpt = state.get("chain_result")
+    engineer_excerpt = _extract_engineer_output_excerpt(chain_result_for_excerpt)
+    qa_excerpt = _extract_qa_review_excerpt(chain_result_for_excerpt)
+
     decision = judge_convergence(
         gap,
         max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
@@ -1430,6 +1529,10 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         # Phase 6.3 (PR #230) — Tech Scout fake_packages 전달
         fake_packages=state.get("fake_packages"),
         consecutive_fake_iterations=state.get("consecutive_fake_iterations", 0),
+        # Phase 6.E (PR #231) — Rule 0 wire: 도메인 체크리스트 + 산출 발췌
+        domain_checklist=state.get("domain_checklist"),
+        engineer_output_excerpt=engineer_excerpt,
+        qa_result_excerpt=qa_excerpt,
     )
     # PR #162 — build 실패 시 BLOCKED override
     decision = _apply_build_failure_override(decision, state.get("chain_result"))
@@ -1757,6 +1860,8 @@ def run_iterative_loop(
             "enable_tech_scout": enable_tech_scout,
             "fake_packages": None,
             "consecutive_fake_iterations": 0,
+            # v13 Phase 6.E (PR #231) — Rule 0 wire. expand_requirements 가 채움.
+            "domain_checklist": None,
             "target_platform": target_platform,
             "enable_release_branch": enable_release_branch,
             "previous_version": previous_version,
