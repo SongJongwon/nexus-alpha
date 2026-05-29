@@ -763,7 +763,7 @@ def _adapt_automate_to_chain_result(automate_result: Any) -> Any:
 
 
 def _build_prev_code_context(
-    prev_chain_result: Any, *, max_chars: int = 15_000
+    prev_chain_result: Any, *, max_chars: int = 15_000, platform_intent: str = "unspecified"
 ) -> str:
     """v13 Phase 6.E (PR #232) — 이전 iter 코드 발췌 prompt 텍스트.
 
@@ -786,6 +786,28 @@ def _build_prev_code_context(
     )
     if not excerpt:
         return ""
+    # ★ P2-B (PR #236) — platform-aware: web 의도인데 직전 산출이 데스크탑(PyQt/
+    # PySide/Tkinter)이면 stale 코드 *재주입 금지* + "백지 web 재작성" 경고로 대체.
+    # 옵션 B(#232)의 "구조 유지=퇴행 방지" 가 P1(#235)의 "데스크탑 금지"를 무력화해
+    # web→PyQt 재드리프트를 고착시키던 충돌(P0P1 verdict 하류결함 B) 제거.
+    # platform_intent != "web" 이면 기존 동작 그대로 (회귀 0).
+    if platform_intent == "web":
+        from src.agents.c_level.convergence_judge import (  # noqa: PLC0415
+            detect_desktop_markers,
+        )
+
+        drift = detect_desktop_markers(excerpt)
+        if drift:
+            preview = ", ".join(drift[:4])
+            return (
+                "\n\n## ⚠️ 직전 iteration 산출 = 플랫폼 위반 (데스크탑 GUI 감지)\n\n"
+                f"직전 iter 산출에서 데스크탑 GUI 마커({preview})가 감지됐습니다 — "
+                "web 타겟 위반입니다.\n"
+                "**직전 코드의 구조/식별자를 유지하지 마세요.** 백지에서 "
+                "**Three.js + WebGL + HTML/JS/CSS** 기반 web 앱으로 재작성하세요.\n"
+                "(PyQt/PySide/Tkinter 데스크탑 코드는 참고 대상이 아니며, 재사용 시 "
+                "동일 플랫폼 위반이 반복됩니다.)\n"
+            )
     return (
         "\n\n## 이전 iteration 산출 코드 (참고 — 유지/개선 기준)\n\n"
         "아래는 직전 iteration 에서 Engineer 가 산출한 코드입니다.\n"
@@ -843,7 +865,10 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     # iter 1 진입 시 state["chain_result"] = None → 빈 context → 회귀 0.
     prev_code_context = ""
     if next_iter > 1:
-        prev_code_context = _build_prev_code_context(state.get("chain_result"))
+        prev_code_context = _build_prev_code_context(
+            state.get("chain_result"),
+            platform_intent=state.get("platform_intent", "unspecified"),
+        )
     # ★ Phase 6.E P1 (PR #235) — 플랫폼 드리프트 예방: web 의도면 데스크탑 GUI 금지
     # 하드 제약을 iter 1 부터 주입. Track A/B 데스크탑 기본값보다 우선.
     # platform_intent != "web" 이면 빈 문자열 → 회귀 0 (기존 동작 불변).

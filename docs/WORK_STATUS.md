@@ -1,7 +1,20 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P0(#234)+P1(#235) 라이브 검증 완료 — 둘 다 작동 확정(크래시 0 + PLATFORM_DRIFT 4회 발동). 재실행은 BLOCKED(ITERATION_CAP, 미수렴) — 원인=P1이 닿지 않는 하류 3중 결함. 다음 = P2-A(extraction) + P2-B(B↔P1 충돌).**
+> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P2(#236) 완료 — iter→code 파이프라인 수정: P2-A(web extraction) + P2-B(옵션 B platform-aware). pytest 1788 → 1802 (+14). 다음 = P2 적용 main 재실행 (web 산출 code/ materialize 검증).**
 > 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
+
+### 🔧 PR #236 (2026-05-29) — P2 iter→code 파이프라인 수정 (web extraction + 옵션 B platform-aware)
+
+> P0P1 verdict 하류 3중 결함 중 (A)+(B) 처방. 시스템은 web SPA 산출 능력 증명됨(iter2) — 정답을 *디스크에 건지고*(P2-A) *다음 iter 가 망치지 않게*(P2-B) 한다.
+
+| 변경 | 내용 |
+|------|------|
+| **P2-A** `analyze_and_implement.py` | `_extract_code_blocks` 가 ```python 펜스만 매칭하던 결함 수정 — `languages` 파라미터 + fence 언어별 확장자(.ts/.tsx/.js/.html/.css/.json) + `# // <!-- /* file:` 다중 주석 헤더. GUI 경로는 `_WEB_CODE_LANGS` 로 web 산출 정상 추출. **손실 가드** `_detect_extraction_loss`(web 헤더 다수인데 추출 0개면 `13b_extraction_warning.txt` 기록). Track A CLI/pytest/release 경로는 python-only 유지(회귀 0). |
+| **P2-B** `iterative_loop.py` | `_build_prev_code_context` platform-aware — `platform_intent=="web"` 인데 직전 산출에 데스크탑 마커(`detect_desktop_markers`) 감지 시 **stale 코드 재주입 금지** + "직전은 플랫폼 위반, 구조 유지 금지, 백지 web 재작성" 경고로 대체. 옵션 B(#232)↔P1(#235) 충돌 제거. desktop/unspecified 면 기존 재주입 동작 불변. |
+| 회귀 테스트 | 신규 `test_p2_iter_code_pipeline.py` (P2-T1~T6, 14). pytest **1788 → 1802 (+14, 회귀 0)**. |
+| 증명 | P2-A: 같은 web SPA md → OLD(python-only) **0개** vs NEW(web langs) **index.html/package.json/src/main.ts 3개 저장**. P2-B: web 의도+직전 PyQt → 재주입 안 함+백지 경고 / desktop → 재주입(불변). |
+| 보존 | P0(#234)·P1(#235)·Track A/B·domain_checklist=None 방어 전부 불변. |
+| 잔여 | (C) QA 단일토큰 입력 결함 = P4(별도). |
 
 ### 🧪 P0/P1 재실행 verdict (2026-05-29) — 둘 다 작동, BLOCKED 원인은 하류 3중 결함
 
