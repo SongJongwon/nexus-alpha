@@ -1,15 +1,16 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-28 v13 Phase 6.3 — Tech Scout 통합 + Rule -1 + BIM 벤치마크**
-> ⭐ **Phase 6.3 머지** (PR #230) — Tech Scout workflow 통합 완료. `--enable-tech-scout` CLI flag + `_node_tech_scout` (run_chain 직후) + Engineer 산출 requirements.txt PyPI 일괄 검증. Convergence Judge **Rule -1** 신설 — 1차 가짜 → IMPROVE_NEEDED (PM 절충안), 2차 연속 → BLOCKED(FAKE_PACKAGE). BIM 벤치마크 E2E + 라이브 가이드 [PHASE_6_LIVE_VERIFICATION_GUIDE.md](PHASE_6_LIVE_VERIFICATION_GUIDE.md). 회귀 0 — `enable_tech_scout=False` default.
+> **마지막 업데이트**: **2026-05-28 v13 Phase 6.E A+B 마일스톤 완성 — "에이전트 자기 수정 능력 강화"**
+> ⭐ **PR #231 (옵션 A) + #232 (옵션 B) 머지** — PM 진단 처방 (BIM 라이브 검증의 iter 퇴행 사고) 두 root cause 격파:
+>   1. **A (PR #231)** — Rule 0 가 *드디어* 프로덕션에서 작동 (PR #226 코드만 머지됐던 갭 해소). domain_checklist + engineer_output_excerpt 전달. BIM 본질 시나리오 검증 — Gap Analyst COMPLETE 도 override.
+>   2. **B (PR #232)** — `_node_run_chain` prompt 에 *이전 iter 코드 발췌* 자동 첨부. iter 2 의 *blank slate 재시작 차단* (BIM viewport.py → Nexus GUI 퇴행 사고 처방).
+> 이전 (Phase 6.3 PR #230): Tech Scout workflow 통합 + Rule -1 + BIM 벤치마크
 > 이전 (Phase 6.1 PR #229): Tech Scout 인프라 (PyPI JSON + 캐싱)
-> 이전 (UI PR #228): 부서 대표 14명 시각 구별 (👑)
-> 이전 (Phase 6.2 PR #226): Requirement Expander 3D 매처 + Judge Rule 0
-> pytest: 1706 → **1727** (Phase 6.3 +21 신규, 회귀 0)
+> pytest: 1727 → 1744 → **1756** (Phase 6.E +29 신규, 회귀 0)
 
 ---
 
-## 🎯 2026-05-28 세션 — Phase 1~6.1 머지 사이클 요약
+## 🎯 2026-05-28 세션 — Phase 1~6.E 머지 사이클 요약 (15 PR)
 
 | PR | 머지 | Phase | 효과 |
 |----|-------|-------|------|
@@ -26,7 +27,40 @@
 | #227 | 2026-05-28 | (선행 리포트) | LLM_PROVIDER 노드별 분리 호환성 검증 리포트 (docs-only, Phase 6.1 진입 신호등 GREEN) |
 | #228 | 2026-05-28 | (UI) | 에이전트 카드 부서 대표 14명 시각 구별 (👑 + 금색 테두리 + 틴트) |
 | #229 | 2026-05-28 | Phase 6.1 | Tech Scout 인프라 — PyPI JSON API 가짜 패키지 가드 + 7d TTL 캐싱 + MAX_SEARCHES=5. requests>=2.31 추가. |
-| **#230** | **2026-05-28** | **Phase 6.3 ★** | **Tech Scout workflow 통합 — `--enable-tech-scout` CLI + `_node_tech_scout` + Convergence Judge Rule -1 (1차 IMPROVE / 2차 BLOCKED). BIM 벤치마크 E2E + 라이브 가이드.** |
+| #230 | 2026-05-28 | Phase 6.3 | Tech Scout workflow 통합 — `--enable-tech-scout` CLI + `_node_tech_scout` + Rule -1 (1차 IMPROVE / 2차 BLOCKED). BIM 벤치마크 E2E + 라이브 가이드 |
+| **#231** | **2026-05-28** | **Phase 6.E ★ A** | **Rule 0 workflow wire (PM 진단 처방 A)** — PR #226 의 build_domain_checklist 가 *드디어* 프로덕션에서 작동. `_node_expand_requirements` 가 1회 호출 + state 보존, `_node_judge_convergence` 가 domain_checklist + engineer_output_excerpt + qa_result_excerpt 전달. BIM 본질 시나리오 — Gap Analyst COMPLETE 도 override → IMPROVE 강제. 진단 리포트 + backlog (C/D) 보존 |
+| **#232** | **2026-05-28** | **Phase 6.E ★ B** | **iter 간 코드 컨텍스트 prompt 첨부 (PM 진단 처방 B)** — `_node_run_chain` 이 iter 2+ 진입 시 *이전 iter chain_result.saved_dir* 의 code 발췌 (~15k chars) 를 prompt 에 자동 첨부. "기존 구조/식별자 최대한 유지, 백지 재시작 = 퇴행" 안내 명시. Track A/B 단일 변수 통과. BIM viewport.py + WebGL + OrbitControls + PerspectiveCamera 가 다음 iter prompt 에 그대로 |
+
+### 🏆 "에이전트 자기 수정 능력 강화" 첫 마일스톤 도달 (A+B 결합)
+
+| 시나리오 | A 단독 | B 단독 | **A+B (오늘)** |
+|---------|-------|-------|---------------|
+| iter 1 BIM 완벽 + BUILD_FAILED | Rule 0 통과 (코드 정상) | iter 2 가 BIM 인지 | ✅ iter 2 도 BIM 본질 유지 |
+| iter 2 가 isometric 2D 시도 | Rule 0 IMPROVE 강제 | prev 코드 인지 → 시도 자체 ↓ | ✅ 양 방향 차단 |
+| iter N 환각 패키지 산출 | (관계없음) | prev 코드의 진짜 패키지 인지 | ✅ 환각 빈도 ↓ |
+
+---
+
+## 🛠 BIM Viewer 수동 빌드 산출 (오늘 별도 트랙)
+
+PM 본인 PC 의 Phase 6.E 라이브 검증 실패 사고 (iter 1 BIM 코드 → BUILD_FAILED, iter 2 퇴행) 의 *복구 작업* — `outputs/bim_viewer_manual_build/` 디렉터리에서 manual 빌드 진화. **git ignored** (outputs/), main 머지 산출은 진단 리포트 + Phase 6.E 처방 PR 들.
+
+### 빌드 진화 (5 단계)
+
+| 버전 | 핵심 |
+|------|------|
+| v1 (초기) | `pip install PyQt6-WebEngine` + `pyinstaller --onedir --collect-all PyQt6` — iter 1 의 *환경 결함만* 보충하면 빌드 가능 입증 (BUILD_FAILED 의 진짜 원인 = dependency_analyzer 의 PyQt6 sub-package 누락) |
+| v2 (IFCLoader 활성) | `// 운영:` 주석 처리된 web-ifc-three IFCLoader 활성. Three.js + web-ifc-three + OrbitControls + web-ifc.wasm **로컬 vendor 번들** (CDN 금지). `npm install three web-ifc web-ifc-three` 후 vendor/ 디렉터리 7 파일. importmap. setUrl 로컬 파일 |
+| v3 (안정성) | 두 번째 파일 로드 시 `coordinationMatrix null` → `model.close(scene)` + geometry/material dispose + IFCLoader 재인스턴스. **드래그앤드롭** (.ifc/.gltf/.glb) — `dragenter/over/leave/drop` + 청록 dashed 테두리. **재질 색상 palette** — 15 IFC type (IFCWALL 회색 / IFCSLAB 갈색 / IFCWINDOW 청록 등) `createSubset` |
+| v4 (read fix) | drop fetch 실패 → `FileReader.readAsArrayBuffer` → `ifcLoader.parse(buffer)` 직접 호출. **WASD/QE 이동 + Shift 부스트** (12 m/s → 42 m/s). **ESC 모델 삭제** + bridge.model_cleared signal + main_window 3면 리셋 |
+| v5 (1인칭 시도 → 안정 fallback) | PointerLockControls 시도 → Qt6 WebEngine + Pointer Lock 호환 결함으로 *spawn 직후 crash* → **PointerLockControls 폐기 + 직접 mouse-drag 회전** (Euler YXZ 직접 조작, ±89° pitch clamp). 클릭/드래그 자동 구분 (4px threshold) — 짧은 클릭 = raycast 속성, 드래그 = 회전. **8초 spawn alive 검증 PASS** |
+
+**최종 산출**: `outputs/bim_viewer_manual_build/dist/BIM-Viewer/BIM-Viewer.exe` (2.4 MB launcher) + `_internal/` 591 MB (QtWebEngine + Three.js vendor + IFCLoader + web-ifc.wasm). 사용자 시연 흐름: 더블클릭 → 파일/드래그 IFC 로드 → 드래그 회전 + WASD 이동 + 클릭 속성 + ESC 삭제.
+
+### PM 본인 PC 시연 검증 완료 항목
+- iter 1 의 진짜 BIM 코드 (Three.js + WebGLRenderer + OrbitControls + PerspectiveCamera + QWebEngineView) → 빌드 가능 ✓
+- 재질 색상 다채색 매핑 (벽/슬래브/창/문 등) ✓ (PM 확인 — "색상 매핑 잘 됐다")
+- 모델 로드 + 카메라 작동 ✓ (PM 스크린샷 — BIM 건축 모델 정상 표시)
 
 ---
 
