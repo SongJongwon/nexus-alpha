@@ -1,7 +1,7 @@
 # 📈 Nexus Alpha — Phase Progress Timeline (v13 동기화)
 
-> **갱신일**: 2026-05-29 (PR #231/#232 머지 — Phase 6.E A+B **코드 머지 완료**, 라이브 검증 PENDING — 재실행 진행 중)
-> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E A+B 코드 머지 완료 (라이브 검증 PENDING)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **A+B 라이브 재실행 verdict (1순위)** → 베타 cohort 라이브 검증.
+> **갱신일**: 2026-05-29 (재실행 크래시 — Phase 6.E A+B **코드 머지 완료, 라이브 미검증**. 재실행이 GraphRecursionError 로 크래시, 근본원인 = **Rule 0 우선순위 버그**(종료조건 override 회귀, PR #231))
+> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E A+B 코드 머지 완료 (라이브 미검증 — 재실행 크래시)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **P0 회귀 수정 PR**(Rule 0 우선순위 + 라우터 iteration 가드 + 회귀 테스트) → 재실행.
 
 ---
 
@@ -130,7 +130,8 @@ gantt
 | ⭐ **v13 Phase 6.E A: Rule 0 workflow wire** | **2026-05-29 (PR #231)** | **Rule 0 wire 코드 머지** (PR #226 wire 갭 해소) — 라이브 미검증 |
 | ⭐ **v13 Phase 6.E B: iter 간 코드 prompt 첨부** | **2026-05-29 (PR #232)** | **Engineer 가 *직전 iter 산출* 인지 → blank slate 재시작 차단 (코드 머지)** — 라이브 미검증 |
 | 🛠 **"에이전트 자기 수정 능력 강화" A+B 코드 머지** | **2026-05-29 (A+B 결합)** | **PR #231 + #232 — 두 root cause 코드 처방 (라이브 실증 PENDING)** |
-| 🔜 **A+B 라이브 재실행 verdict (1순위)** | 진행 중 2026-05-29 | A+B 머지된 main 재실행 — A/B 시그니처 등장 + 퇴행 차단 PASS/FAIL 판정 |
+| 💥 **A+B 재실행 크래시 (GraphRecursionError)** | 2026-05-29 | 근본원인 = Rule 0 종료조건 override 회귀(PR #231) → 루프 7회 폭주 → recursion 초과. A·B 둘 다 발동했으나 A가 비종료 유발, B는 PyQt 드리프트 고착. [크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md) |
+| 🔧 **P0 회귀 수정 (1순위)** | NEXT | Rule 0가 ITERATION_CAP override 못 하게 + 라우터 iteration 가드 + 회귀 테스트 → 그 후 P1(플랫폼 드리프트 가드레일) → 재실행 |
 | 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | (재실행 PASS 후) 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
 
 ---
@@ -280,3 +281,4 @@ xychart-beta
 | 2026-05-27 | v13 동기화 — Sprint 4~6 완료 표기 + v13 Phase 1~5 (RV 최우선) 추가 + 레거시 행정 직책 일정 소거 |
 | **2026-05-28** | ⭐ **v13 Phase 1~6.E 모두 완료 반영 — A+B 마일스톤 ("에이전트 자기 수정 능력 강화") + Phase 6.2/6.1/6.3/6.E A/B 5건 추가 + pytest 1756 + 다음 마일스톤 = 베타 cohort 라이브 검증** |
 | **2026-05-29** | 🔧 **머지 날짜·검증 상태 정정 — #231/#232 머지일 2026-05-28 → 2026-05-29 (git 실측 09:22/09:35), "A+B 마일스톤 완성/도달" → "코드 머지 완료, 라이브 검증 PENDING" 조정. 1차 런(2026-05-28)은 A+B 머지 前 실행으로 INVALID 확정 (verdict 리포트). 다음 마일스톤 = A+B 라이브 재실행 verdict (1순위) 추가** |
+| **2026-05-29** | 💥 **재실행 크래시 분석 반영 — A+B 머지된 main 재실행이 GraphRecursionError 로 크래시. 근본원인 = Rule 0 종료조건 override 회귀(PR #231, Rule 0 가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP 보다 먼저 return → 종료 dead code → max_iter 무력화). recursion_limit=50 은 증상. 다음 마일스톤 = P0 회귀 수정 ([크래시 분석](../diagnostics/phase6e_rerun_crash_analysis_20260529.md))** |

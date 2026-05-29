@@ -56,13 +56,32 @@
 
 ## 📋 PENDING (우선순위 순)
 
-### 1순위 — BIM 안건 라이브 재실행 (A+B 결합 효과 검증)
+> **2026-05-29 재정렬 (크래시 분석 §7)**: 재실행이 Rule 0 종료조건 override 회귀로 크래시 → 라이브 재실행은 아래 수정 전까지 보류. 우선순위가 **P0 → P1 → 재실행 → P2** 로 변경됨.
 
-> 🚨 **상태 업데이트 (2026-05-29)**: 1차 BIM 라이브 런(2026-05-28 15:55~17:15)은 A+B 머지(2026-05-29 09:22/#231 · 09:35/#232) **17시간 前** 실행 → A+B 미적용 **BEFORE/무효(INVALID)** (5점 중 1 PASS / 4 FAIL — [verdict 리포트](diagnostics/phase6e_live_rerun_verdict_20260529.md)). A+B 머지된 main 에서 **1차 재실행 크래시** (GraphRecursionError, recursion_limit=50 초과 / 산출물 PyQt 대시보드 드리프트) — 원인 분석 중 (2026-05-29, `--enable-tech-scout --max-iterations 5`).
->
-> **검증 게이트** (재실행이 유효하려면 — 1차엔 0건이던 시그니처가 이번엔 등장해야 함):
-> - **A 시그니처**: `events_rerun_AB_20260529.jsonl` 에 `domain_checklist` + "도메인 체크리스트 N/M 미충족" 강제 IMPROVE 가 N건
-> - **B 시그니처**: iter 2+ 엔지니어 prompt 에 "이전 iter 코드 발췌" (직전 viewport.py 본문) + prompt_length 증가 가 N건
+### ★ P0 (최우선) — Rule 0 종료조건 override 회귀 수정
+**근거**: 재실행 크래시의 근본원인. web 도메인 요청은 무엇이든 동일 크래시 재현 구조 (블로커).
+- **P0-a**: `convergence_judge.py` 규칙 순서 — `iteration >= max_iterations`(Rule 4 ITERATION_CAP)를 Rule 0보다 **앞으로**, 또는 Rule 0가 iteration 인지해 cap 도달 시 BLOCKED 반환. (Rule 2 STAGNATION 도 동일하게 Rule 0에 가려짐 — 함께 점검)
+- **P0-b**: `iterative_loop.py` `_route_after_judge`(:1618) / 그래프에 **hard iteration 가드** — verdict 무관하게 `iteration >= max` 면 강제 종료 (defense-in-depth, judge 결함 시에도 무한루프 차단).
+- **P0-c**: **회귀 테스트** — domain_checklist 영구 미충족 시나리오에서 max_iterations 에 BLOCKED(ITERATION_CAP)로 *graceful 종료* (GraphRecursionError 없이) 검증.
+
+### ★ P1 — 플랫폼 드리프트 가드레일 + 매처 언어맹목성 완화
+**근거**: P0만으론 "깔끔한 BLOCKED"일 뿐 BIM 본질엔 도달 못 함. 수렴 실패의 진짜 입력.
+- **P1-a**: 킥오프 `platform==web` 이면 엔지니어 PyQt6/Tkinter 금지 · Three.js+Vite 강제 (런 retrospective.md 자체 제안).
+- **P1-b**: 도메인 체크리스트 `detect_keywords` 가 Three.js/JS 전용 → 비-web 산출 영구 미충족. 플랫폼-인지형 매처 또는 N회 연속 미충족 시 BLOCKED.
+
+### ★ 재실행 (P0+P1 머지 후) — A+B 결합 효과 + 본질 보존 검증
+P0(graceful 종료) + P1(드리프트 차단) 머지 후 동일 BIM 안건 재실행. **검증 게이트**: graceful 종료(크래시 0) + A/B 시그니처 등장 + iter 간 web/Three.js 본질 유지(드리프트 0).
+
+### P2 (후속) — B 부작용 + recursion_limit 정합
+- B가 *잘못된 플랫폼* 직전 코드를 첨부해 드리프트 고착 → 플랫폼 불일치 시 경고 주입 또는 정합 시에만 발췌.
+- `recursion_limit` floor 50 ↔ max_iter=5 정합 (P0 후 무해하나 명시 정합 옵션).
+
+> 아래 기존 1~3순위(BIM 재실행 / C / D)는 위 재정렬로 *후속* 으로 격하. C(dep 매핑)·D(Product Manager)는 backlog 유지.
+
+### (구) 1순위 — BIM 안건 라이브 재실행 (A+B 결합 효과 검증)
+
+> 🩺 **상태 업데이트 (2026-05-29, 크래시 분석 완료)**: 1차 런(2026-05-28)은 A+B 머지 前 실행으로 INVALID. A+B 머지된 main **재실행도 GraphRecursionError 로 크래시** → **근본원인 규명 완료**: `convergence_judge.py`의 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP 보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화 → 루프 7회 폭주 → recursion_limit=50 초과**. PR #231 도입 회귀. A·B 둘 다 발동(검증 게이트 충족)했으나, A가 비종료 유발 / B는 직전 PyQt 코드 첨부로 드리프트 고착 / 엔지니어 7/7 PyQt(web 회복 0회). 상세: **[크래시 분석 §1-§7](diagnostics/phase6e_rerun_crash_analysis_20260529.md)**.
+> → **재실행은 P0/P1 수정 전까지 무의미** (web 도메인 요청은 무엇이든 동일 크래시 재현 구조). 새 1순위 = 아래 처방 우선순위.
 
 **왜 1순위**: PR #231 + #232 가 BIM 퇴행 사고를 *코드 차원에서* 해결했는지 *실증* 필요. PM 본인 PC 에서 `--auto-iterate --max-iterations 5` 로 실행하면 두 fix 의 *결합 효과* 가시화.
 
@@ -222,4 +241,4 @@ docs/backlog/phase6e_followups.md §C 읽고
 
 ---
 
-**한 줄 요약**: 🛠 Phase 6.E A+B **코드 머지 완료 (2026-05-29) — 라이브 검증 PENDING**. 1차 런(2026-05-28)은 머지 前 실행으로 INVALID. 다음 = **A+B 머지된 main 재실행 verdict** (1순위, 진행 중). 검증 게이트(A/B 시그니처 등장) 통과 시 *베타 배포* / 부분 PASS 시 *가드레일·C·D* 분기.
+**한 줄 요약**: 🩺 재실행 크래시 분석 완료 — 근본원인 = **Rule 0 종료조건 override 회귀(PR #231)** (GraphRecursionError). A+B 라이브 미검증. 1순위 = **P0**(Rule 0 우선순위 + 라우터 iteration 가드 + 회귀 테스트) → **P1**(플랫폼 드리프트 가드레일) → 재실행 → P2. 상세 [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md).

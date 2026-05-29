@@ -1,7 +1,7 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E A+B 코드 머지 완료 — 라이브 실증 PENDING (재실행 진행 중, verdict 대기)**
-> ⚠️ **검증 상태 정정 (2026-05-29)**: A+B 코드 머지 완료(2026-05-29). 1차 BIM 라이브 런(2026-05-28 15:55~17:15)은 A+B 머지(2026-05-29 09:22/09:35) **17시간 前** 실행 → A+B 검증이 아닌 **BEFORE 사고**로 무효(INVALID, 5점 중 1 PASS/4 FAIL — [verdict 리포트](diagnostics/phase6e_live_rerun_verdict_20260529.md)). A+B 머지된 main 에서 **재실행 진행 중** (2026-05-29).
+> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E 재실행 크래시 (GraphRecursionError) — 근본원인 Rule 0 종료조건 override 회귀(PR #231). A+B 미검증. P0 회귀 수정 필요.**
+> 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**. 다음 = **P0 회귀 수정**(Rule 0 우선순위 + 라우터 iteration 가드 + 회귀 테스트).
 > ⭐ **PR #231 (옵션 A) + #232 (옵션 B) 머지** — PM 진단 처방 (BIM 라이브 검증의 iter 퇴행 사고) 두 root cause 를 *코드 차원에서* 처방 (라이브 실증은 재실행 verdict 대기):
 >   1. **A (PR #231)** — Rule 0 가 *드디어* 프로덕션에서 작동 (PR #226 코드만 머지됐던 갭 해소). domain_checklist + engineer_output_excerpt 전달. BIM 본질 시나리오 검증 — Gap Analyst COMPLETE 도 override.
 >   2. **B (PR #232)** — `_node_run_chain` prompt 에 *이전 iter 코드 발췌* 자동 첨부. iter 2 의 *blank slate 재시작 차단* (BIM viewport.py → Nexus GUI 퇴행 사고 처방).
