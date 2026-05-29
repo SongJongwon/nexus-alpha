@@ -134,7 +134,8 @@ gantt
 | ✅ **P0 회귀 수정 (PR #234)** | 2026-05-29 | Rule 0 종료조건 override 가드(`judge_convergence` post-가드: IMPROVE+iter≥max→BLOCKED(ITERATION_CAP)) + 라우터 iteration 이중 방어선 + 회귀 테스트(+14, pytest 1770). 버그 박제 단위 테스트 2건 교정. |
 | ✅ **P1 플랫폼 드리프트 가드레일 (PR #235)** | 2026-05-29 | `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT(탐지, IMPROVE 강제+platform_drift 플래그) + 회귀 테스트(+18, pytest 1788). P0 가드 호환. |
 | ✅ **P0/P1 라이브 검증 (재실행 verdict)** | 2026-05-29 | P0 100%(크래시 0, graceful BLOCKED) + P1 100%(예방 5/5 + PLATFORM_DRIFT 4회). **iter2 완전한 Three.js SPA 실제 산출 = web 능력 증명**. BLOCKED 원인=하류 3중 결함. [P0P1 verdict](../diagnostics/phase6e_rerun_P0P1_verdict_20260529.md) |
-| 🔧 **P2-A + P2-B (1순위 NEXT)** | NEXT | P2-A: GUI 코드 extraction 수정(web .ts/.html을 code/에 저장, "SPA→스파" 오해 차단). P2-B: 옵션 B platform-aware(web 의도 시 PyQt 발췌 미첨부) → 그 후 재실행 |
+| ✅ **P2 iter→code 파이프라인 (PR #236)** | 2026-05-29 | P2-A: `_extract_code_blocks` web 확장(.ts/.html/.css 추출 + 다중 file 헤더 + 손실 가드). P2-B: `_build_prev_code_context` platform-aware(web 의도 시 stale PyQt 재주입 금지→백지 web 경고). 회귀 테스트(+14, pytest 1802). P0/P1 불변. |
+| 🔄 **재실행 (1순위 NEXT)** | NEXT | P2 적용 main 에서 BIM 안건 재실행 — graceful 종료 + **web 산출이 code/ 에 materialize**(.ts/.html) + iter 간 PyQt 재드리프트 0 검증 |
 | 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | (재실행 PASS 후) 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
 
 ---
@@ -288,3 +289,4 @@ xychart-beta
 | **2026-05-29** | ✅ **P0 회귀 수정 = PR #234 — `judge_convergence` post-가드(IMPROVE+iter≥max→BLOCKED(ITERATION_CAP), domain_unsatisfied 보존, COMPLETE 불변) + `_route_after_judge` 그래프 레벨 iteration 이중 방어선 + 회귀 테스트 신규/교정(+14, pytest 1756→1770, 회귀 0). 단위 테스트가 cap-override 를 정답으로 박제한 통합 갭 2건 교정. 다음 = P1 플랫폼 드리프트 가드레일** |
 | **2026-05-29** | ✅ **P1 플랫폼 드리프트 가드레일 = PR #235 — `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT rule(탐지: web+데스크탑마커→IMPROVE 강제+platform_drift 플래그, P0 가드 호환) + 신규 테스트(+18, pytest 1770→1788, 회귀 0). 명시 플랫폼이 Track 기본값 우선. 다음 = P0+P1 적용 재실행** |
 | **2026-05-29** | 🧪 **P0/P1 라이브 검증 verdict — P0 100%(크래시 0, graceful BLOCKED(ITERATION_CAP)) + P1 100%(예방 5/5 + PLATFORM_DRIFT 4회) 둘 다 작동 확정. iter2 완전한 Three.js+Vite+TS SPA(10파일) 실제 산출 = web 능력 증명. 재실행 BLOCKED 원인 = P1이 닿지 않는 하류 3중 결함(A: extraction 단절 "SPA→스파" 오해로 web 코드 손실, B: 옵션 B#232↔P1#235 충돌로 stale PyQt 재주입, C: QA 단일토큰 stagnation). (a)iteration 부족 가설 기각. 다음 = P2-A(extraction)+P2-B(B platform-aware)** |
+| **2026-05-29** | ✅ **P2 iter→code 파이프라인 = PR #236 — P2-A: `_extract_code_blocks` 가 ```python 펜스만 추출하던 결함 수정(web .ts/.html/.css/.json + 다중 주석 file 헤더 + 손실 가드, GUI 경로만 web 확장·나머지 python-only 회귀0). P2-B: `_build_prev_code_context` platform-aware(web 의도+직전 데스크탑 마커→stale 재주입 금지·백지 web 경고 대체, B#232↔P1#235 충돌 제거). 신규 테스트 +14(pytest 1788→1802, 회귀 0). 하류결함 (A)(B) 처방 — (C)QA 단일토큰은 P4. 다음 = P2 적용 재실행** |
