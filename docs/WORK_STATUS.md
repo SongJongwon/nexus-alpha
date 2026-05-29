@@ -1,7 +1,8 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-28 v13 Phase 6.E A+B 마일스톤 완성 — "에이전트 자기 수정 능력 강화"**
-> ⭐ **PR #231 (옵션 A) + #232 (옵션 B) 머지** — PM 진단 처방 (BIM 라이브 검증의 iter 퇴행 사고) 두 root cause 격파:
+> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E A+B 코드 머지 완료 — 라이브 실증 PENDING (재실행 진행 중, verdict 대기)**
+> ⚠️ **검증 상태 정정 (2026-05-29)**: A+B 코드 머지 완료(2026-05-29). 1차 BIM 라이브 런(2026-05-28 15:55~17:15)은 A+B 머지(2026-05-29 09:22/09:35) **17시간 前** 실행 → A+B 검증이 아닌 **BEFORE 사고**로 무효(INVALID, 5점 중 1 PASS/4 FAIL — [verdict 리포트](diagnostics/phase6e_live_rerun_verdict_20260529.md)). A+B 머지된 main 에서 **재실행 진행 중** (2026-05-29).
+> ⭐ **PR #231 (옵션 A) + #232 (옵션 B) 머지** — PM 진단 처방 (BIM 라이브 검증의 iter 퇴행 사고) 두 root cause 를 *코드 차원에서* 처방 (라이브 실증은 재실행 verdict 대기):
 >   1. **A (PR #231)** — Rule 0 가 *드디어* 프로덕션에서 작동 (PR #226 코드만 머지됐던 갭 해소). domain_checklist + engineer_output_excerpt 전달. BIM 본질 시나리오 검증 — Gap Analyst COMPLETE 도 override.
 >   2. **B (PR #232)** — `_node_run_chain` prompt 에 *이전 iter 코드 발췌* 자동 첨부. iter 2 의 *blank slate 재시작 차단* (BIM viewport.py → Nexus GUI 퇴행 사고 처방).
 > 이전 (Phase 6.3 PR #230): Tech Scout workflow 통합 + Rule -1 + BIM 벤치마크
@@ -28,16 +29,18 @@
 | #228 | 2026-05-28 | (UI) | 에이전트 카드 부서 대표 14명 시각 구별 (👑 + 금색 테두리 + 틴트) |
 | #229 | 2026-05-28 | Phase 6.1 | Tech Scout 인프라 — PyPI JSON API 가짜 패키지 가드 + 7d TTL 캐싱 + MAX_SEARCHES=5. requests>=2.31 추가. |
 | #230 | 2026-05-28 | Phase 6.3 | Tech Scout workflow 통합 — `--enable-tech-scout` CLI + `_node_tech_scout` + Rule -1 (1차 IMPROVE / 2차 BLOCKED). BIM 벤치마크 E2E + 라이브 가이드 |
-| **#231** | **2026-05-28** | **Phase 6.E ★ A** | **Rule 0 workflow wire (PM 진단 처방 A)** — PR #226 의 build_domain_checklist 가 *드디어* 프로덕션에서 작동. `_node_expand_requirements` 가 1회 호출 + state 보존, `_node_judge_convergence` 가 domain_checklist + engineer_output_excerpt + qa_result_excerpt 전달. BIM 본질 시나리오 — Gap Analyst COMPLETE 도 override → IMPROVE 강제. 진단 리포트 + backlog (C/D) 보존 |
-| **#232** | **2026-05-28** | **Phase 6.E ★ B** | **iter 간 코드 컨텍스트 prompt 첨부 (PM 진단 처방 B)** — `_node_run_chain` 이 iter 2+ 진입 시 *이전 iter chain_result.saved_dir* 의 code 발췌 (~15k chars) 를 prompt 에 자동 첨부. "기존 구조/식별자 최대한 유지, 백지 재시작 = 퇴행" 안내 명시. Track A/B 단일 변수 통과. BIM viewport.py + WebGL + OrbitControls + PerspectiveCamera 가 다음 iter prompt 에 그대로 |
+| **#231** | **2026-05-29** | **Phase 6.E ★ A** | **Rule 0 workflow wire (PM 진단 처방 A)** — PR #226 의 build_domain_checklist 가 *드디어* 프로덕션에서 작동. `_node_expand_requirements` 가 1회 호출 + state 보존, `_node_judge_convergence` 가 domain_checklist + engineer_output_excerpt + qa_result_excerpt 전달. BIM 본질 시나리오 — Gap Analyst COMPLETE 도 override → IMPROVE 강제. 진단 리포트 + backlog (C/D) 보존 |
+| **#232** | **2026-05-29** | **Phase 6.E ★ B** | **iter 간 코드 컨텍스트 prompt 첨부 (PM 진단 처방 B)** — `_node_run_chain` 이 iter 2+ 진입 시 *이전 iter chain_result.saved_dir* 의 code 발췌 (~15k chars) 를 prompt 에 자동 첨부. "기존 구조/식별자 최대한 유지, 백지 재시작 = 퇴행" 안내 명시. Track A/B 단일 변수 통과. BIM viewport.py + WebGL + OrbitControls + PerspectiveCamera 가 다음 iter prompt 에 그대로 |
 
-### 🏆 "에이전트 자기 수정 능력 강화" 첫 마일스톤 도달 (A+B 결합)
+### 🛠 "에이전트 자기 수정 능력 강화" — A+B 코드 머지 완료 (라이브 검증 PENDING)
 
-| 시나리오 | A 단독 | B 단독 | **A+B (오늘)** |
+> ⚠️ 아래 표는 A+B 의 **설계 의도(기대 효과)** 이며 **라이브 미검증**이다. 1차 런(2026-05-28)은 A+B 머지 前 실행이라 무효였고, 재실행 verdict 로 확정 예정.
+
+| 시나리오 | A 단독 | B 단독 | **A+B (설계 의도)** |
 |---------|-------|-------|---------------|
-| iter 1 BIM 완벽 + BUILD_FAILED | Rule 0 통과 (코드 정상) | iter 2 가 BIM 인지 | ✅ iter 2 도 BIM 본질 유지 |
-| iter 2 가 isometric 2D 시도 | Rule 0 IMPROVE 강제 | prev 코드 인지 → 시도 자체 ↓ | ✅ 양 방향 차단 |
-| iter N 환각 패키지 산출 | (관계없음) | prev 코드의 진짜 패키지 인지 | ✅ 환각 빈도 ↓ |
+| iter 1 BIM 완벽 + BUILD_FAILED | Rule 0 통과 (코드 정상) | iter 2 가 BIM 인지 | 🎯 iter 2 도 BIM 본질 유지 (기대) |
+| iter 2 가 isometric 2D 시도 | Rule 0 IMPROVE 강제 | prev 코드 인지 → 시도 자체 ↓ | 🎯 양 방향 차단 (기대) |
+| iter N 환각 패키지 산출 | (관계없음) | prev 코드의 진짜 패키지 인지 | 🎯 환각 빈도 ↓ (기대) |
 
 ---
 

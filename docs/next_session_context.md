@@ -1,6 +1,6 @@
 # 🤝 다음 세션 핸드오프 — 2026-05-28 → 이후 세션
 
-> **작성일**: 2026-05-28 (PR #232 머지 + Phase 6.E A+B 마일스톤 직후)
+> **작성일**: 2026-05-28 작성 / **2026-05-29 정정** (PR #231/#232 머지일 2026-05-29 09:22/09:35 확정 + A+B 검증 상태 = 코드 머지 완료·라이브 재실행 진행 중)
 > **작성자**: Claude Opus 4.7 (이번 세션)
 > **대상**: 다음 세션의 본인 (Claude Opus 4.7 또는 후속 모델)
 > **이전 핸드오프**: 2026-05-14 → 본 갱신으로 대체 (historical reference: `docs/context/next_session_context.md`)
@@ -58,6 +58,12 @@
 
 ### 1순위 — BIM 안건 라이브 재실행 (A+B 결합 효과 검증)
 
+> 🚨 **상태 업데이트 (2026-05-29)**: 1차 BIM 라이브 런(2026-05-28 15:55~17:15)은 A+B 머지(2026-05-29 09:22/#231 · 09:35/#232) **17시간 前** 실행 → A+B 미적용 **BEFORE/무효(INVALID)** (5점 중 1 PASS / 4 FAIL — [verdict 리포트](diagnostics/phase6e_live_rerun_verdict_20260529.md)). A+B 머지된 main 에서 **1차 재실행 크래시** (GraphRecursionError, recursion_limit=50 초과 / 산출물 PyQt 대시보드 드리프트) — 원인 분석 중 (2026-05-29, `--enable-tech-scout --max-iterations 5`).
+>
+> **검증 게이트** (재실행이 유효하려면 — 1차엔 0건이던 시그니처가 이번엔 등장해야 함):
+> - **A 시그니처**: `events_rerun_AB_20260529.jsonl` 에 `domain_checklist` + "도메인 체크리스트 N/M 미충족" 강제 IMPROVE 가 N건
+> - **B 시그니처**: iter 2+ 엔지니어 prompt 에 "이전 iter 코드 발췌" (직전 viewport.py 본문) + prompt_length 증가 가 N건
+
 **왜 1순위**: PR #231 + #232 가 BIM 퇴행 사고를 *코드 차원에서* 해결했는지 *실증* 필요. PM 본인 PC 에서 `--auto-iterate --max-iterations 5` 로 실행하면 두 fix 의 *결합 효과* 가시화.
 
 **검증 명령** (PowerShell, PM 본인 PC):
@@ -104,6 +110,16 @@
 **상세**: [docs/backlog/phase6e_followups.md](backlog/phase6e_followups.md) §D
 
 **예상 비용**: L (~500줄)
+
+---
+
+## 🆕 신규 발견 (1차 런 채점 산출, 2026-05-29)
+
+1차 런 verdict 채점([리포트](diagnostics/phase6e_live_rerun_verdict_20260529.md))에서 *A+B 와 무관하게* 드러난 결함 3건. 재실행 결과와 별개로 추적.
+
+- **(a) 플랫폼 드리프트** — 킥오프는 web/Three.js SPA 합의였으나 엔지니어가 PyQt6 데스크톱으로 이탈. **A+B 가 직접 못 막는 새 root cause**. 후보 가드레일: `kickoff.platform == web 이면 PyQt6/Tkinter 금지, Three.js + Vite 강제` (S 비용 — 런의 retrospective.md 자체가 제안). D(Product Manager, L 비용)보다 싸고 타깃 정확.
+- **(b) Vision QA 미작동** — `ANTHROPIC_API_KEY` 가 `.env`(line 14)에 있어도 1차 런은 Vision QA SKIPPED. 런 프로세스가 `.env` 를 `os.environ` 에 주입하지 못한 dotenv 로딩 갭 의심. 재실행 시 셸 env 직접 주입 필요 (안 하면 조건 5 영구 미검증).
+- **(c) app 이름 cross-agent 미스매치** — iter2 `app.py` 가 `setApplicationName("Nexus Alpha GUI")`, 그러나 `test_app.py` 는 `"BIM Viewer"` 기대. 엔지니어↔테스터 산출 불일치 잔존.
 
 ---
 
@@ -206,4 +222,4 @@ docs/backlog/phase6e_followups.md §C 읽고
 
 ---
 
-**한 줄 요약**: ⭐ Phase 6.E A+B 완성 — "에이전트 자기 수정 능력 강화" 첫 마일스톤. 다음 = **PM 의 BIM 라이브 재실행 결과 받기** (1순위). 결과에 따라 *베타 배포* / *C 처방* / *D 처방* 분기.
+**한 줄 요약**: 🛠 Phase 6.E A+B **코드 머지 완료 (2026-05-29) — 라이브 검증 PENDING**. 1차 런(2026-05-28)은 머지 前 실행으로 INVALID. 다음 = **A+B 머지된 main 재실행 verdict** (1순위, 진행 중). 검증 게이트(A/B 시그니처 등장) 통과 시 *베타 배포* / 부분 PASS 시 *가드레일·C·D* 분기.

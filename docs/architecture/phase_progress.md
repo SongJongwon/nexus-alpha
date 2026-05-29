@@ -1,7 +1,7 @@
 # 📈 Nexus Alpha — Phase Progress Timeline (v13 동기화)
 
-> **갱신일**: 2026-05-28 (PR #232 머지 후 — Phase 6.E A+B 마일스톤 완성, v13 Phase 1~6 *전체* 완료)
-> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E 모두 완료** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = 베타 cohort 라이브 검증.
+> **갱신일**: 2026-05-29 (PR #231/#232 머지 — Phase 6.E A+B **코드 머지 완료**, 라이브 검증 PENDING — 재실행 진행 중)
+> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E A+B 코드 머지 완료 (라이브 검증 PENDING)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **A+B 라이브 재실행 verdict (1순위)** → 베타 cohort 라이브 검증.
 
 ---
 
@@ -89,8 +89,8 @@ gantt
     Phase 6.2 Rule 0 + 매처            :done, p62, 2026-05-28, 2026-05-28
     Phase 6.1 Tech Scout 인프라         :done, p61, 2026-05-28, 2026-05-28
     Phase 6.3 Tech Scout 통합 + Rule -1 :done, p63, 2026-05-28, 2026-05-28
-    Phase 6.E A Rule 0 wire (PR #231)  :done, p6ea, 2026-05-28, 2026-05-28
-    Phase 6.E B iter 간 코드 (PR #232)  :done, p6eb, 2026-05-28, 2026-05-28
+    Phase 6.E A Rule 0 wire (PR #231)  :done, p6ea, 2026-05-29, 2026-05-29
+    Phase 6.E B iter 간 코드 (PR #232)  :done, p6eb, 2026-05-29, 2026-05-29
 
     section 다음 (PENDING + Backlog)
     BIM 라이브 재실행 (PM 본인 PC)        :active, blive, 2026-05-29, 7d
@@ -127,10 +127,11 @@ gantt
 | ✅ **v13 LLM_PROVIDER 호환성 리포트** | 2026-05-28 (PR #227) | Phase 6.1 진입 신호등 GREEN |
 | ✅ **v13 Phase 6.1: Tech Scout 인프라** | 2026-05-28 (PR #229) | PyPI JSON + 7d TTL 캐싱 + MAX_SEARCHES=5 |
 | ✅ **v13 Phase 6.3: Tech Scout 통합 + Rule -1** | 2026-05-28 (PR #230) | `--enable-tech-scout` + 가짜 1차 IMPROVE / 2차 BLOCKED |
-| ⭐ **v13 Phase 6.E A: Rule 0 workflow wire** | **2026-05-28 (PR #231)** | **Rule 0 가 *드디어* 프로덕션 작동** (PR #226 wire 갭 해소) |
-| ⭐ **v13 Phase 6.E B: iter 간 코드 prompt 첨부** | **2026-05-28 (PR #232)** | **Engineer 가 *직전 iter 산출* 인지 → blank slate 재시작 차단** |
-| 🏆 **"에이전트 자기 수정 능력 강화" 첫 마일스톤** | **2026-05-28 (A+B 결합)** | **PR #231 + #232 — BIM 퇴행 사고의 두 root cause 격파** |
-| 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
+| ⭐ **v13 Phase 6.E A: Rule 0 workflow wire** | **2026-05-29 (PR #231)** | **Rule 0 wire 코드 머지** (PR #226 wire 갭 해소) — 라이브 미검증 |
+| ⭐ **v13 Phase 6.E B: iter 간 코드 prompt 첨부** | **2026-05-29 (PR #232)** | **Engineer 가 *직전 iter 산출* 인지 → blank slate 재시작 차단 (코드 머지)** — 라이브 미검증 |
+| 🛠 **"에이전트 자기 수정 능력 강화" A+B 코드 머지** | **2026-05-29 (A+B 결합)** | **PR #231 + #232 — 두 root cause 코드 처방 (라이브 실증 PENDING)** |
+| 🔜 **A+B 라이브 재실행 verdict (1순위)** | 진행 중 2026-05-29 | A+B 머지된 main 재실행 — A/B 시그니처 등장 + 퇴행 차단 PASS/FAIL 판정 |
+| 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | (재실행 PASS 후) 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
 
 ---
 
@@ -156,7 +157,7 @@ graph LR
         P_PD[Phase 7-8 paradigm<br/>PR #163 + #188]
         P_S5[Sprint 5/6<br/>Tauri 시각화 + UI 개편]
         P_V13[v13 Phase 1~5.4<br/>Boardroom 자율 진화<br/>완료 2026-05-28]
-        P_V6E[⭐ Phase 6.E A+B<br/>자기 수정 능력<br/>완료 2026-05-28]
+        P_V6E[⭐ Phase 6.E A+B<br/>자기 수정 능력<br/>코드 머지 2026-05-29<br/>라이브 검증 PENDING]
     end
 
     I1 --> P_K
@@ -179,7 +180,7 @@ graph LR
 ```
 
 - **통찰 5 (Observability 부재)** 가 *backend 차원* 은 fail-silent 5단계 cycle 로 처방, *UI 차원* 은 Sprint 5/6 시각화로 완성.
-- **통찰 6 (진짜 자기 진화 SW)** 가 *paradigm production default* 로 1차 진화, **v13 의 Boardroom 자율 진화 루프** 로 *자율 차원* 도달 (2026-05-28 완료), **Phase 6.E A+B** 로 *자기 수정 차원* 첫 마일스톤 도달.
+- **통찰 6 (진짜 자기 진화 SW)** 가 *paradigm production default* 로 1차 진화, **v13 의 Boardroom 자율 진화 루프** 로 *자율 차원* 도달 (2026-05-28 완료), **Phase 6.E A+B** 로 *자기 수정 차원* 의 **코드 처방 머지 완료 (2026-05-29, 라이브 검증 PENDING — 재실행 verdict 대기)**.
 
 ---
 
@@ -278,3 +279,4 @@ xychart-beta
 | 2026-05-19 | 신설 — Phase 1~8 완료 + Sprint 4~6 예정 mermaid timeline + 마일스톤 + pytest graph |
 | 2026-05-27 | v13 동기화 — Sprint 4~6 완료 표기 + v13 Phase 1~5 (RV 최우선) 추가 + 레거시 행정 직책 일정 소거 |
 | **2026-05-28** | ⭐ **v13 Phase 1~6.E 모두 완료 반영 — A+B 마일스톤 ("에이전트 자기 수정 능력 강화") + Phase 6.2/6.1/6.3/6.E A/B 5건 추가 + pytest 1756 + 다음 마일스톤 = 베타 cohort 라이브 검증** |
+| **2026-05-29** | 🔧 **머지 날짜·검증 상태 정정 — #231/#232 머지일 2026-05-28 → 2026-05-29 (git 실측 09:22/09:35), "A+B 마일스톤 완성/도달" → "코드 머지 완료, 라이브 검증 PENDING" 조정. 1차 런(2026-05-28)은 A+B 머지 前 실행으로 INVALID 확정 (verdict 리포트). 다음 마일스톤 = A+B 라이브 재실행 verdict (1순위) 추가** |
