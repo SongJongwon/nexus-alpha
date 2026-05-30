@@ -950,6 +950,10 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
             enable_engineer_reviewer_delegation=state.get(
                 "enable_engineer_reviewer_delegation", False
             ),
+            # v13 Phase 6.E P3 — GUI Code Generator 의 인-이터레이션 드리프트 reject+
+            # 재생성 게이트 활성화용 (web 의도일 때만 동작). default "unspecified" 라
+            # 기존 호출 측·desktop/unspecified 경로 불변 (회귀 0).
+            platform_intent=state.get("platform_intent", "unspecified"),
         )
 
     artifacts = list(state.get("iteration_artifacts", []))

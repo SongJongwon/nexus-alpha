@@ -681,6 +681,153 @@ def _build_theme_task(theme, uiux_task: Task, designer_task: Task) -> Task:
     return Task(**kwargs)
 
 
+# ---------------------------------------------------------------------------
+# v13 Phase 6.E P3 — GUI 플랫폼 드리프트 즉시 reject + 재생성
+#   배경: 동일 web 안건인데 GUI Code Generator 가 런마다 PyQt 데스크탑으로 확률적
+#         드리프트 (P7 verdict: web 4/5 → 1/5). 기존 P1 PLATFORM_DRIFT 는 judge 단계
+#         (post-iteration) 라 IMPROVE 1라운드 소모. P3 는 gui_code 생성 *직후* 같은
+#         iteration 안에서 detect_desktop_markers 로 즉시 reject → 코더 task 만 N회
+#         hardened-directive 재생성 (iter 카운터 불변). 소진 시 기존 judge 백스톱.
+#   회귀 0: platform_intent != "web" 이면 전부 no-op.
+# ---------------------------------------------------------------------------
+_P3_MAX_DRIFT_RETRIES = 2
+
+
+def _build_web_platform_directive() -> str:
+    """web intent GUI 생성 directive (PREVENTIVE 첫 생성 + CURATIVE 재생성 공통).
+
+    데스크탑 프레임워크 금지 + 완전 web 프로젝트(index.html+package.json+src/) 강제 +
+    "사용자가 PyQt 명시" / "schema 가 python 만 허용" 류 *날조 근거 거부*.
+    """
+    return (
+        "\n\n## 🚫 플랫폼 제약 (P3, 최우선 — 데스크탑 기본값 무시)\n"
+        "타겟 플랫폼 = **web / 브라우저** 로 *결정론적으로* 분류됐습니다. "
+        "**반드시 Three.js + WebGL + HTML/JS/CSS (TypeScript + web-ifc-three + Vite 권장) "
+        "로 *완전한 web 프로젝트* 를 산출**하세요:\n"
+        "  - `index.html` (entry) + `package.json` (의존성 manifest) + `src/` 소스 "
+        "(main.ts / viewer.ts 등) 를 **모두 포함**.\n"
+        "  - 각 파일은 fence 코드 블록 + 첫 줄 `# file:` / `// file:` / `<!-- file: -->` 헤더.\n"
+        "**PyQt / PySide / Tkinter / QApplication 등 데스크탑 GUI 프레임워크는 절대 금지** "
+        "(.exe 데스크탑 셸 · `python app.py` 형태 entry 포함).\n"
+        "근거 날조 거부: **'사용자가 PyQt/데스크탑을 지정·명시·요청했다'** 또는 "
+        "**'출력 schema 가 python 코드만 허용한다'** 는 *거짓 근거* 입니다 — web 의도는 "
+        "요청에서 결정론적으로 분류됐고, 산출 schema 의 code_blocks 는 *자유 형식* 이라 "
+        "TypeScript/HTML/CSS 를 그대로 담을 수 있습니다. web 타겟에서 데스크탑 선택의 "
+        "정당한 근거는 존재하지 않습니다."
+    )
+
+
+def _build_drift_regen_directive(markers: list) -> str:
+    """CURATIVE — 방금 산출된 gui_code 에서 데스크탑 마커 감지 시 재생성 directive."""
+    preview = ", ".join(str(m) for m in list(markers)[:4])
+    return (
+        "\n\n## 🚨 재생성 directive (P3) — 플랫폼 드리프트 차단\n"
+        f"방금 산출한 코드에서 데스크탑 GUI 마커({preview}) 가 감지됐습니다 — "
+        "web 타겟 위반입니다. **직전 산출의 구조·식별자를 유지하지 말고 백지에서 "
+        "Three.js + WebGL + HTML/JS/CSS 기반 web 프로젝트로 재작성**하세요."
+        + _build_web_platform_directive()
+    )
+
+
+def _should_regenerate_for_drift(platform_intent: str, code_text: str) -> bool:
+    """CURATIVE 재생성 트리거 판정 — web 의도 ∧ 데스크탑 마커 존재 시 True.
+
+    desktop/unspecified 또는 마커 없으면 False (회귀 0). detect_desktop_markers 는
+    지연 import (순환 import 회피) — P1 과 동일 마커 집합 재사용 (새 ad-hoc substring 금지).
+    """
+    if platform_intent != "web":
+        return False
+    from src.agents.c_level.convergence_judge import (  # noqa: PLC0415
+        detect_desktop_markers,
+    )
+
+    return bool(detect_desktop_markers(code_text))
+
+
+def _regenerate_until_clean(
+    gui_code_output: str,
+    *,
+    platform_intent: str,
+    regen_fn,
+    max_retries: int = _P3_MAX_DRIFT_RETRIES,
+) -> tuple:
+    """web 의도 + 데스크탑 마커면 ``regen_fn`` 으로 최대 ``max_retries`` 재생성.
+
+    Args:
+        gui_code_output: 방금 생성된 gui_code 텍스트.
+        platform_intent: "web" 일 때만 동작 (그 외 즉시 (입력, 0) 반환 — 회귀 0).
+        regen_fn: ``(markers: list, attempt: int) -> str`` — 재생성된 코드 텍스트 반환.
+            production 은 단독 코더 Crew kickoff, 테스트는 fake.
+        max_retries: 같은 iteration 안 재생성 상한 (기본 2). 소진 시 마지막 산출 반환.
+
+    Returns:
+        (최종 gui_code_output, 실제 재생성 횟수). 예외 없음 (소진 시 fall-through →
+        기존 judge PLATFORM_DRIFT 백스톱이 처리). iteration 카운터는 본 함수가
+        만지지 않음 (카운터는 상위 ``_node_run_chain`` 소유 — 본 재생성은 단일
+        iteration 내부에 중첩되어 loop-back 엣지를 넘지 않음).
+    """
+    from src.agents.c_level.convergence_judge import (  # noqa: PLC0415
+        detect_desktop_markers,
+    )
+
+    if platform_intent != "web":
+        return gui_code_output, 0
+    attempts = 0
+    for _ in range(max_retries):
+        markers = detect_desktop_markers(gui_code_output)
+        if not markers:
+            break
+        attempts += 1
+        new_output = regen_fn(markers, attempts)
+        if new_output:
+            gui_code_output = new_output
+    return gui_code_output, attempts
+
+
+def _maybe_regenerate_on_platform_drift(
+    gui_code_output: str,
+    *,
+    code_gen_task: Task,
+    coder,
+    context_tasks: list,
+    platform_intent: str,
+    verbose: bool,
+    max_retries: int = _P3_MAX_DRIFT_RETRIES,
+) -> str:
+    """Production CURATIVE 래퍼 — pytest 환경에선 no-op (실 Crew 미호출, P3-T7).
+
+    ``retry_short_tasks_in_chain`` 과 동일하게 pytest 중엔 즉시 입력 반환 (FakeProvider
+    경로 보호). production 에서만 단독 코더 Crew 로 재생성.
+    """
+    import sys
+
+    if platform_intent != "web" or "pytest" in sys.modules:
+        return gui_code_output
+
+    def _regen(markers, _attempt: int) -> str:
+        regen_task = Task(
+            description=code_gen_task.description + _build_drift_regen_directive(markers),
+            expected_output=code_gen_task.expected_output,
+            agent=coder,
+            context=context_tasks,
+        )
+        Crew(
+            agents=[coder],
+            tasks=[regen_task],
+            process=Process.sequential,
+            verbose=verbose,
+        ).kickoff()
+        return _task_output_text(regen_task)
+
+    new_output, _attempts = _regenerate_until_clean(
+        gui_code_output,
+        platform_intent=platform_intent,
+        regen_fn=_regen,
+        max_retries=max_retries,
+    )
+    return new_output
+
+
 def _build_gui_code_gen_task(
     coder,
     uiux_task: Task,
@@ -688,6 +835,7 @@ def _build_gui_code_gen_task(
     theme_task: Task,
     *,
     shared_kickoff_decisions=None,
+    platform_intent: str = "unspecified",
 ) -> Task:
     """GUI Code Generator Task — 셋 모두 컨텍스트로.
 
@@ -713,6 +861,16 @@ def _build_gui_code_gen_task(
         "(프레임워크 선택 + 코드 + 실행 방법 + 작성자 노트)로 작성하세요. "
         "각 파일은 ```python 블록 + `# file:` 헤더 포함."
     )
+    # v13 Phase 6.E P3 (PREVENTIVE) — web 의도면 base_description 자체를 web 전용으로
+    # 교체 + 데스크탑 금지/완전 web 프로젝트 강제 directive 주입. platform_intent !=
+    # "web" 이면 위 문자열 그대로 (desktop/unspecified 경로 byte-for-byte 불변 — 회귀 0).
+    if platform_intent == "web":
+        base_description = (
+            "이전 컨텍스트의 ui_spec + GUI 설계 + 디자인 토큰을 모두 만족하는 "
+            "**바로 실행 가능한 web 프론트엔드 코드** 를 4단 구조(프레임워크 선택 근거 + "
+            "코드 + 실행 방법 + 작성자 노트)로 작성하세요. 각 파일은 fence 코드 블록 + "
+            "첫 줄 `# file:` / `// file:` / `<!-- file: -->` 헤더 포함."
+        ) + _build_web_platform_directive()
     consistency_directive = format_kickoff_context_directive(
         shared_kickoff_decisions,
         prior_agent_roles=["UI/UX Analyst", "GUI Designer", "Theme Designer"],
@@ -794,6 +952,7 @@ def run_analyze_and_implement(
     automate_publish_timeout_sec: int = 120,
     shared_kickoff_decisions=None,
     enable_engineer_reviewer_delegation: bool = False,
+    platform_intent: str = "unspecified",
 ) -> WorkflowResult:
     """사용자 요청을 받아 4-agent 협업 워크플로우 (Phase 4 GUI / Phase 4.5 빌드 옵션 포함)를 실행.
 
@@ -975,6 +1134,7 @@ def run_analyze_and_implement(
                     verbose=verbose,
                     shared_kickoff_decisions=shared_kickoff_decisions,
                     enable_engineer_reviewer_delegation=enable_engineer_reviewer_delegation,
+                    platform_intent=platform_intent,
                 )
             # ─── 분기 2-B: CLI 경로 ─────────────────────────────────────────────
             else:
@@ -1305,6 +1465,7 @@ def _run_gui_branch_chain(
     verbose: bool,
     shared_kickoff_decisions=None,
     enable_engineer_reviewer_delegation: bool = False,
+    platform_intent: str = "unspecified",
 ) -> WorkflowResult:
     """UI/UX 가 GUI 라고 판정한 경로. Engineer 자리를 디자인 본부 3명이 대체 + PR #58 Pytest Author.
 
@@ -1336,6 +1497,7 @@ def _run_gui_branch_chain(
         designer_task,
         theme_task,
         shared_kickoff_decisions=shared_kickoff_decisions,
+        platform_intent=platform_intent,
     )
     pytest_author_task = _build_pytest_author_task(
         pytest_author,
@@ -1385,6 +1547,18 @@ def _run_gui_branch_chain(
     gui_design = _task_output_text(designer_task)
     design_tokens = _task_output_text(theme_task)
     gui_code_output = _task_output_text(code_gen_task)
+    # v13 Phase 6.E P3 (CURATIVE) — web 의도인데 데스크탑 GUI 마커 감지 시 코더 task 만
+    # N회 hardened-directive 재생성 (iter 카운터 불변 — 단일 iteration 내부; pytest 중
+    # no-op). 소진 시 fall-through → 기존 judge PLATFORM_DRIFT(P1) 백스톱이 처리.
+    # platform_intent != "web" 이면 즉시 입력 반환 (desktop/unspecified 경로 불변 — 회귀 0).
+    gui_code_output = _maybe_regenerate_on_platform_drift(
+        gui_code_output,
+        code_gen_task=code_gen_task,
+        coder=coder,
+        context_tasks=[uiux_task, designer_task, theme_task],
+        platform_intent=platform_intent,
+        verbose=verbose,
+    )
     pytest_suite = _task_output_text(pytest_author_task)
     qa_review = _task_output_text(qa_review_task) or (
         getattr(crew_result, "raw", None) or str(crew_result)
