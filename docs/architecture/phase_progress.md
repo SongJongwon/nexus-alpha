@@ -1,7 +1,7 @@
 # 📈 Nexus Alpha — Phase Progress Timeline (v13 동기화)
 
-> **갱신일**: 2026-05-30 (P0(#234)+P1(#235)+P2(#236) **라이브 검증 완료 — 4처방 전부 작동 확정**. P2-A가 web 파일 ~15개 code/ 저장 성공(지난 런 0). 그런데도 재실행 BLOCKED — 원인=상류 NEW 병목 **P5(Gap Analyst가 저장된 GUI/web 산출을 못 봄)**. P4는 비인과로 하향)
-> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E (P0/P1/P2 라이브 검증 ✅, 재실행 BLOCKED — 상류 NEW 병목 P5)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **P5(Gap Analyst 배선) > P3(web 유지) > P6(BIM 본질)** → 재실행.
+> **갱신일**: 2026-05-30 (Phase 6.E **P0~P7 전부 머지 완료** — 재실행 사고 처방 사이클 종료. P5 라이브 검증에서 **satisfied 0→8/9 + 진짜 web BIM 3D 뷰어 산출 = COMPLETE 직전**. P7(#238)로 빌드 체인 web-awareness 처방. 다음 = **P7 라이브 재실행**(web 배포물→COMPLETE 검증))
+> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E (P0~P7 머지 완료, P5 검증서 8/9·web BIM 산출)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **P7 라이브 재실행** → (잔여) P3 드리프트·QA 단일토큰.
 
 ---
 

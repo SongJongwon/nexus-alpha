@@ -1,56 +1,61 @@
-# 🤝 다음 세션 핸드오프 — 2026-05-28 → 이후 세션
+# 🤝 다음 세션 핸드오프 — Phase 6.E P0~P7 처방 사이클 완료 → P7 라이브 재실행 대기
 
-> **작성일**: 2026-05-28 작성 / **2026-05-29 정정** (PR #231/#232 머지일 2026-05-29 09:22/09:35 확정 + A+B 검증 상태 = 코드 머지 완료·라이브 재실행 진행 중)
-> **작성자**: Claude Opus 4.7 (이번 세션)
-> **대상**: 다음 세션의 본인 (Claude Opus 4.7 또는 후속 모델)
-> **이전 핸드오프**: 2026-05-14 → 본 갱신으로 대체 (historical reference: `docs/context/next_session_context.md`)
+> **작성일**: 2026-05-28 작성 / **2026-05-30 갱신** (Phase 6.E P0~P7 전부 머지 완료 — 재실행 사고의 전체 처방 사이클 종료, 다음 = P7 라이브 검증 재실행)
+> **작성자**: Claude Opus 4.8 (P0~P7 처방 세션)
+> **대상**: 다음 세션의 본인 (Claude Opus 4.8 또는 후속 모델)
+> **이전 핸드오프**: 2026-05-14 → 본 갱신으로 대체
 
 ---
 
 ## ⭐ 다음 세션 첫 행동 알고리즘 (3분 컨텍스트 100% 복원)
 
 1. **본 문서** (`docs/next_session_context.md`) — 5분 읽기
-2. **[docs/WORK_STATUS.md](WORK_STATUS.md)** — header 만 — 마지막 머지 PR 확인
-3. **[docs/architecture/phase_progress.md](architecture/phase_progress.md)** — Phase 6 완료 표 확인
-4. **[docs/diagnostics/phase6e_iteration_regression_diagnosis.md](diagnostics/phase6e_iteration_regression_diagnosis.md)** — 진단 리포트 (PM 처방 근거)
-5. **[docs/backlog/phase6e_followups.md](backlog/phase6e_followups.md)** — C/D 보류 처방 보존
-6. **자동 메모리** — `MEMORY.md` (auto-load)
+2. **[docs/WORK_STATUS.md](WORK_STATUS.md)** — header — 마지막 머지 PR(#238) 확인
+3. **[docs/architecture/phase_progress.md](architecture/phase_progress.md)** — Phase 6.E P0~P7 표
+4. **⭐ [docs/diagnostics/phase6e_rerun_P5_verdict_20260530.md](diagnostics/phase6e_rerun_P5_verdict_20260530.md)** — 최신 verdict (satisfied 0→8/9, web BIM 산출, P7 병목 규명). 이전 verdict 체인: P0P1P2 / P0P1 / 크래시 분석.
+5. **자동 메모리** — `MEMORY.md` (auto-load)
 
-→ 그 후 PM 에게 **PENDING 1순위 (BIM 라이브 재실행 결과)** 받았는지 확인.
+→ 그 후 PM 에게 **PENDING 1순위 (P7 라이브 재실행 결과)** 받았는지 확인 (아래 §재실행 명령).
 
 ---
 
-## 🎯 이번 세션 (2026-05-28) 완료 요약
+## 🎯 Phase 6.E 재실행 사고 처방 사이클 — P0~P7 전부 머지 완료 (2026-05-29~30)
 
-### 머지된 PR (15 건)
+BIM web 안건 재실행이 GraphRecursionError 크래시 → 7개 처방을 순차 머지하며 라이브 검증으로 진전.
 
-| PR | Phase | 효과 |
-|----|-------|------|
-| #217~#222 | Phase 1~4 (자율 진화 루프 풀체인) | RV 4명 + Strategist + Boardroom + 의결권 |
-| #223 / #224 | Phase 5.1 / 5.4 | UI Boardroom Panel + 양방향 티키타카 |
-| #225 | Phase 5.E 사전 | `--enable-tikitaka` wire + 가이드 |
-| #226 | Phase 6.2 | Requirement Expander 3D 매처 + Convergence Judge Rule 0 |
-| #227 | (선행 리포트) | LLM_PROVIDER 호환성 검증 |
-| #228 | (UI) | 부서 대표 14명 시각 구별 (👑 + 금색 테두리) |
-| #229 | Phase 6.1 | Tech Scout 인프라 (PyPI JSON + 7d TTL 캐시) |
-| #230 | Phase 6.3 | Tech Scout workflow 통합 + Rule -1 |
-| **#231** | **Phase 6.E A** | **Rule 0 workflow wire (PM 처방 A)** |
-| **#232** | **Phase 6.E B** | **iter 간 코드 prompt 첨부 (PM 처방 B)** |
+| 처방 | PR | 효과 | 라이브 검증 |
+|------|----|------|------------|
+| **P0** Rule 0 종료조건 override 가드 | #234 | IMPROVE+iter≥max→BLOCKED(ITERATION_CAP), 라우터 이중 방어 | ✅ 크래시 0, graceful 종료 |
+| **P1** 플랫폼 드리프트 가드레일 | #235 | web 의도 감지 + 데스크탑 금지 제약 + PLATFORM_DRIFT 탐지 | ✅ PLATFORM_DRIFT 발동 |
+| **P2** web extraction + 옵션 B platform-aware | #236 | `_extract_code_blocks` web(.ts/.html) 추출 + B 충돌 해소 | ✅ web 파일 ~15개 저장 |
+| **P5** Gap Analyst GUI 입력 배선 | #237 | `_format_gap_analyst_input` gui_code_output 폴백 | ✅ **satisfied 0→8/9** |
+| **P7** 빌드 체인 web-awareness | #238 | web→`npm build→dist/` 라우팅, PyInstaller 스킵, desktop 보존 | ⏳ 라이브 미검증 |
 
-### "에이전트 자기 수정 능력 강화" 첫 마일스톤 도달 (A+B)
-
-- **A (Rule 0 wire)**: Gap Analyst COMPLETE 라도 도메인 미충족 시 IMPROVE 강제
-- **B (iter 간 코드)**: Engineer 가 *직전 산출* 인지 → blank slate 재시작 차단
-- → BIM 본질 시나리오 (iter 1 viewport.py → iter 2 Nexus GUI 퇴행) 처방 완성
+### 🏆 도달점 (P5 verdict, 역대 최대 진전 — COMPLETE 직전)
+- **satisfied 0 → 8/9** (판정기가 실코드를 봄, P5 작동 확정)
+- **진짜 web BIM 3D 뷰어 산출**: Three.js + web-ifc-three(IFCLoader) + OrbitControls(카메라 회전) + Raycaster→IFC 속성(클릭 속성) + 다크 관제 테마 — 요청 3요소 충족
+- web **4/5 iter 유지** (P3 1/5 드리프트만 잔존)
+- 상세: [phase6e_rerun_P5_verdict_20260530.md](diagnostics/phase6e_rerun_P5_verdict_20260530.md)
 
 ### pytest 누적
-- 1727 → 1744 (PR #231, +17) → **1756** (PR #232, +12)
-- **회귀 0** 유지 (전체 세션)
+- P0 1770 → P1 1788 → P2 1802 → P5 1811 → **P7 1827** (각 단계 회귀 0)
 
-### BIM Viewer 수동 빌드 산출
-- 경로: `outputs/bim_viewer_manual_build/dist/BIM-Viewer/BIM-Viewer.exe` (git ignored, PM 본인 PC 사용)
-- v1 (의존성 보충) → v5 (1인칭 mouse-drag + WASD/Shift/ESC + IFC 색상 palette + 드래그앤드롭)
-- PM 본인 PC 시연 — 색상 매핑 + BIM 모델 정상 표시 확인됨
+### ▶ 다음 즉시 할 일 — P7 라이브 검증 재실행 (PM 본인 PC, PowerShell)
+P7로 빌드 체인이 web을 빌드할 수 있게 됐으니, 동일 BIM 안건 재실행해 **web 배포물(dist/) 산출 + COMPLETE 도달**을 검증한다 (web 타겟 첫 COMPLETE 후보):
+```powershell
+.venv\Scripts\python.exe scripts\run.py `
+  --request "3D BIM 건축 모델 뷰어: Three.js + BIM 라이브러리 사용. 카메라 회전, 클릭 시 속성 표시, 다크 모드 관제 센터 스타일" `
+  --track A --build `
+  --enable-tech-scout `
+  --auto-iterate --max-iterations 5 `
+  --emit-events outputs\events_rerun_P7_20260530.jsonl `
+  --non-interactive
+```
+**재실행 후 채점 (verdict)**: ① P7 작동 — web 프로젝트가 `npm run build → dist/` 로 **배포물 실제 산출**됐나(`25_executor_result.md` 에 `_format_web_build_md`, PyInstaller/python-entry 미경유)? ② satisfied 임계 도달 + **verdict=COMPLETE** 인가(web 타겟 첫 COMPLETE)? ③ P3 드리프트 잔존 여부.
+
+### ⚠️ 남은 병목 (후속, COMPLETE 가중 요인)
+- **P3 잔여**: P5 런 iter4가 web 신호 3중에도 PyQt6 재선택 + "사용자가 명시 PyQt" 날조 (4/5 web 유지했으나 1/5 드리프트로 iter 낭비). → 크루 도구/정체성 레벨 framework 자기선택 차단 필요.
+- **QA 단일토큰**: 모든 iter Code Reviewer가 `"NEEDS_REVISION"` 1단어만 받아 영구 [BLOCKER] → APPROVED 불가 → COMPLETE 게이트 차단. → Code Reviewer 입력에 실제 코드/diff 첨부 필요.
 
 ---
 

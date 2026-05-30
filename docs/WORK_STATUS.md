@@ -1,6 +1,6 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-30 v13 Phase 6.E P7(#238) 완료 — 빌드 체인 web-awareness: web 프로젝트(package.json/vite.config/.ts) → `npm run build → dist/` 라우팅(PyInstaller 스킵), desktop(.py)은 보존. pytest 1811 → 1827 (+16). P5 재실행 검증 ✅(satisfied 0→8/9, P3·P6 회복, 진짜 web BIM SPA 산출). 다음 = P7 적용 재실행 / P3 잔여 / QA 단일토큰.**
+> **마지막 업데이트**: **2026-05-30 v13 Phase 6.E P0~P7 전부 머지 완료 (재실행 사고 처방 사이클 종료, PR #234/235/236/237/238). P7(#238)=빌드 체인 web-awareness(web→`npm run build→dist/`, PyInstaller 스킵, desktop 보존). pytest 1827(회귀 0). P5 라이브 검증 ✅ satisfied 0→8/9 + 진짜 web BIM 3D 뷰어 산출 = COMPLETE 직전. 다음 = P7 라이브 재실행(web 배포물→COMPLETE 검증) → 잔여 P3 드리프트·QA 단일토큰.**
 > 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
 
 ### 🔧 PR #238 (2026-05-30) — P7 빌드 체인 web-awareness (web COMPLETE 결정적 1순위)
