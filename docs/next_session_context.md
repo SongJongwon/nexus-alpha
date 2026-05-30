@@ -56,38 +56,32 @@
 
 ## 📋 PENDING (우선순위 순)
 
-> **2026-05-29 재정렬 (P0/P1 라이브 검증 verdict)**: P0(#234)+P1(#235) 머지·라이브 검증 완료 — **둘 다 100% 작동**(크래시 0 + PLATFORM_DRIFT 4회). 재실행은 BLOCKED(미수렴)이나 원인은 P1이 닿지 않는 **하류 3중 결함**. 우선순위 = **P2-A → P2-B → 재실행 → P3 → P4**. 상세: [P0P1 verdict](diagnostics/phase6e_rerun_P0P1_verdict_20260529.md).
+> **2026-05-30 재정렬 (P0/P1/P2 라이브 검증 verdict)**: P0(#234)+P1(#235)+P2(#236) 머지·라이브 검증 완료 — **4처방 전부 작동 확정**(P2-A가 web 파일 ~15개 code/ 저장 성공, 지난 런 0). 그런데도 재실행 BLOCKED — 원인은 P0~P2가 닿지 않는 **상류 NEW 병목 P5**. 우선순위 = **P5 → P3 → P6 → 재실행 → P4(하향)**. 상세: [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).
 
-### ✅ P0 (완료, PR #234) — Rule 0 종료조건 override 회귀 수정
-판정: 라이브 검증 **100% 작동** — graceful BLOCKED(ITERATION_CAP), GraphRecursionError 0, iter 5 종료(크래시 런 7폭주 해소).
+### ✅ P0(#234)·P1(#235)·P2(#236) — 전부 라이브 검증 완료
+- P0: graceful BLOCKED(ITERATION_CAP), 크래시 0. P1: PLATFORM_DRIFT 3회. P2-A: **iter2 web 파일 ~15개(react+vite+ts SPA) code/ 실제 저장**(손실 0). P2-B: prev=PyQt→차단·경고 / prev=web→정상 주입 4/4 정확.
 
-### ✅ P1 (완료, PR #235) — 플랫폼 드리프트 가드레일
-판정: 라이브 검증 **100% 작동** — platform_intent=web 감지 + 데스크탑 금지 제약 5/5 주입(예방) + PLATFORM_DRIFT **4회 발동**(탐지).
+### 🎯 긍정 신호 — web 저장 능력 실증
+P2-A가 **iter2 web SPA(index.html/package.json/vite.config.ts/.tsx ×10)를 디스크에 실제 저장**. 지난 런 0개 → 이번 성공. 시스템은 web을 *만들고 저장*할 수 있다. 남은 건 *판정기가 그걸 보게(P5)* + 매 iter web 유지(P3) + BIM 본질(P6).
 
-### 🎯 긍정 신호 — web 능력 증명
-재실행 **iter2에서 완전한 Three.js+Vite+TypeScript+web-ifc-three SPA(10파일)를 실제 산출**. 시스템은 web 을 *할 수 있다*. 남은 건 그 정답을 디스크에 건지고(P2-A) 다음 iter 가 망치지 않게(P2-B) 하는 것.
+### ★ P5 (최우선·NEW) — Gap Analyst GUI-경로 입력 배선 수정
+**근거 (1차 원인·수렴 절대 블로커)**: P2-A가 정답 web을 디스크에 저장해도 **판정기(Gap Analyst)가 못 본다**. GUI 경로 `engineer_output=""` 고정(`analyze_and_implement.py:1430`), `_format_gap_analyst_input`(`iterative_loop.py:335`)이 `gui_code_output` 미주입 → `[ENGINEER_OUTPUT]` 항상 공란 → **iter2가 web 14파일+드리프트0인데도 "0 satisfied"** → COMPLETE 불가. 이 배선이 끊긴 한 GUI/web 경로는 *완벽 산출을 내도* 절대 COMPLETE 안 됨.
+- `_format_gap_analyst_input`가 GUI 경로에서 `gui_code_output`(또는 `code/`의 web 파일)을 `[ENGINEER_OUTPUT]`에 주입(없으면 `gui_code_output` 폴백).
+- (P2-A가 코드→디스크를 고쳤듯, P5는 코드→판정기 채널 수정.)
 
-### ★ P2-A (최우선) — GUI 코드 extraction 파이프라인 수정
-**근거**: iter2 정답 web 코드가 code/ 에 저장 안 됨 (전체 run web 파일 0개). **"SPA(single-page-app)"→"스파(마사지샵)" 오해** → tkinter test stub 만 persist (executor: "no valid entry — only test files, LLM may have misunderstood"). *정답을 냈는데 손실* — 가장 치명적.
-- web 산출(.ts/.html/index.html/package.json)을 code/ 에 정상 추출·저장.
-- "SPA" 용어 오해 차단 (single-page-app 컨텍스트 보존).
+### ★ P3 — GUI Code Generator 크루 framing
+**근거**: iter3가 3중 web 신호(P1 제약+prev web 코드+CTO 전면 web 전략)에도 **PyQt6 재선택** + "사용자가 PyQt 지정" **날조**(`13_gui_code_output.md:6`). 드리프트가 CTO 하류 Code Generator에서 주입.
+- 프롬프트뿐 아니라 **크루 도구/정체성 레벨**에서 `platform_intent==web`이면 Vite/TS 스캐폴드 강제 + framework 자기선택 차단(CTO web 전략을 무시 못 하게).
 
-### ★ P2-B (최우선) — 옵션 B(#232) ↔ P1(#235) 충돌 해소
-**근거**: iter3~5 에서 옵션 B 가 stale PyQt 코드 재주입 + "기존 구조 유지=퇴행 방지" 지시가 P1 "PyQt 금지"와 정면 충돌 → 재드리프트. (B 재평가 — §아래)
-- web 의도 시: 데스크탑(PyQt/Tkinter) 직전 코드 발췌를 **미첨부**, 또는 "이 코드는 플랫폼 위반 — 구조 참고 금지, 백지 web 재작성 필요" 경고로 대체.
-- platform-aware `_build_prev_code_context`.
+### ★ P6 (NEW) — 도메인 본질(BIM/Three.js) 강제
+**근거**: iter2 web조차 three.js/IFC **0개**(generic 에이전트 대시보드). **플랫폼 회복 ≠ 도메인 회복** (역설: BIM 가장 충실한 건 플랫폼 틀린 iter1 PyQt).
+- 도메인 체크리스트(3D-webgl 등)가 web 경로에서도 실제 적용 + GUI 생성기가 요청 도메인(BIM 3D 뷰어)을 generic 대시보드로 치환 못 하게.
 
-### 재실행 (P2-A+P2-B 머지 후) — web 본질 수렴 검증
-**검증 게이트**: graceful 종료 + **web 산출이 code/ 에 materialize**(.ts/.html 존재) + iter 간 PyQt 재드리프트 0 + 동작하는 배포물.
+### 재실행 (P5+P3+P6 머지 후) — web+BIM 수렴 검증
+**검증 게이트**: graceful 종료 + web 산출 code/ materialize + **Gap Analyst가 web 코드 보고 satisfied 증가** + iter 간 PyQt 재드리프트 0 + Three.js/IFC 실제 구현.
 
-### P3 (후속) — GUI Code Generator 크루 framing
-프롬프트뿐 아니라 **크루 도구/정체성 레벨**에서 web 의도 시 Vite/TS 스캐폴드 강제. P2-A/B 후에도 재드리프트 잔존 시.
-
-### P4 (후속) — QA 단일토큰 입력 결함 + recursion_limit 정합
-Code Reviewer 가 `"NEEDS_REVISION"` 단일 토큰만 받는 systematic failure (PR #28/#30/#32 재현) — gap stagnation 의 한 축. `recursion_limit` floor 50 ↔ max_iter 정합도 함께.
-
-### ★ B(#232) 재평가
-iter 간 코드 첨부(옵션 B)가 **web 의도 시 stale PyQt 재주입으로 P1 을 무력화하는 부작용 실증**(재실행 iter3~5). B 는 동일 플랫폼 맥락(PyQt→PyQt)에선 유효하나 플랫폼 드리프트 맥락에선 역효과 → **P2-B 에서 platform-aware 수정 필요**.
+### P4 (하향) — QA 단일토큰 입력 결함
+Code Reviewer가 `"NEEDS_REVISION"` 단일 토큰만 받는 systematic failure (iter4/5, PR #28/#30/#32 재현). **실재하나 이번 BLOCKED의 원인은 아님**(적대 검증 반증 — PyQt iter의 BLOCKED는 PLATFORM_DRIFT→P0 cap 경로라 QA-feed stagnation 우회). 우선순위 하향, 별도 추적.
 
 > 아래 기존 1~3순위(BIM 재실행 / C / D)는 위 재정렬로 *후속* 으로 격하. C(dep 매핑)·D(Product Manager)는 backlog 유지.
 
@@ -254,4 +248,4 @@ docs/backlog/phase6e_followups.md §C 읽고
 
 ---
 
-**한 줄 요약**: 🧪 P0(#234)+P1(#235) 라이브 검증 **둘 다 100% 작동**(크래시 0 + PLATFORM_DRIFT 4회), **iter2에서 완전한 Three.js SPA 실제 산출 = web 능력 증명**. 재실행 BLOCKED 원인 = P1이 닿지 않는 **하류 3중 결함**(A: extraction "SPA→스파" 오해로 web 코드 손실 / B: 옵션 B#232↔P1#235 충돌 / C: QA 단일토큰). 1순위 = **P2-A(extraction) + P2-B(B platform-aware)** → 재실행 → P3(크루 framing) → P4(QA). 상세 [P0P1 verdict](diagnostics/phase6e_rerun_P0P1_verdict_20260529.md).
+**한 줄 요약**: 🧪 P0(#234)+P1(#235)+P2(#236) 라이브 검증 **4처방 전부 작동 확정** — **P2-A가 iter2 web 파일 ~15개 code/ 실제 저장**(지난 런 0). 그런데도 BLOCKED — 1차 원인 = 상류 NEW 병목 **P5(Gap Analyst가 저장된 GUI/web 산출을 못 봄 — `_format_gap_analyst_input`이 gui_code_output 미주입 → 완벽 web 산출도 "0 satisfied")**. P4(QA 단일토큰)는 비인과로 하향(반증). 1순위 = **P5(판정기 배선) > P3(크루 framing) > P6(BIM 본질) > P4**. 상세 [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).

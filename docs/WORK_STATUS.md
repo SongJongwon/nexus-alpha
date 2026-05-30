@@ -1,7 +1,24 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P2(#236) 완료 — iter→code 파이프라인 수정: P2-A(web extraction) + P2-B(옵션 B platform-aware). pytest 1788 → 1802 (+14). 다음 = P2 적용 main 재실행 (web 산출 code/ materialize 검증).**
+> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P2(#236) 라이브 검증 완료 — P0/P1/P2 4처방 전부 작동 확정(P2-A가 web 파일 ~15개 code/ 저장 성공). 재실행은 여전히 BLOCKED — 원인=상류 NEW 병목 P5(Gap Analyst가 저장된 GUI/web 산출을 못 봄). 다음 = P5(판정기 배선) > P3(web 유지) > P6(BIM 본질) > P4(하향).**
 > 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
+
+### 🧪 P0/P1/P2 재실행 verdict (2026-05-30) — 4처방 전부 작동, BLOCKED 원인은 상류 NEW 병목 P5
+
+> P0+P1+P2 적용 main 재실행(`run_id=b1bd4097e675`) 채점. 상세: [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md). **read-only 채점 — 코드 변경 없음.**
+
+| 항목 | 결과 |
+|------|------|
+| **P0(#234)·P1(#235)·P2-A·P2-B(#236)** | ✅ **4처방 전부 라이브 작동 확정** — 크래시 0 + graceful BLOCKED + PLATFORM_DRIFT 3회 + **P2-A가 iter2에 web 파일 ~15개(react+vite+ts SPA) code/ 실제 저장**(지난 런 0개, 손실 0) + P2-B 4/4 정확 분기. |
+| ⚠️ 그런데도 BLOCKED | 수렴 막은 건 P0~P2가 닿지 않는 **상류 NEW 병목** (max-iter 증액 무의미): |
+| **(P5, 1차 원인·NEW)** | **Gap Analyst가 저장된 GUI/web 산출을 못 봄.** GUI 경로 `engineer_output=""` 고정(`analyze_and_implement.py:1430`), `_format_gap_analyst_input`(`iterative_loop.py:335`)이 `gui_code_output` 미주입 → `[ENGINEER_OUTPUT]` 항상 공란 → **iter2가 web 14파일+드리프트0인데도 "0 satisfied"** → COMPLETE 불가. *판정기가 P2-A의 정답을 못 본다.* |
+| (P3, 부수) | GUI Code Generator 크루가 3중 web 신호(P1 제약+prev web+CTO 전면 web)에도 **PyQt6 재선택** + "사용자가 PyQt 지정" **날조**(iter3 재드리프트). |
+| (P6, 부수) | **도메인 드리프트** — iter2 web조차 three.js/IFC **0개**(generic 에이전트 대시보드). 플랫폼 회복 ≠ 도메인 회복. |
+| 다음 처방 | **P5(절대 블로커) > P3(web 유지) > P6(BIM 본질) > P4(하향)**. |
+
+> ★ **P4 재평가 (하향)**: QA 단일토큰(`"NEEDS_REVISION"`)은 iter4/5에 **실재**하나, 이번 BLOCKED의 원인이 **아님**(적대 검증 반증). PyQt iter의 BLOCKED 경로는 PLATFORM_DRIFT→IMPROVE→P0 cap이라 QA-feed stagnation 규칙을 **우회**. P4 고쳐도 미수렴 미해소 → 우선순위 하향.
+>
+> ★ **P5 신규 등록 (최우선)**: `_format_gap_analyst_input`가 GUI 경로에서 `gui_code_output`(또는 `code/`의 web 파일)을 `[ENGINEER_OUTPUT]`에 주입하도록 환원. **이 배선이 끊긴 한 GUI/web 경로는 완벽 산출을 내도 절대 COMPLETE 불가** — 수렴의 절대 블로커.
 
 ### 🔧 PR #236 (2026-05-29) — P2 iter→code 파이프라인 수정 (web extraction + 옵션 B platform-aware)
 

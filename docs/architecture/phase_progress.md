@@ -1,7 +1,7 @@
 # 📈 Nexus Alpha — Phase Progress Timeline (v13 동기화)
 
-> **갱신일**: 2026-05-29 (P0(#234)+P1(#235) **라이브 검증 완료 — 둘 다 작동 확정**. 재실행은 BLOCKED(미수렴), 원인=P1이 닿지 않는 하류 3중 결함(extraction 단절·B↔P1 충돌·QA). iter2에서 완전한 Three.js SPA 실제 산출 = web 능력 증명)
-> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E (P0/P1 라이브 검증 ✅, 재실행 BLOCKED — 하류 3중 결함)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **P2-A(extraction) + P2-B(B↔P1 충돌)** → 재실행.
+> **갱신일**: 2026-05-30 (P0(#234)+P1(#235)+P2(#236) **라이브 검증 완료 — 4처방 전부 작동 확정**. P2-A가 web 파일 ~15개 code/ 저장 성공(지난 런 0). 그런데도 재실행 BLOCKED — 원인=상류 NEW 병목 **P5(Gap Analyst가 저장된 GUI/web 산출을 못 봄)**. P4는 비인과로 하향)
+> **목적**: Phase 1~8 *완료* + Sprint 4~6 *완료* + **v13 Phase 1~6 + 6.E (P0/P1/P2 라이브 검증 ✅, 재실행 BLOCKED — 상류 NEW 병목 P5)** 의 진화 timeline 을 단일 mermaid 다이어그램으로 시각화. 다음 단계 = **P5(Gap Analyst 배선) > P3(web 유지) > P6(BIM 본질)** → 재실행.
 
 ---
 
@@ -135,7 +135,8 @@ gantt
 | ✅ **P1 플랫폼 드리프트 가드레일 (PR #235)** | 2026-05-29 | `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT(탐지, IMPROVE 강제+platform_drift 플래그) + 회귀 테스트(+18, pytest 1788). P0 가드 호환. |
 | ✅ **P0/P1 라이브 검증 (재실행 verdict)** | 2026-05-29 | P0 100%(크래시 0, graceful BLOCKED) + P1 100%(예방 5/5 + PLATFORM_DRIFT 4회). **iter2 완전한 Three.js SPA 실제 산출 = web 능력 증명**. BLOCKED 원인=하류 3중 결함. [P0P1 verdict](../diagnostics/phase6e_rerun_P0P1_verdict_20260529.md) |
 | ✅ **P2 iter→code 파이프라인 (PR #236)** | 2026-05-29 | P2-A: `_extract_code_blocks` web 확장(.ts/.html/.css 추출 + 다중 file 헤더 + 손실 가드). P2-B: `_build_prev_code_context` platform-aware(web 의도 시 stale PyQt 재주입 금지→백지 web 경고). 회귀 테스트(+14, pytest 1802). P0/P1 불변. |
-| 🔄 **재실행 (1순위 NEXT)** | NEXT | P2 적용 main 에서 BIM 안건 재실행 — graceful 종료 + **web 산출이 code/ 에 materialize**(.ts/.html) + iter 간 PyQt 재드리프트 0 검증 |
+| ✅ **P0/P1/P2 라이브 검증 (재실행 verdict)** | 2026-05-30 | 4처방 전부 작동 확정 — 크래시 0 + PLATFORM_DRIFT 3회 + **P2-A가 iter2 web 파일 ~15개 실제 저장**(지난 런 0). 그런데도 BLOCKED. [P0P1P2 verdict](../diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md) |
+| 🔧 **P5 (1순위 NEXT·NEW)** | NEXT | **Gap Analyst GUI 입력 배선** — `_format_gap_analyst_input`가 `gui_code_output`을 `[ENGINEER_OUTPUT]`에 주입(현재 공란 고정→완벽 web 산출도 "0 satisfied"). 수렴 절대 블로커. → 그 후 P3(크루 framing)·P6(BIM 본질) → 재실행 |
 | 🔜 **베타 cohort 5명 라이브 검증** | ETA 2026-06+ | (재실행 PASS 후) 자율 진화 SW + BIM Viewer 외부 사용자 evidence |
 
 ---
@@ -290,3 +291,4 @@ xychart-beta
 | **2026-05-29** | ✅ **P1 플랫폼 드리프트 가드레일 = PR #235 — `_detect_platform`(web/desktop/unspecified) + web 의도 시 엔지니어 프롬프트 데스크탑 GUI 금지 제약(예방) + Convergence Judge PLATFORM_DRIFT rule(탐지: web+데스크탑마커→IMPROVE 강제+platform_drift 플래그, P0 가드 호환) + 신규 테스트(+18, pytest 1770→1788, 회귀 0). 명시 플랫폼이 Track 기본값 우선. 다음 = P0+P1 적용 재실행** |
 | **2026-05-29** | 🧪 **P0/P1 라이브 검증 verdict — P0 100%(크래시 0, graceful BLOCKED(ITERATION_CAP)) + P1 100%(예방 5/5 + PLATFORM_DRIFT 4회) 둘 다 작동 확정. iter2 완전한 Three.js+Vite+TS SPA(10파일) 실제 산출 = web 능력 증명. 재실행 BLOCKED 원인 = P1이 닿지 않는 하류 3중 결함(A: extraction 단절 "SPA→스파" 오해로 web 코드 손실, B: 옵션 B#232↔P1#235 충돌로 stale PyQt 재주입, C: QA 단일토큰 stagnation). (a)iteration 부족 가설 기각. 다음 = P2-A(extraction)+P2-B(B platform-aware)** |
 | **2026-05-29** | ✅ **P2 iter→code 파이프라인 = PR #236 — P2-A: `_extract_code_blocks` 가 ```python 펜스만 추출하던 결함 수정(web .ts/.html/.css/.json + 다중 주석 file 헤더 + 손실 가드, GUI 경로만 web 확장·나머지 python-only 회귀0). P2-B: `_build_prev_code_context` platform-aware(web 의도+직전 데스크탑 마커→stale 재주입 금지·백지 web 경고 대체, B#232↔P1#235 충돌 제거). 신규 테스트 +14(pytest 1788→1802, 회귀 0). 하류결함 (A)(B) 처방 — (C)QA 단일토큰은 P4. 다음 = P2 적용 재실행** |
+| **2026-05-30** | 🧪 **P0/P1/P2 라이브 검증 verdict — 4처방(P0/P1/P2-A/P2-B) 전부 작동 확정. P2-A가 iter2 web 파일 ~15개(react+vite+ts SPA) code/ 실제 저장(지난 런 0, 손실 0). 그런데도 BLOCKED — 1차 원인 = 상류 NEW 병목 P5: Gap Analyst가 저장된 GUI/web 산출을 못 봄(GUI 경로 engineer_output="" 고정 + `_format_gap_analyst_input`(iterative_loop.py:335) gui_code_output 미주입 → 완벽 web 산출에도 "0 satisfied" → COMPLETE 불가). 부수: P3(GUI 크루 PyQt 재선택·날조), P6(도메인 드리프트 — iter2 web조차 three.js 0). P4(QA 단일토큰)는 이번 BLOCKED 비인과로 하향. 우선순위 P5>P3>P6>P4. 다음 = P5(판정기 배선)** |
