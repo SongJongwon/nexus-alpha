@@ -337,6 +337,147 @@ def _format_code_layout(code_files: list[Path]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# v13 Phase 6.E P7 (PR #238) — web 프로젝트 감지 + web build 경로
+#
+# 배경 (P5 verdict, phase6e_rerun_P5_verdict_20260530.md): 시스템이 진짜 web BIM
+# SPA(Three.js+web-ifc-three)를 산출해도, 빌드 체인이 `vite.config.ts`(TS 설정)를
+# Python entry 로 골라 `python vite.config.ts` 실행 → SyntaxError → .exe SKIP. web 은
+# `npm run build → dist/` 인데 체인은 PyInstaller→.exe 만 알았다. P7 = web 이면 npm
+# build 로 라우팅, desktop(.py) 은 기존 PyInstaller 보존(회귀 0).
+# ---------------------------------------------------------------------------
+_WEB_MARKER_FILES: frozenset[str] = frozenset(
+    {"package.json", "vite.config.ts", "vite.config.js", "tsconfig.json", "index.html"}
+)
+_WEB_MARKER_EXTS: frozenset[str] = frozenset({".ts", ".tsx", ".jsx"})
+_DESKTOP_ENTRY_NAMES: tuple[str, ...] = (
+    "app.py", "main.py", "__main__.py", "run.py", "entry.py",
+)
+
+
+def _is_web_project(code_files: list[Path], build_spec: str = "") -> bool:
+    """code_files / Build Spec 으로 web(npm/vite) 프로젝트 여부 판정 (P7).
+
+    web 마커: package.json / vite.config.* / tsconfig.json / index.html / .ts·.tsx·.jsx,
+    또는 Build Spec 이 vite/npm run build/web-ifc-three 지정. 단 **non-test Python
+    entry(app.py/main.py/__main__.py/run.py/entry.py)가 있으면 desktop/hybrid 로 보고
+    web 라우팅 안 함** (PyInstaller 경로 보존 — 회귀 0).
+    """
+    if not code_files:
+        # code_files 없이 Build Spec 만으로 판정 (T3 — Spec 존중)
+        low = build_spec.lower()
+        return any(k in low for k in ("vite", "npm run build", "web-ifc-three"))
+    names = {p.name.lower() for p in code_files}
+    has_marker = bool(names & _WEB_MARKER_FILES) or any(
+        p.suffix.lower() in _WEB_MARKER_EXTS for p in code_files
+    )
+    if not has_marker and build_spec:
+        low = build_spec.lower()
+        has_marker = any(k in low for k in ("vite", "npm run build", "web-ifc-three"))
+    if not has_marker:
+        return False
+    # desktop/hybrid 가드 — 진짜 Python entry 가 있으면 PyInstaller 경로 유지.
+    for p in code_files:
+        nm = p.name.lower()
+        if nm.startswith("test_") or nm.endswith("_test.py"):
+            continue
+        if p.suffix.lower() == ".py" and any(nm.endswith(e) for e in _DESKTOP_ENTRY_NAMES):
+            return False
+    return True
+
+
+def _default_npm_build_runner(code_dir: Path, timeout_sec: int) -> tuple[bool, str, float]:
+    """실 npm 빌드 실행 — (ok, log, elapsed). npm 미설치/실패는 graceful (예외 X).
+
+    ``npm ci`` (lockfile 없으면 ``npm install`` 폴백) → ``npm run build``. P7 default;
+    테스트는 ``_run_web_build(npm_runner=...)`` 로 주입해 실 npm 호출 회피.
+    """
+    import shutil
+    import time
+
+    npm = shutil.which("npm")
+    if npm is None:
+        return False, "npm 미설치 — web build 불가 (node/npm 필요).", 0.0
+    t0 = time.monotonic()
+    try:
+        inst = subprocess.run(
+            [npm, "ci"], cwd=str(code_dir), capture_output=True, text=True,
+            timeout=timeout_sec, encoding="utf-8", errors="replace",
+        )
+        if inst.returncode != 0:
+            inst = subprocess.run(
+                [npm, "install"], cwd=str(code_dir), capture_output=True, text=True,
+                timeout=timeout_sec, encoding="utf-8", errors="replace",
+            )
+        bld = subprocess.run(
+            [npm, "run", "build"], cwd=str(code_dir), capture_output=True, text=True,
+            timeout=timeout_sec, encoding="utf-8", errors="replace",
+        )
+        elapsed = time.monotonic() - t0
+        log = (
+            (inst.stdout or "")[-1500:] + (inst.stderr or "")[-1500:]
+            + (bld.stdout or "")[-3000:] + (bld.stderr or "")[-3000:]
+        )
+        return bld.returncode == 0, log, elapsed
+    except Exception as exc:  # noqa: BLE001 — graceful
+        return False, f"web build 예외: {exc!r}", 0.0
+
+
+def _run_web_build(
+    code_files: list[Path],
+    workflow_dir: Path,
+    build_spec: str = "",
+    *,
+    npm_runner=None,
+    timeout_sec: int = 600,
+) -> ExecuteResult:
+    """web 프로젝트를 ``npm run build`` 로 빌드해 dist/ 산출을 ExecuteResult 로 반환 (P7).
+
+    성공 기준 = ``dist/index.html`` 생성 (.exe 아님). 실패 시 web 전용 진단 메시지
+    (PyInstaller/SyntaxError 오진 아님). ``npm_runner`` 주입 시 실 npm 회피(테스트).
+    """
+    import hashlib
+
+    code_dir = code_files[0].parent if code_files else (workflow_dir / "code")
+    runner = npm_runner or _default_npm_build_runner
+    ok, log, elapsed = runner(code_dir, timeout_sec)
+    dist = code_dir / "dist"
+    index = dist / "index.html"
+    cmd = ["npm", "ci", "&&", "npm", "run", "build"]
+    if ok and index.is_file():
+        data = index.read_bytes()
+        return ExecuteResult(
+            success=True, exit_code=0, elapsed_sec=elapsed, command=cmd,
+            exe_path=index, exe_size_bytes=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+            stdout=log[-4000:],
+        )
+    return ExecuteResult(
+        success=False, exit_code=-8, elapsed_sec=elapsed, command=cmd,
+        error_message=(
+            "web build 실패 또는 dist/ 미생성. web 타겟은 PyInstaller(.exe) 가 아니라 "
+            "`npm run build → dist/` 로 빌드됩니다 (P7). npm 미설치/빌드 에러 가능."
+        ),
+        stderr=log[-4000:],
+    )
+
+
+def _format_web_build_md(result: ExecuteResult) -> str:
+    """web build ExecuteResult 를 25_executor_result.md 본문으로 직렬화 (P7)."""
+    status = "✅ SUCCESS" if result.success else "🔴 FAILED"
+    dist = f"`{result.exe_path}`" if result.exe_path else "(없음)"
+    return (
+        "## v13 Phase 6.E P7 (PR #238) — web build 결과 (npm run build → dist/)\n\n"
+        "> web 프로젝트 감지 → PyInstaller(.exe) 경로 스킵, npm build 로 라우팅.\n\n"
+        f"**상태**: {status}\n"
+        f"**Exit Code**: `{result.exit_code}`\n"
+        f"**산출 (dist)**: {dist}"
+        + (f" ({result.exe_size_bytes} bytes)\n" if result.success else "\n")
+        + (f"**에러**: {result.error_message}\n" if result.error_message else "")
+        + f"\n```\n{(result.stdout or result.stderr or '')[-2000:]}\n```\n"
+    )
+
+
 def _select_entry_point(
     code_files: list[Path], entry_hint: str
 ) -> tuple[Optional[Path], str]:
@@ -1688,7 +1829,20 @@ def run_build_workflow(
         # PR #133 fixup #6 — LLM 보고서 + entry AST 스캔 UNION + --collect-all + 실패 시 build 중단
         executor_result: Optional[ExecuteResult] = None
         entry_selection_reason = ""
-        if enable_executor and code_files and workflow_dir is not None:
+        if enable_executor and code_files and workflow_dir is not None and _is_web_project(
+            code_files, build_spec
+        ):
+            # ★ v13 Phase 6.E P7 (PR #238) — web 프로젝트 → npm build → dist/ 경로.
+            # PyInstaller/python-entry 경로 자체를 스킵 (python 이 .ts 실행 → SyntaxError
+            # → .exe SKIP 하던 P5 verdict 의 P7 병목 차단). desktop(.py) 은 아래 elif 보존.
+            executor_result = _run_web_build(
+                code_files, workflow_dir, build_spec, timeout_sec=executor_timeout_sec
+            )
+            _web_md = workflow_dir / "25_executor_result.md"
+            _web_md.write_text(_format_web_build_md(executor_result), encoding="utf-8")
+            saved.append(_web_md)
+        elif enable_executor and code_files and workflow_dir is not None:
+            # 기존 desktop(PyInstaller) 경로 — 회귀 0
             # PR #133 fixup #9/#15 — _select_entry_point 사용 + 선택 이유 캡처
             entry_path, entry_selection_reason = _select_entry_point(code_files, entry_hint)
             # PR #133 fixup #15 — entry_path 가 None 이면 build 중단 (test 파일만 있는 경우 등)
