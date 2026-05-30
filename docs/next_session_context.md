@@ -56,30 +56,26 @@
 
 ## 📋 PENDING (우선순위 순)
 
-> **2026-05-30 재정렬 (P5 머지 #237)**: P0(#234)+P1(#235)+P2(#236)+**P5(#237)** 머지 완료. P5(Gap Analyst 입력 배선)로 **판정기가 저장된 web 산출을 보게 됨**(이전 "0 satisfied" 오판 해소, 회귀 0/pytest 1811). 우선순위 = **재실행(P5 결합 효과) → P3(크루 framing) → P6(BIM 본질) → P4(하향)**. 상세: [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).
+> **2026-05-30 재정렬 (P5 라이브 검증 + P7 머지 #238)**: P0~P2·P5 머지+라이브 검증 + P7(#238) 머지 완료. **P5 재실행에서 satisfied 0→8/9 도달 = 역대 최대 진전, COMPLETE 직전.** 진짜 web BIM 3D 뷰어 산출(P3 4/5·P6 회복). 마지막 벽 P7(빌드 체인 web 미지원)을 #238로 처방. 우선순위 = **재실행(P7 결합 효과 — 배포물 산출→COMPLETE) → P3 잔여 드리프트 → QA 단일토큰**. 상세: [P5 verdict](diagnostics/phase6e_rerun_P5_verdict_20260530.md).
 
-### ✅ P0(#234)·P1(#235)·P2(#236)·P5(#237) — 머지 완료
-- P0: graceful BLOCKED, 크래시 0. P1: PLATFORM_DRIFT 3회. P2-A: iter2 web 파일 ~15개 code/ 저장(라이브 검증됨). P2-B: 4/4 정확. **P5: `_format_gap_analyst_input` 폴백(engineer_output→gui_code_output→저장코드) — 판정기가 web 산출을 봄(라이브 미검증, 재실행 대기).**
+### ✅ P0~P2·P5 (라이브 검증) + P7(#238) — 머지 완료
+- P0: graceful BLOCKED. P1: PLATFORM_DRIFT. P2: web extraction + B platform-aware. **P5: 판정기가 web 산출 봄 → satisfied 0→8/9 (라이브 확정).** **P7(#238): web 프로젝트 → `npm build→dist/` 라우팅, PyInstaller 스킵, desktop 보존.**
 
-### 🎯 긍정 신호 — web 저장(P2-A) + 판정기 가시성(P5) 둘 다 확보
-시스템은 web을 *만들고 저장*(P2-A 라이브 확인)하고, 이제 판정기가 *그걸 본다*(P5). 남은 건 재실행으로 **satisfied 집계 → COMPLETE 신호**가 실제로 나는지 + 매 iter web 유지(P3) + BIM 본질(P6).
+### 🎯 역대 최대 진전 — 진짜 web BIM SPA 산출, COMPLETE 직전
+P5 재실행: satisfied **0→8/9**, web **4/5 유지**, **진짜 BIM 3D 뷰어**(IFCLoader/OrbitControls/Raycaster→IFC 속성/다크 관제) 산출. P0→P7로 종료·드리프트·extraction·판정기 가시성·빌드 체인을 차례로 처방. 남은 건 P7 적용 재실행에서 *배포물이 실제로 나오고 satisfied→COMPLETE* 되는지.
 
-### ★ 재실행 (1순위) — P5 결합 효과 검증
-**검증 게이트**: graceful 종료 + web 산출 code/ materialize + **Gap Analyst가 web 코드 보고 satisfied 증가**(P5 핵심) + (P3/P6 미적용이라 PyQt 재드리프트·도메인 드리프트는 잔존 가능). satisfied가 0에서 증가하면 P5 라이브 작동 확정.
+### ★ 재실행 (1순위) — P7 결합 효과 검증
+**검증 게이트**: graceful 종료 + web SPA가 **`npm build→dist/` 로 배포물 산출**(P7, .exe 아님) + Gap Analyst satisfied 증가(P5) + (P3 미적용이라 1/5 드리프트 잔존 가능). **배포물 산출 + satisfied 임계 도달 시 COMPLETE 가능** — web 타겟 첫 COMPLETE 후보.
 
-### ★ P3 — GUI Code Generator 크루 framing
-**근거**: iter3가 3중 web 신호(P1 제약+prev web 코드+CTO 전면 web 전략)에도 **PyQt6 재선택** + "사용자가 PyQt 지정" **날조**(`13_gui_code_output.md:6`). 드리프트가 CTO 하류 Code Generator에서 주입.
-- 프롬프트뿐 아니라 **크루 도구/정체성 레벨**에서 `platform_intent==web`이면 Vite/TS 스캐폴드 강제 + framework 자기선택 차단(CTO web 전략을 무시 못 하게).
+### ★ P3 잔여 — GUI Code Generator 크루 framing
+**근거**: P5 런 iter4가 3중 web 신호(P1 제약+prev web+CTO 전면 web)에도 **PyQt6 재선택** + "사용자가 명시 PyQt" **날조**(13_gui_code_output.md:7). 4/5는 web 유지했으나 1/5 드리프트가 iter 낭비 + satisfied 0 리셋.
+- 크루 도구/정체성 레벨에서 `platform_intent==web` 시 framework 자기선택 차단 + 날조 근거 거부 + iter 소모 없이 즉시 reject·재생성.
 
-### ★ P6 (NEW) — 도메인 본질(BIM/Three.js) 강제
-**근거**: iter2 web조차 three.js/IFC **0개**(generic 에이전트 대시보드). **플랫폼 회복 ≠ 도메인 회복** (역설: BIM 가장 충실한 건 플랫폼 틀린 iter1 PyQt).
-- 도메인 체크리스트(3D-webgl 등)가 web 경로에서도 실제 적용 + GUI 생성기가 요청 도메인(BIM 3D 뷰어)을 generic 대시보드로 치환 못 하게.
+### P6 — 도메인 본질 (P5 런에서 대체로 회복)
+P5 런 web iter들은 **진짜 BIM 3D 뷰어**(three.js/IFCLoader 실사용) — P0P1P2 런의 generic 대시보드 대비 회복. *web 유지 시* 도메인도 따라옴 → P3(web 유지)가 풀리면 P6도 대체로 해소. 잔여 강제는 후속.
 
-### 완전 수렴 게이트 (P3+P6 까지 머지 후, 최종 목표)
-graceful 종료 + web 산출 materialize + Gap Analyst satisfied 증가(P5) + iter 간 PyQt 재드리프트 0(P3) + Three.js/IFC 실제 구현(P6) + 동작 배포물.
-
-### P4 (하향) — QA 단일토큰 입력 결함
-Code Reviewer가 `"NEEDS_REVISION"` 단일 토큰만 받는 systematic failure (iter4/5, PR #28/#30/#32 재현). **실재하나 이번 BLOCKED의 원인은 아님**(적대 검증 반증 — PyQt iter의 BLOCKED는 PLATFORM_DRIFT→P0 cap 경로라 QA-feed stagnation 우회). 우선순위 하향, 별도 추적.
+### QA 단일토큰 — Code Reviewer 입력 결함 (COMPLETE 게이트)
+모든 iter Code Reviewer가 `"NEEDS_REVISION"` 1단어만 받아 영구 [BLOCKER] → QA verdict NEEDS_REVISION 고착 → **APPROVED 불가 → COMPLETE 경로 차단**. (cap-cause는 아니나 COMPLETE 도달엔 필수 게이트.) Code Reviewer 입력에 실제 코드/diff 첨부 필요.
 
 > 아래 기존 1~3순위(BIM 재실행 / C / D)는 위 재정렬로 *후속* 으로 격하. C(dep 매핑)·D(Product Manager)는 backlog 유지.
 
@@ -246,4 +242,4 @@ docs/backlog/phase6e_followups.md §C 읽고
 
 ---
 
-**한 줄 요약**: 🔧 P5(#237) 머지 — **Gap Analyst GUI 입력 배선 수정**(수렴 절대 블로커 해소): `_format_gap_analyst_input` 폴백(engineer_output→gui_code_output→저장코드)으로 **판정기가 저장된 web 산출을 봄**(이전 "0 satisfied" 오판 차단, 증명됨, pytest 1811). P0~P2+P5 머지 완료. 1순위 = **재실행(P5 결합 효과 — satisfied 집계 검증)** → P3(크루 framing) → P6(BIM 본질) → P4(하향). 상세 [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).
+**한 줄 요약**: 🔧 P7(#238) 머지 — **빌드 체인 web-awareness**(web→`npm build→dist/`, PyInstaller 스킵, desktop 보존, pytest 1827). P5 라이브 검증 ✅ — satisfied **0→8/9**, 진짜 web BIM 3D 뷰어 산출(P3 4/5·P6 회복) = **역대 최대 진전·COMPLETE 직전**. P0→P7 처방 완료. 1순위 = **P7 적용 재실행(배포물 산출→COMPLETE 검증, web 타겟 첫 COMPLETE 후보)** → P3 잔여 드리프트 → QA 단일토큰. 상세 [P5 verdict](diagnostics/phase6e_rerun_P5_verdict_20260530.md). 상세 [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).

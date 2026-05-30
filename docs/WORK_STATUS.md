@@ -1,7 +1,31 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-30 v13 Phase 6.E P5(#237) 완료 — Gap Analyst GUI 입력 배선 수정(절대 블로커 해소): `_format_gap_analyst_input`이 engineer_output 공란 시 gui_code_output→저장코드 폴백 → 판정기가 저장된 web 산출을 봄. pytest 1802 → 1811 (+9). 다음 = P5 적용 재실행(satisfied 집계 검증) / P3(크루 framing) / P6(BIM 본질).**
+> **마지막 업데이트**: **2026-05-30 v13 Phase 6.E P7(#238) 완료 — 빌드 체인 web-awareness: web 프로젝트(package.json/vite.config/.ts) → `npm run build → dist/` 라우팅(PyInstaller 스킵), desktop(.py)은 보존. pytest 1811 → 1827 (+16). P5 재실행 검증 ✅(satisfied 0→8/9, P3·P6 회복, 진짜 web BIM SPA 산출). 다음 = P7 적용 재실행 / P3 잔여 / QA 단일토큰.**
 > 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
+
+### 🔧 PR #238 (2026-05-30) — P7 빌드 체인 web-awareness (web COMPLETE 결정적 1순위)
+
+> P5 재실행 verdict([P5 verdict](diagnostics/phase6e_rerun_P5_verdict_20260530.md))의 마지막 벽 처방. P5 작동으로 satisfied 0→8 도달·진짜 web BIM SPA 산출했으나, 빌드 체인이 web을 PyInstaller(.exe)로 강제(vite.config.ts → `python vite.config.ts` → SyntaxError → SKIP)해 배포물 미산출.
+
+| 변경 | 내용 |
+|------|------|
+| `build_workflow.py` | `_is_web_project`(package.json/vite.config/.ts/.tsx + Build Spec vite·npm·web-ifc-three 감지; **Python entry(app.py 등) 있으면 desktop/hybrid 로 PyInstaller 보존**) + `_run_web_build`(npm ci→npm run build→dist/ 인정, npm_runner 주입 가능) + `_default_npm_build_runner` + `_format_web_build_md`. 빌드 노드가 web이면 PyInstaller/python-entry **스킵**, `elif`로 desktop 경로 보존(재들여쓰기 0). |
+| 회귀 테스트 | 신규 `test_p7_web_build_chain.py` (P7-T1~T5, 16). pytest **1811 → 1827 (+16, 회귀 0)**. |
+| 증명 | web SPA→`_is_web_project`=True→`npm build`→dist/index.html 배포물 인정(BUILD SUCCESS), python/PyInstaller 미경유. desktop(app.py)·hybrid(app.py+html)→False(PyInstaller 보존). 실패 시 web 전용 메시지(SyntaxError/PyInstaller 오진 아님). |
+| 보존 | P0/P1/P2/P5·Track A/B·desktop PyInstaller 경로 전부 불변. |
+| 잔여 | P3 잔여 드리프트(1/5), QA 단일토큰 — 후속. |
+
+### 🧪 P5 재실행 verdict (2026-05-30) — 역대 최대 진전 (satisfied 0→8/9)
+
+> P0+P1+P2+P5 적용 main 재실행(`run_id=3f6318b2ba6d`) 채점. 상세: [P5 verdict](diagnostics/phase6e_rerun_P5_verdict_20260530.md). read-only 채점.
+
+| 항목 | 결과 |
+|------|------|
+| **P5 라이브** | ✅ satisfied **0 → 8** (P0P1P2 런 전부 0 → 이번 8). 판정기가 실코드 수신(prompt_length≈코드 바이트). |
+| **P3 드리프트** | ✅ **web 4/5 유지** (iter4만 PyQt, "사용자가 명시" 날조 재현). 지난 런 대비 대폭 개선. |
+| **P6 도메인** | ✅ **진짜 BIM 3D 뷰어** — IFCLoader/OrbitControls/Raycaster→IFC 속성/다크 관제 (요청 3요소 충족). |
+| **🆕 P7** | ❌→처방 — 빌드 체인이 web을 Python으로 오인(.exe SKIP). **이 PR(#238)로 처방.** |
+| BLOCKED 원인 | P7(배포물 미산출, COMPLETE 직전 벽) + P3 잔여 + QA 단일토큰 |
 
 ### 🔧 PR #237 (2026-05-30) — P5 Gap Analyst GUI-경로 입력 배선 수정 (수렴 절대 블로커 해소)
 
