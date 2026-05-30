@@ -329,10 +329,27 @@ def _format_gap_analyst_input(
         exec_block = "(없음 — Sandbox 비활성 또는 실행 가능 entry 미발견)"
     else:
         exec_block = format_sandbox_result_for_task(execution_result, max_lines=20)
+    # ★ v13 Phase 6.E P5 (PR #237) — GUI 경로 판정기 입력 배선 수정.
+    # GUI 경로(analyze_and_implement._run_gui_workflow)는 engineer_output="" 고정이고
+    # 실제 산출은 gui_code_output(+저장 코드)에 있다. 그대로 두면 [ENGINEER_OUTPUT]
+    # 이 공란 → 완벽한 web 산출도 Gap Analyst 가 "0 satisfied" 오판 → COMPLETE 영영
+    # 불가 (P0P1P2 verdict 1차 원인). 폴백 순서: engineer_output → gui_code_output →
+    # 저장 코드 발췌(code/*.py + 13_gui_code_output.md). engineer_output 이 있으면
+    # 기존 동작 그대로 (회귀 0).
+    engineer_block = chain_result.engineer_output
+    if not (engineer_block and engineer_block.strip()):
+        gui_output = getattr(chain_result, "gui_code_output", "") or ""
+        if gui_output.strip():
+            engineer_block = gui_output
+        else:
+            # 마지막 가드 — 디스크 저장 코드 산출(code/*.py + 13_gui_code_output.md 등).
+            disk_excerpt = _extract_engineer_output_excerpt(chain_result)
+            if disk_excerpt.strip():
+                engineer_block = disk_excerpt
     return (
         f"본 iteration 번호: {iteration}\n\n"
         f"[REQUIREMENT_SPEC]\n{spec_markdown}\n\n"
-        f"[ENGINEER_OUTPUT]\n{chain_result.engineer_output}\n\n"
+        f"[ENGINEER_OUTPUT]\n{engineer_block}\n\n"
         f"[QA_REVIEW]\n{chain_result.qa_review}\n\n"
         f"[EXECUTION_RESULT]\n{exec_block}\n\n"
         f"[PREVIOUS_GAP_REPORT]\n{prev_block}\n"

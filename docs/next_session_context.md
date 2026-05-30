@@ -56,18 +56,16 @@
 
 ## 📋 PENDING (우선순위 순)
 
-> **2026-05-30 재정렬 (P0/P1/P2 라이브 검증 verdict)**: P0(#234)+P1(#235)+P2(#236) 머지·라이브 검증 완료 — **4처방 전부 작동 확정**(P2-A가 web 파일 ~15개 code/ 저장 성공, 지난 런 0). 그런데도 재실행 BLOCKED — 원인은 P0~P2가 닿지 않는 **상류 NEW 병목 P5**. 우선순위 = **P5 → P3 → P6 → 재실행 → P4(하향)**. 상세: [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).
+> **2026-05-30 재정렬 (P5 머지 #237)**: P0(#234)+P1(#235)+P2(#236)+**P5(#237)** 머지 완료. P5(Gap Analyst 입력 배선)로 **판정기가 저장된 web 산출을 보게 됨**(이전 "0 satisfied" 오판 해소, 회귀 0/pytest 1811). 우선순위 = **재실행(P5 결합 효과) → P3(크루 framing) → P6(BIM 본질) → P4(하향)**. 상세: [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).
 
-### ✅ P0(#234)·P1(#235)·P2(#236) — 전부 라이브 검증 완료
-- P0: graceful BLOCKED(ITERATION_CAP), 크래시 0. P1: PLATFORM_DRIFT 3회. P2-A: **iter2 web 파일 ~15개(react+vite+ts SPA) code/ 실제 저장**(손실 0). P2-B: prev=PyQt→차단·경고 / prev=web→정상 주입 4/4 정확.
+### ✅ P0(#234)·P1(#235)·P2(#236)·P5(#237) — 머지 완료
+- P0: graceful BLOCKED, 크래시 0. P1: PLATFORM_DRIFT 3회. P2-A: iter2 web 파일 ~15개 code/ 저장(라이브 검증됨). P2-B: 4/4 정확. **P5: `_format_gap_analyst_input` 폴백(engineer_output→gui_code_output→저장코드) — 판정기가 web 산출을 봄(라이브 미검증, 재실행 대기).**
 
-### 🎯 긍정 신호 — web 저장 능력 실증
-P2-A가 **iter2 web SPA(index.html/package.json/vite.config.ts/.tsx ×10)를 디스크에 실제 저장**. 지난 런 0개 → 이번 성공. 시스템은 web을 *만들고 저장*할 수 있다. 남은 건 *판정기가 그걸 보게(P5)* + 매 iter web 유지(P3) + BIM 본질(P6).
+### 🎯 긍정 신호 — web 저장(P2-A) + 판정기 가시성(P5) 둘 다 확보
+시스템은 web을 *만들고 저장*(P2-A 라이브 확인)하고, 이제 판정기가 *그걸 본다*(P5). 남은 건 재실행으로 **satisfied 집계 → COMPLETE 신호**가 실제로 나는지 + 매 iter web 유지(P3) + BIM 본질(P6).
 
-### ★ P5 (최우선·NEW) — Gap Analyst GUI-경로 입력 배선 수정
-**근거 (1차 원인·수렴 절대 블로커)**: P2-A가 정답 web을 디스크에 저장해도 **판정기(Gap Analyst)가 못 본다**. GUI 경로 `engineer_output=""` 고정(`analyze_and_implement.py:1430`), `_format_gap_analyst_input`(`iterative_loop.py:335`)이 `gui_code_output` 미주입 → `[ENGINEER_OUTPUT]` 항상 공란 → **iter2가 web 14파일+드리프트0인데도 "0 satisfied"** → COMPLETE 불가. 이 배선이 끊긴 한 GUI/web 경로는 *완벽 산출을 내도* 절대 COMPLETE 안 됨.
-- `_format_gap_analyst_input`가 GUI 경로에서 `gui_code_output`(또는 `code/`의 web 파일)을 `[ENGINEER_OUTPUT]`에 주입(없으면 `gui_code_output` 폴백).
-- (P2-A가 코드→디스크를 고쳤듯, P5는 코드→판정기 채널 수정.)
+### ★ 재실행 (1순위) — P5 결합 효과 검증
+**검증 게이트**: graceful 종료 + web 산출 code/ materialize + **Gap Analyst가 web 코드 보고 satisfied 증가**(P5 핵심) + (P3/P6 미적용이라 PyQt 재드리프트·도메인 드리프트는 잔존 가능). satisfied가 0에서 증가하면 P5 라이브 작동 확정.
 
 ### ★ P3 — GUI Code Generator 크루 framing
 **근거**: iter3가 3중 web 신호(P1 제약+prev web 코드+CTO 전면 web 전략)에도 **PyQt6 재선택** + "사용자가 PyQt 지정" **날조**(`13_gui_code_output.md:6`). 드리프트가 CTO 하류 Code Generator에서 주입.
@@ -77,8 +75,8 @@ P2-A가 **iter2 web SPA(index.html/package.json/vite.config.ts/.tsx ×10)를 디
 **근거**: iter2 web조차 three.js/IFC **0개**(generic 에이전트 대시보드). **플랫폼 회복 ≠ 도메인 회복** (역설: BIM 가장 충실한 건 플랫폼 틀린 iter1 PyQt).
 - 도메인 체크리스트(3D-webgl 등)가 web 경로에서도 실제 적용 + GUI 생성기가 요청 도메인(BIM 3D 뷰어)을 generic 대시보드로 치환 못 하게.
 
-### 재실행 (P5+P3+P6 머지 후) — web+BIM 수렴 검증
-**검증 게이트**: graceful 종료 + web 산출 code/ materialize + **Gap Analyst가 web 코드 보고 satisfied 증가** + iter 간 PyQt 재드리프트 0 + Three.js/IFC 실제 구현.
+### 완전 수렴 게이트 (P3+P6 까지 머지 후, 최종 목표)
+graceful 종료 + web 산출 materialize + Gap Analyst satisfied 증가(P5) + iter 간 PyQt 재드리프트 0(P3) + Three.js/IFC 실제 구현(P6) + 동작 배포물.
 
 ### P4 (하향) — QA 단일토큰 입력 결함
 Code Reviewer가 `"NEEDS_REVISION"` 단일 토큰만 받는 systematic failure (iter4/5, PR #28/#30/#32 재현). **실재하나 이번 BLOCKED의 원인은 아님**(적대 검증 반증 — PyQt iter의 BLOCKED는 PLATFORM_DRIFT→P0 cap 경로라 QA-feed stagnation 우회). 우선순위 하향, 별도 추적.
@@ -248,4 +246,4 @@ docs/backlog/phase6e_followups.md §C 읽고
 
 ---
 
-**한 줄 요약**: 🧪 P0(#234)+P1(#235)+P2(#236) 라이브 검증 **4처방 전부 작동 확정** — **P2-A가 iter2 web 파일 ~15개 code/ 실제 저장**(지난 런 0). 그런데도 BLOCKED — 1차 원인 = 상류 NEW 병목 **P5(Gap Analyst가 저장된 GUI/web 산출을 못 봄 — `_format_gap_analyst_input`이 gui_code_output 미주입 → 완벽 web 산출도 "0 satisfied")**. P4(QA 단일토큰)는 비인과로 하향(반증). 1순위 = **P5(판정기 배선) > P3(크루 framing) > P6(BIM 본질) > P4**. 상세 [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).
+**한 줄 요약**: 🔧 P5(#237) 머지 — **Gap Analyst GUI 입력 배선 수정**(수렴 절대 블로커 해소): `_format_gap_analyst_input` 폴백(engineer_output→gui_code_output→저장코드)으로 **판정기가 저장된 web 산출을 봄**(이전 "0 satisfied" 오판 차단, 증명됨, pytest 1811). P0~P2+P5 머지 완료. 1순위 = **재실행(P5 결합 효과 — satisfied 집계 검증)** → P3(크루 framing) → P6(BIM 본질) → P4(하향). 상세 [P0P1P2 verdict](diagnostics/phase6e_rerun_P0P1P2_verdict_20260529.md).

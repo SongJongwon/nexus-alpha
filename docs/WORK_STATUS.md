@@ -1,7 +1,19 @@
 # 📌 Nexus Alpha — Work Status Dashboard (v13 동기화)
 
-> **마지막 업데이트**: **2026-05-29 v13 Phase 6.E P2(#236) 라이브 검증 완료 — P0/P1/P2 4처방 전부 작동 확정(P2-A가 web 파일 ~15개 code/ 저장 성공). 재실행은 여전히 BLOCKED — 원인=상류 NEW 병목 P5(Gap Analyst가 저장된 GUI/web 산출을 못 봄). 다음 = P5(판정기 배선) > P3(web 유지) > P6(BIM 본질) > P4(하향).**
+> **마지막 업데이트**: **2026-05-30 v13 Phase 6.E P5(#237) 완료 — Gap Analyst GUI 입력 배선 수정(절대 블로커 해소): `_format_gap_analyst_input`이 engineer_output 공란 시 gui_code_output→저장코드 폴백 → 판정기가 저장된 web 산출을 봄. pytest 1802 → 1811 (+9). 다음 = P5 적용 재실행(satisfied 집계 검증) / P3(크루 framing) / P6(BIM 본질).**
 > 🩺 **재실행 크래시 분석 (2026-05-29)**: A+B 머지된 main 재실행이 **GraphRecursionError(recursion_limit=50 초과)로 크래시**. 근본원인 = `convergence_judge.py`에서 **Rule 0(도메인 체크리스트 미충족→IMPROVE 강제)가 Rule 2 STAGNATION·Rule 4 ITERATION_CAP보다 먼저 early-return → 종료 규칙 dead code → max_iterations=5 무력화** (루프 7회 폭주). PR #231 도입 회귀. recursion_limit=50은 증상(정상 5-iter엔 충분), B(#232)는 직전 PyQt 코드 첨부로 드리프트 고착, 엔지니어 7/7 PyQt(web 회복 0회). **A+B 라이브 미검증 — [크래시 분석](diagnostics/phase6e_rerun_crash_analysis_20260529.md) / [1차 verdict](diagnostics/phase6e_live_rerun_verdict_20260529.md)**.
+
+### 🔧 PR #237 (2026-05-30) — P5 Gap Analyst GUI-경로 입력 배선 수정 (수렴 절대 블로커 해소)
+
+> P0P1P2 verdict 1차 원인 처방. P2-A가 web 코드를 디스크에 저장해도 *판정기(Gap Analyst)가 못 보던* 배선 결함 수정.
+
+| 변경 | 내용 |
+|------|------|
+| `iterative_loop.py` `_format_gap_analyst_input` | `[ENGINEER_OUTPUT]` 블록 폴백 추가: **engineer_output → gui_code_output → 저장 코드 발췌**(`_extract_engineer_output_excerpt`). GUI 경로(engineer_output="" 고정)에서 실제 산출(gui_code_output/code)을 판정기가 보게 함. engineer_output 있으면 기존 그대로(회귀 0). |
+| 회귀 테스트 | 신규 `test_p5_gap_analyst_input.py` (P5-T1~T4, 9). pytest **1802 → 1811 (+9, 회귀 0)**. |
+| 증명 | GUI 경로(engineer_output="", gui_code_output=web) → `[ENGINEER_OUTPUT]`에 THREE/WebGLRenderer/IFCLoader 포함(공란 아님). 이전 버그("0 satisfied" 오판) 재현 안 됨. |
+| 보존 | P0/P1/P2·Track A/B·domain_checklist=None 방어 전부 불변. CLI 경로는 engineer_output 우선이라 gui 미사용. |
+| 효과 | GUI/web 경로가 *완벽 산출 시* satisfied 집계 가능 → COMPLETE 신호 비로소 열림. (단 P3 크루 framing·P6 도메인 드리프트는 별도 — 재실행으로 결합 효과 검증 필요.) |
 
 ### 🧪 P0/P1/P2 재실행 verdict (2026-05-30) — 4처방 전부 작동, BLOCKED 원인은 상류 NEW 병목 P5
 
