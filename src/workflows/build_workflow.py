@@ -391,6 +391,12 @@ def _default_npm_build_runner(code_dir: Path, timeout_sec: int) -> tuple[bool, s
 
     ``npm ci`` (lockfile 없으면 ``npm install`` 폴백) → ``npm run build``. P7 default;
     테스트는 ``_run_web_build(npm_runner=...)`` 로 주입해 실 npm 호출 회피.
+
+    v13 Phase 6.E P11 — 설치 단계에 ``--legacy-peer-deps`` 추가 (npm ci · install 둘 다).
+        배경 (P10 후속, 격리 빌드 검증): LLM 이 산출한 manifest 가 web-ifc-three(peer
+        three@^0.149) ↔ three@0.160 처럼 peer 범위 불일치를 흔히 내, 기본 npm install 이
+        ERESOLVE 로 실패 → dist/ 미생성. ``--legacy-peer-deps`` 로 peer 충돌을 경고로
+        강등해 설치 성공 → ``npm run build`` 성공 확인됨. build 단계는 불변.
     """
     import shutil
     import time
@@ -401,12 +407,13 @@ def _default_npm_build_runner(code_dir: Path, timeout_sec: int) -> tuple[bool, s
     t0 = time.monotonic()
     try:
         inst = subprocess.run(
-            [npm, "ci"], cwd=str(code_dir), capture_output=True, text=True,
-            timeout=timeout_sec, encoding="utf-8", errors="replace",
+            [npm, "ci", "--legacy-peer-deps"], cwd=str(code_dir), capture_output=True,
+            text=True, timeout=timeout_sec, encoding="utf-8", errors="replace",
         )
         if inst.returncode != 0:
             inst = subprocess.run(
-                [npm, "install"], cwd=str(code_dir), capture_output=True, text=True,
+                [npm, "install", "--legacy-peer-deps"], cwd=str(code_dir),
+                capture_output=True, text=True,
                 timeout=timeout_sec, encoding="utf-8", errors="replace",
             )
         bld = subprocess.run(
