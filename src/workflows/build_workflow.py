@@ -438,7 +438,14 @@ def _run_web_build(
     """
     import hashlib
 
-    code_dir = code_files[0].parent if code_files else (workflow_dir / "code")
+    # v13 Phase 6.E P10b(i) — code_dir 를 추출 루트(workflow_dir/"code")로 고정.
+    #   기존 ``code_files[0].parent`` 는 P10b(i) 서브트리(code/src/main.ts)에서 첫 파일이
+    #   하위 디렉터리면 잘못된 빌드 디렉터리(code/src/)를 가리킬 수 있음. 추출은 항상
+    #   workflow_dir/"code" 로 쓰므로 이 루트가 정답. (기존 테스트는 workflow_dir=tmp_path·
+    #   파일 tmp_path/"code" 라 동일값 → 회귀 0.)
+    code_dir = (workflow_dir / "code") if workflow_dir is not None else (
+        code_files[0].parent if code_files else Path("code")
+    )
     runner = npm_runner or _default_npm_build_runner
     ok, log, elapsed = runner(code_dir, timeout_sec)
     dist = code_dir / "dist"

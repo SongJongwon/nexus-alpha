@@ -24,10 +24,11 @@ LangFuse 통합:
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional, Sequence
 
 from crewai import Crew, Process, Task
@@ -150,12 +151,17 @@ _FENCE_LANG_EXT: dict[str, str] = {
     "typescript": ".ts", "ts": ".ts", "tsx": ".tsx",
     "javascript": ".js", "js": ".js", "jsx": ".jsx",
     "html": ".html", "css": ".css", "json": ".json",
+    # v13 Phase 6.E P10a(1) — LLM 이 manifest 를 ```jsonc / ```json5 로 fence 하는 경우
+    # (// 주석 동반) 도 .json 으로 매핑해 인식 (P9 verdict: package.json/tsconfig 드롭 진범).
+    "jsonc": ".json", "json5": ".json",
 }
 # Track A(CLI)/pytest/release 경로는 python-only (회귀 0). GUI web 경로만 확장.
 _PY_ONLY_LANGS: tuple[str, ...] = ("python", "py")
 _WEB_CODE_LANGS: tuple[str, ...] = (
     "python", "py", "typescript", "ts", "tsx",
     "javascript", "js", "jsx", "html", "css", "json",
+    # P10a(1) — jsonc/json5 도 web 산출 언어로 허용 (언어 게이트 통과).
+    "jsonc", "json5",
 )
 _WEB_FILE_EXTS: frozenset[str] = frozenset(
     {".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".json"}
@@ -209,11 +215,79 @@ def _resolve_block_filename(lang: str, info: str, block: str) -> tuple[Optional[
     leading = _LEADING_NAME_RE.match(first_line)
     if leading:
         return leading.group(1), True
-    if lang == "json":
+    if lang in ("json", "jsonc", "json5"):  # P10a(1) — jsonc/json5 도 well-known 인식
         wk = _wellknown_json_name(block)
         if wk:
             return wk, False
     return None, False
+
+
+def _normalize_jsonc_to_json(text: str) -> str:
+    """jsonc/json5 본문을 strict JSON 으로 정규화 (P10a(2)).
+
+    줄 ``//`` 주석 · ``/* */`` 블록 주석 · trailing comma(`,}`/`,]`) 제거.
+    npm(package.json)·tsc(tsconfig.json)는 strict JSON 파서라 주석/trailing comma 거부 —
+    (1)만으로 jsonc 를 .json 으로 저장해도 npm 이 파싱 실패할 수 있어 본 정규화가 필요.
+    문자열 리터럴 안의 ``//``·``/*``·``,`` 는 상태머신으로 보존 (정규식 단독은 불안전).
+    json5 의 single-quote/unquoted-key 변환은 범위 밖 (manifest 는 표준 JSON+주석 형태).
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    quote = ""
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                in_str = False
+            i += 1
+            continue
+        if c in ('"', "'"):
+            in_str = True
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":  # 줄 주석
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":  # 블록 주석
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i = min(i + 2, n)
+            continue
+        if c == ",":  # trailing comma — 다음 비공백이 }/] 면 콤마 삭제
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
+                i += 1
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _safe_rel_path(name: str) -> Optional[Path]:
+    """``name`` 을 code_dir 내부 상대경로로 정규화 (P10b(i)).
+
+    절대경로/드라이브/``..`` traversal 이면 None (호출부가 평탄화 fallback). 그 외엔
+    선두 ``/`` 제거 + ``\\``→``/`` 정규화 후 깨끗한 상대 Path 반환. FS 미접근(순수 경로).
+    """
+    norm = name.replace("\\", "/").lstrip("/")
+    parts = [p for p in PurePosixPath(norm).parts if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        return None
+    if ":" in parts[0]:  # 드라이브 문자 (C:) 등 절대경로 잔재 차단
+        return None
+    return Path(*parts)
 
 
 def _extract_code_blocks(
@@ -221,6 +295,7 @@ def _extract_code_blocks(
     code_dir: Path,
     *,
     languages: tuple[str, ...] = _PY_ONLY_LANGS,
+    preserve_tree: bool = False,
 ) -> list[Path]:
     """fenced 코드 블록을 추출해 `code_dir` 아래에 파일로 저장한다.
 
@@ -253,13 +328,24 @@ def _extract_code_blocks(
             if ext == ".json":
                 continue
             name = f"block{idx:02d}{ext}"
-        safe_name = name.replace("/", "__").replace("\\", "__")
+        # v13 Phase 6.E P10b(i) — web 경로(preserve_tree)면 실 디렉터리 트리로 작성
+        # (src/main.ts → code/src/main.ts). 그 외엔 기존 평탄화(src__main.ts) 유지 — 회귀 0.
+        # traversal 비정상 시 평탄화 fallback.
+        if preserve_tree:
+            rel = _safe_rel_path(name)
+            file_path = (code_dir / rel) if rel is not None else (
+                code_dir / name.replace("/", "__").replace("\\", "__")
+            )
+        else:
+            file_path = code_dir / name.replace("/", "__").replace("\\", "__")
         content = block
-        # json 산출은 주석(// 등)이 불법 → file: 헤더 줄을 본문에서 제거해 유효 JSON 보장.
-        # 비-json(.ts/.html/.css/.py)은 헤더 줄 보존 (기존 동작 불변 — 회귀 0).
-        if strip_first_line and safe_name.lower().endswith(".json"):
-            content = block.split("\n", 1)[1] if "\n" in block else ""
-        file_path = code_dir / safe_name
+        # json 산출은 주석(// 등)이 불법 → file: 헤더 줄 제거 + jsonc→strict JSON 정규화로
+        # 유효 JSON 보장 (P9-3 + P10a(2)). 비-json(.ts/.html/.css/.py)은 본문 보존 — 회귀 0.
+        if file_path.suffix.lower() == ".json":
+            if strip_first_line:
+                content = content.split("\n", 1)[1] if "\n" in content else ""
+            content = _normalize_jsonc_to_json(content)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
         saved.append(file_path)
     return saved
@@ -298,6 +384,105 @@ def _detect_extraction_loss(
             "web 파일 일부만 저장됨 (P9 manifest-loss 가드)."
         )
     return None
+
+
+# v13 Phase 6.E P10a(3) — web 빌드 필수 manifest 보장 (salvage → synthesize, fail-loud)
+_REQUIRED_WEB_MANIFESTS: tuple[str, ...] = ("package.json", "tsconfig.json")
+# bare module import (상대/절대 경로 아님) — import X from 'pkg' / import('pkg') / from 'pkg'
+_BARE_IMPORT_RE = re.compile(
+    r"""(?:from|import)\s+(?:[^'"]*?\s+from\s+)?['"]([^'".][^'"]*)['"]"""
+)
+
+
+def _find_manifest_block(markdown: str, manifest_name: str) -> Optional[str]:
+    """fence 언어 무관하게 ``// file: <manifest>`` 헤더 블록 본문을 찾아 반환 (salvage).
+
+    P10a(1) 이 jsonc/json5 를 허용하지만, 미상장 fence(예: ``jsonc5`` 오타)·헤더만 다른
+    경우까지 커버하기 위한 fence-agnostic 백업. 헤더 줄은 제거하고 본문만 반환.
+    """
+    pattern = re.compile(r"```[A-Za-z0-9_+-]*[ \t]*[^\n]*\n(.*?)\n[ \t]*```", re.DOTALL)
+    for block in pattern.findall(markdown or ""):
+        first = block.splitlines()[0] if block.strip() else ""
+        h = _FILE_HEADER_RE.match(first)
+        if h and Path(h.group(1)).name.lower() == manifest_name.lower():
+            return block.split("\n", 1)[1] if "\n" in block else ""
+    return None
+
+
+def _synthesize_package_json(code_paths: list[Path]) -> str:
+    """code_paths 의 .ts/.js bare import 에서 deps 를 추론해 최소 package.json 합성 (최후수단)."""
+    deps: set[str] = set()
+    for p in code_paths:
+        if p.suffix.lower() not in (".ts", ".tsx", ".js", ".jsx"):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            continue
+        for spec in _BARE_IMPORT_RE.findall(text):
+            if spec.startswith("@"):  # scoped: @scope/name
+                pkg = "/".join(spec.split("/")[:2])
+            else:  # subpath import (three/examples/...) → 최상위 패키지명
+                pkg = spec.split("/")[0]
+            if pkg:
+                deps.add(pkg)
+    dep_obj = {d: "*" for d in sorted(deps) if d not in ("typescript", "vite")}
+    obj = {
+        "name": "app",
+        "private": True,
+        "version": "0.0.0",
+        "type": "module",
+        "scripts": {"dev": "vite", "build": "tsc && vite build", "preview": "vite preview"},
+        "dependencies": dep_obj,
+        "devDependencies": {"typescript": "*", "vite": "*"},
+    }
+    return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
+
+
+def _ensure_web_manifests(
+    gui_code_output: str, code_dir: Path, code_paths: list[Path]
+) -> list[Path]:
+    """web 빌드 필수 manifest 를 code_dir 에 보장 (P10a(3)). 반환: 새로 추가된 Path 목록.
+
+    동작 (web 프로젝트일 때만): ① salvage — 미저장 manifest 를 gui_code_output 의 ``// file:``
+    블록(fence 무관)에서 건져 jsonc→strict 정규화 후 기록. ② synthesize — package.json 이
+    그래도 없으면 .ts import 추론으로 최소본 합성. 둘 다 ``13c_manifest_recovery.txt`` 로
+    fail-loud 기록. 비-web(데스크탑/.py) 이면 no-op (회귀 0).
+    """
+    saved_web = [p for p in code_paths if p.suffix.lower() in _WEB_FILE_EXTS]
+    if not saved_web:  # web 산출 아님 → 보장 대상 아님 (데스크탑/CLI 불변)
+        return []
+    saved_names = {p.name.lower() for p in code_paths}
+    added: list[Path] = []
+    notes: list[str] = []
+    # ① salvage
+    for manifest in _REQUIRED_WEB_MANIFESTS:
+        if manifest in saved_names:
+            continue
+        body = _find_manifest_block(gui_code_output, manifest)
+        if body is None:
+            continue
+        content = _normalize_jsonc_to_json(body)
+        try:
+            json.loads(content)
+        except Exception:  # noqa: BLE001 — 유효 JSON 아니면 salvage 보류 (synthesize 로)
+            continue
+        fp = code_dir / manifest
+        fp.write_text(content, encoding="utf-8")
+        added.append(fp)
+        saved_names.add(manifest)
+        notes.append(f"salvaged {manifest} (// file: 블록에서 복구 + jsonc→strict 정규화)")
+    # ② synthesize package.json (최후수단)
+    if "package.json" not in saved_names:
+        fp = code_dir / "package.json"
+        fp.write_text(_synthesize_package_json(code_paths + added), encoding="utf-8")
+        added.append(fp)
+        notes.append("SYNTHESIZED package.json (import 추론 최소본 — 버전 best-effort, 검증 요망)")
+    if notes:
+        (code_dir.parent / "13c_manifest_recovery.txt").write_text(
+            "\n".join(notes), encoding="utf-8"
+        )
+    return added
 
 
 # PR #66 — Update Checker 실 통합 (방어선 4 패턴 재사용)
@@ -1653,9 +1838,16 @@ def _run_gui_branch_chain(
 
     # 코드 추출 — GUI Code Generator 산출 + (PR #58) Pytest Author 산출 합산
     # v13 Phase 6.E P2-A (PR #236) — GUI 산출은 web(.ts/.html/.css/...) 포함 추출.
+    # P10b(i) — web 경로는 실 src/ 서브트리로 작성(평탄화 X) → index.html 의 /src/main.ts 및
+    # 상대 import 가 vite/tsc 에서 네이티브 해소 (P9 verdict 의 둘째 벽 차단). preserve_tree
+    # 는 *이 GUI web 호출에만* 적용 — Track A/CLI/pytest 추출은 평탄 유지 (회귀 0).
     code_paths = _extract_code_blocks(
-        gui_code_output, workflow_dir / "code", languages=_WEB_CODE_LANGS
+        gui_code_output, workflow_dir / "code", languages=_WEB_CODE_LANGS, preserve_tree=True
     )
+    # P10a(3) — web 빌드 필수 manifest(package.json/tsconfig.json) salvage→synthesize 보장.
+    # jsonc/json5 는 P10a(1) 로 이미 추출되나, 미상장 fence·완전 누락까지 fail-loud 로 커버.
+    # 비-web(데스크탑) 산출이면 no-op (회귀 0).
+    code_paths += _ensure_web_manifests(gui_code_output, workflow_dir / "code", code_paths)
     # P2-A 손실 가드 — web 산출인데 web 파일 0개 추출 시 경고 아티팩트 기록 (조용한 손실 방지).
     _loss_warning = _detect_extraction_loss(gui_code_output, code_paths)
     if _loss_warning:
@@ -1663,7 +1855,7 @@ def _run_gui_branch_chain(
             _loss_warning, encoding="utf-8"
         )
     if pytest_suite:
-        # pytest 산출은 python-only 유지 (test_*.py)
+        # pytest 산출은 python-only 유지 (test_*.py) — 평탄 (preserve_tree=False, 기본)
         code_paths += _extract_code_blocks(pytest_suite, workflow_dir / "code")
 
     return WorkflowResult(
