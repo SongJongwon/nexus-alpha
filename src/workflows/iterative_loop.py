@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1449,9 +1450,84 @@ def _node_analyze_gap(state: _LoopState) -> dict[str, Any]:
     }
 
 
+# v13 Phase 6.E P12 — web 빌드 실패 자가수정 루프 (build error → must-fix → 재빌드)
+# tsc: `src/foo.ts(12,5): error TS2304: Cannot find name 'Foo'.`
+_TSC_ERROR_RE = re.compile(
+    r"(?P<file>[^\s(]+\.\w+)\((?P<line>\d+),(?P<col>\d+)\):\s*(?P<msg>error\s+TS\d+:.*)"
+)
+# esbuild/vite: `✘ [ERROR] ...` 다음 줄 `    src/foo.ts:10:3:` / rollup `file.ts (10:3)`
+_VITE_FILELOC_RE = re.compile(r"(?P<file>[\w./\\-]+\.\w+):(?P<line>\d+):(?P<col>\d+)")
+_VITE_ROLLUP_RE = re.compile(r"(?P<file>[\w./\\-]+\.\w+)\s*\((?P<line>\d+):(?P<col>\d+)\)")
+_VITE_KEYWORDS = (
+    "error during build",
+    "rollup failed to resolve",
+    "could not resolve",
+    "[vite]",
+    "failed to resolve import",
+    "transform failed",
+)
+
+
+def _parse_web_build_errors(text: str) -> list[str]:
+    """web 빌드 stderr 에서 컴파일러/번들러 에러를 file:line 메시지로 파싱 (P12).
+
+    tsc(``file(line,col): error TSxxxx: msg``) + vite/esbuild/rollup(``file:line:col`` /
+    ``file (line:col)`` + 키워드 라인) 둘 다 인식. 중복 제거 + 최대 10건. 빈 입력/무매칭은
+    빈 list (호출부가 error_message 첫 줄로 폴백).
+    """
+    if not text:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(item: str) -> None:
+        key = item.strip()
+        if key and key not in seen:
+            seen.add(key)
+            found.append(key)
+
+    for m in _TSC_ERROR_RE.finditer(text):
+        _add(f"{m.group('file')}({m.group('line')},{m.group('col')}): {m.group('msg').strip()}")
+    # vite/esbuild — 키워드 포함 라인 + 동반 file:line 위치
+    for raw in text.splitlines():
+        low = raw.lower()
+        if not any(kw in low for kw in _VITE_KEYWORDS):
+            continue
+        loc = _VITE_FILELOC_RE.search(raw) or _VITE_ROLLUP_RE.search(raw)
+        prefix = (
+            f"{loc.group('file')}:{loc.group('line')}:{loc.group('col')} - " if loc else ""
+        )
+        _add(f"{prefix}{raw.strip()[:200]}")
+        if len(found) >= 10:
+            break
+    # 키워드는 없지만 file:line:col 만 있는 esbuild 위치 라인도 보강 (tsc 미매칭 시)
+    if not found:
+        for m in _VITE_FILELOC_RE.finditer(text):
+            _add(f"{m.group('file')}:{m.group('line')}:{m.group('col')}")
+            if len(found) >= 10:
+                break
+    return found[:10]
+
+
+def _is_web_build_result(executor_result: Any) -> bool:
+    """ExecuteResult 가 web(npm/vite) 빌드 산출인지 판정 (P12 — web-scoped 게이트).
+
+    web 러너는 command=[npm, ci, ...] + 실패 시 exit_code=-8. desktop(PyInstaller) 은
+    command[0] 가 python/pyinstaller, exit_code 가 -1/-2/-4..-7. command[0]=='npm' 또는
+    exit_code==-8 이면 web. (둘 다 아니면 desktop → 기존 BLOCKED 경로 불변.)
+    """
+    command = getattr(executor_result, "command", None) or []
+    if command and str(command[0]).lower() == "npm":
+        return True
+    return getattr(executor_result, "exit_code", None) == -8
+
+
 def _apply_build_failure_override(
     decision: JudgmentDecision,
     chain_result: Any,
+    *,
+    gap: Optional[GapReport] = None,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> JudgmentDecision:
     """PR #162 (2026-05-18) — PyInstaller build 실패 시 verdict 를 BLOCKED 로 override.
 
@@ -1487,10 +1563,51 @@ def _apply_build_failure_override(
         # build 성공 — override 불필요
         return decision
 
-    # build 시도됐는데 실패 → BLOCKED(BUILD_FAILED) 로 override
+    # build 시도됐는데 실패 → override
     exit_code = getattr(executor_result, "exit_code", "?")
     error_msg = getattr(executor_result, "error_message", None) or "unknown"
     error_first_line = error_msg.splitlines()[0] if error_msg else "unknown"
+
+    # v13 Phase 6.E P12 — web 타깃 빌드 실패는 *즉시 terminal BLOCKED 로 강등하지 말고*
+    # iterate 루프로 되먹여 자가수정. 빌드 stderr 의 tsc/vite 에러를 high-priority must-fix
+    # 로 주입(file:line+메시지) → next_action → feedback → GUI Code Generator 가 해당 파일
+    # 패치 → 다음 iteration 재빌드. iteration 예산 소진 시에만 BLOCKED(BUILD_FAILED).
+    # desktop(PyInstaller) 은 아래 기존 경로 그대로 (web-scoped — 회귀 0).
+    if _is_web_build_result(executor_result):
+        stderr = getattr(executor_result, "stderr", "") or ""
+        build_errors = _parse_web_build_errors(stderr) or _parse_web_build_errors(error_msg)
+        errs_block = "\n".join(f"  - {e}" for e in build_errors[:10]) or f"  - {error_first_line}"
+        cur_iter = getattr(gap, "iteration", 0) if gap is not None else 0
+        if cur_iter < max_iterations:
+            # 예산 남음 → IMPROVE_NEEDED (라우터가 prepare_feedback → run_chain 으로 루프백).
+            return JudgmentDecision(
+                verdict=Verdict.IMPROVE_NEEDED,
+                blocked_cause=BlockedCause.NONE,
+                reason=(
+                    f"WEB_BUILD_FAILED (exit={exit_code}) — Gap Analyst 는 COMPLETE 였으나 "
+                    f"npm/tsc/vite 빌드가 실패. 자가수정 루프 계속 (iter {cur_iter}/{max_iterations})."
+                ),
+                next_action=(
+                    "다음 web 빌드 에러를 *최우선 must-fix* 로 해당 파일을 패치하세요 "
+                    "(file(line,col) 위치의 타입/import/번들 오류 수정) — 그 다음 빌드 재시도. "
+                    "기존 충족 요구는 회귀 금지:\n" + errs_block
+                ),
+                must_fix_count=max(decision.must_fix_count, len(build_errors) or 1),
+            )
+        # 예산 소진 → BLOCKED(BUILD_FAILED) + 마지막 빌드 에러 첨부.
+        return JudgmentDecision(
+            verdict=Verdict.BLOCKED,
+            blocked_cause=BlockedCause.BUILD_FAILED,
+            reason=(
+                f"WEB_BUILD_FAILED (exit={exit_code}) — iteration 예산 소진(iter "
+                f"{cur_iter}/{max_iterations})으로 자가수정 중단. dist/ 미산출."
+            ),
+            next_action="마지막 web 빌드 에러 (예산 소진 — 추가 자가수정 위해 --max-iterations 증액):\n"
+            + errs_block,
+            must_fix_count=decision.must_fix_count,
+        )
+
+    # desktop(PyInstaller) — 기존 BLOCKED(BUILD_FAILED) 경로 불변 (회귀 0)
     return JudgmentDecision(
         verdict=Verdict.BLOCKED,
         blocked_cause=BlockedCause.BUILD_FAILED,
@@ -1672,8 +1789,14 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         # Phase 6.E P1 (PR #235) — 플랫폼 드리프트 탐지 (web 의도 시 데스크탑 마커 검사)
         platform_intent=state.get("platform_intent", "unspecified"),
     )
-    # PR #162 — build 실패 시 BLOCKED override
-    decision = _apply_build_failure_override(decision, state.get("chain_result"))
+    # PR #162 — build 실패 시 BLOCKED override.
+    # v13 Phase 6.E P12 — web 빌드 실패는 예산 남으면 IMPROVE(루프백)·cap 이면 BLOCKED.
+    decision = _apply_build_failure_override(
+        decision,
+        state.get("chain_result"),
+        gap=gap,
+        max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
+    )
     return {
         "decision": decision,
         "budget_tokens_remaining": budget,
