@@ -164,6 +164,56 @@ _WEB_FILE_EXTS: frozenset[str] = frozenset(
 _FILE_HEADER_RE = re.compile(
     r"\s*(?:#|//|<!--|/\*)\s*file:\s*([^\s*>]+\.[A-Za-z0-9]+)", re.IGNORECASE
 )
+# v13 Phase 6.E P9 — fence-info 파일명 (```json package.json) / 앞줄 "package.json:" 류.
+_INFO_FILENAME_RE = re.compile(r"[\w./\\-]+\.[A-Za-z0-9]+")
+_LEADING_NAME_RE = re.compile(r"\s*([\w./\\-]+\.[A-Za-z0-9]+)\s*:\s*$")
+
+
+def _wellknown_json_name(block: str) -> Optional[str]:
+    """헤더 없는 ``` ```json ``` 블록을 *내용* 으로 well-known manifest 인식 (P9).
+
+    JSON 은 주석(``//``/``#``)이 불법이라 LLM 이 ``file:`` 헤더를 못 붙이는 경우가
+    있다. package.json / tsconfig.json 은 web 빌드 필수 manifest 이므로 예시 데이터와
+    구분되는 고유 키로 식별해 파일명을 부여한다 (그 외 헤더리스 json 은 기존대로 드롭).
+    """
+    low = block.lower()
+    if '"compileroptions"' in low:
+        return "tsconfig.json"
+    if (
+        '"dependencies"' in low
+        or '"devdependencies"' in low
+        or ('"scripts"' in low and '"name"' in low)
+    ):
+        return "package.json"
+    return None
+
+
+def _resolve_block_filename(lang: str, info: str, block: str) -> tuple[Optional[str], bool]:
+    """fenced 블록의 파일명 + 첫 줄(헤더) 제거 여부를 결정 (P9).
+
+    우선순위: (1) 첫 줄 ``# file:`` / ``// file:`` / ``<!-- file:`` / ``/* file:`` 헤더
+    (기존 1순위, 회귀 0) → (2) fence-info 파일명 (```json package.json) → (3) 앞줄
+    "package.json:" 류 → (4) well-known headerless json (내용 식별). 어떤 신호도
+    없으면 (None, False) → 호출부가 기존 동작(block01.<ext> / headerless json 드롭) 유지.
+
+    Returns:
+        (파일명 | None, strip_first_line) — strip_first_line=True 면 첫 줄이 헤더/마커라
+        본문에서 제거 대상 (json 유효성 보장용; 비-json 은 호출부에서 보존).
+    """
+    first_line = block.splitlines()[0] if block.strip() else ""
+    header = _FILE_HEADER_RE.match(first_line)
+    if header:
+        return header.group(1), True
+    if info and _INFO_FILENAME_RE.fullmatch(info):
+        return info, False
+    leading = _LEADING_NAME_RE.match(first_line)
+    if leading:
+        return leading.group(1), True
+    if lang == "json":
+        wk = _wellknown_json_name(block)
+        if wk:
+            return wk, False
+    return None, False
 
 
 def _extract_code_blocks(
@@ -184,25 +234,33 @@ def _extract_code_blocks(
     산출하고도 ```python 펜스만 추출해 web 코드를 0개 저장하던" 손실 수정.
     """
     code_dir.mkdir(parents=True, exist_ok=True)
-    pattern = re.compile(r"```([A-Za-z0-9_+-]*)\s*\n(.*?)\n```", re.DOTALL)
+    # v13 Phase 6.E P9 — 닫는 fence 들여쓰기 허용(`\n[ \t]*```) + fence-info(info string) 캡처.
+    #   배경 (P3 verdict 확정): 들여쓰기된 ```bash 의존성 블록의 닫는 fence 가 `  ``` `
+    #   (들여쓰기) 인데 기존 닫기 `\n``` ` 는 column-0 만 매칭 → 못 닫고 뒤를 삼킴 →
+    #   직후 ```json (package.json/tsconfig.json) 페어링 desync → 드롭. 들여쓰기 허용으로
+    #   페어링 복원. info string 캡처로 ```json package.json 형태 파일명도 인식.
+    pattern = re.compile(r"```([A-Za-z0-9_+-]*)[ \t]*([^\n]*)\n(.*?)\n[ \t]*```", re.DOTALL)
     allowed = {lang.lower() for lang in languages}
     saved: list[Path] = []
-    for idx, (lang_raw, block) in enumerate(pattern.findall(markdown), start=1):
+    for idx, (lang_raw, info_raw, block) in enumerate(pattern.findall(markdown), start=1):
         lang = lang_raw.strip().lower()
         if lang not in allowed:
             continue
-        first_line = block.splitlines()[0] if block.strip() else ""
-        header = _FILE_HEADER_RE.match(first_line)
-        if header:
-            safe_name = header.group(1).replace("/", "__").replace("\\", "__")
-            file_path = code_dir / safe_name
-        else:
+        name, strip_first_line = _resolve_block_filename(lang, info_raw.strip(), block)
+        if name is None:
             ext = _FENCE_LANG_EXT.get(lang, ".py")
-            # headerless json 은 예시 데이터일 수 있어 저장 안 함 (file: 헤더 필수)
+            # 헤더·파일명 신호 없는 headerless json 은 예시 데이터일 수 있어 저장 안 함.
             if ext == ".json":
                 continue
-            file_path = code_dir / f"block{idx:02d}{ext}"
-        file_path.write_text(block, encoding="utf-8")
+            name = f"block{idx:02d}{ext}"
+        safe_name = name.replace("/", "__").replace("\\", "__")
+        content = block
+        # json 산출은 주석(// 등)이 불법 → file: 헤더 줄을 본문에서 제거해 유효 JSON 보장.
+        # 비-json(.ts/.html/.css/.py)은 헤더 줄 보존 (기존 동작 불변 — 회귀 0).
+        if strip_first_line and safe_name.lower().endswith(".json"):
+            content = block.split("\n", 1)[1] if "\n" in block else ""
+        file_path = code_dir / safe_name
+        file_path.write_text(content, encoding="utf-8")
         saved.append(file_path)
     return saved
 
@@ -227,6 +285,17 @@ def _detect_extraction_loss(
             f"⚠ extraction loss — gui_code_output 에 web 파일 헤더 "
             f"{len(web_headers)}개({web_headers[:5]}) 인데 추출된 web 파일 0개. "
             "web 산출이 code/ 에 저장되지 못했습니다 (P2-A 손실 가드)."
+        )
+    # v13 Phase 6.E P9 — 부분 손실 가드: web 산출이 일부 저장됐어도(추출>0) web 빌드
+    # 필수 manifest 인 package.json 이 *선언됐는데 미저장* 이면 경고 (npm build ENOENT
+    # 직결). 기존 "추출 0개" 전손 경로는 위에서 이미 처리 (이 경로는 부분손실 전용).
+    declared = {Path(h).name.lower() for h in _FILE_HEADER_RE.findall(gui_code_output or "")}
+    saved_names = {p.name.lower() for p in saved_paths}
+    if saved_web and "package.json" in declared and "package.json" not in saved_names:
+        return (
+            "⚠ partial extraction loss — web 산출에 package.json(manifest) 헤더가 "
+            "선언됐으나 code/ 에 추출되지 않음 → npm build ENOENT 직결. "
+            "web 파일 일부만 저장됨 (P9 manifest-loss 가드)."
         )
     return None
 
