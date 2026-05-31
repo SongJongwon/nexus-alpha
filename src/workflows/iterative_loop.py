@@ -1522,6 +1522,52 @@ def _is_web_build_result(executor_result: Any) -> bool:
     return getattr(executor_result, "exit_code", None) == -8
 
 
+# v13 Phase 6.E P13 — 빌드 에러에 *구체적 수정 지시* 동봉 (코드젠이 무엇을 어떻게 고칠지)
+# assignability / unknown 류 — 명시적 타입 주석 또는 as 캐스트로 타입 레벨 최소 수정.
+_ASSIGNABILITY_TS_CODES: frozenset[str] = frozenset(
+    {"TS2345", "TS2322", "TS18046", "TS2531", "TS2532", "TS2769", "TS2739", "TS2740"}
+)
+# 번들/설치/런타임 실패 마커 — 존재하면 "타입체크 전용 실패" 아님 (vite salvage 부적격).
+_NON_TYPE_FAIL_MARKERS: tuple[str, ...] = (
+    "npm err", "eresolve", "enoent", "rollup failed to resolve", "could not resolve",
+    "failed to resolve import", "cannot find module", "module not found",
+    "command not found", "is not recognized", "npm 미설치",
+)
+
+
+def _ts_fix_hint(error_line: str) -> str:
+    """TS 에러 코드에 따른 구체적 수정 지시 (P13). 비-TS 면 빈 string."""
+    m = re.search(r"\bTS(\d+)\b", error_line)
+    if not m:
+        return ""
+    code = "TS" + m.group(1)
+    if code in _ASSIGNABILITY_TS_CODES:
+        return (
+            " → 수정: 해당 심볼에 명시적 타입 주석(`: <Type>`) 또는 `as <Type>` 캐스트를 "
+            "적용하세요 (런타임 동작은 정상 — 타입 레벨 최소 수정)."
+        )
+    return " → 수정: tsc 를 만족시키는 최소 타입 레벨 변경(주석/캐스트/시그니처)을 적용하세요."
+
+
+def _format_build_errors_with_hints(errors: list[str], fallback: str) -> str:
+    """파싱된 빌드 에러 목록을 file:line + 메시지 + 수정지시 block 으로 직렬화 (P13)."""
+    if not errors:
+        return f"  - {fallback}"
+    return "\n".join(f"  - {e}{_ts_fix_hint(e)}" for e in errors[:10])
+
+
+def _is_type_only_failure(stderr: str) -> bool:
+    """web 빌드 실패가 *타입체크 전용*(tsc error) 인지 — 번들/설치/런타임 에러 부재 (P13).
+
+    True 면 vite-only salvage 적격(esbuild 가 타입 무시 transpile → dist/ 가능). 번들 resolve
+    /설치 ERESOLVE/런타임 module-not-found 등이 섞여 있으면 False (salvage 해도 실패 → BLOCKED).
+    """
+    if not stderr or not _TSC_ERROR_RE.search(stderr):
+        return False
+    low = stderr.lower()
+    return not any(m in low for m in _NON_TYPE_FAIL_MARKERS)
+
+
 def _apply_build_failure_override(
     decision: JudgmentDecision,
     chain_result: Any,
@@ -1576,7 +1622,8 @@ def _apply_build_failure_override(
     if _is_web_build_result(executor_result):
         stderr = getattr(executor_result, "stderr", "") or ""
         build_errors = _parse_web_build_errors(stderr) or _parse_web_build_errors(error_msg)
-        errs_block = "\n".join(f"  - {e}" for e in build_errors[:10]) or f"  - {error_first_line}"
+        # v13 Phase 6.E P13 — 에러 원문 + *구체적 수정 지시*(TS 코드별 타입주석/캐스트 안내) 동봉.
+        errs_block = _format_build_errors_with_hints(build_errors, error_first_line)
         cur_iter = getattr(gap, "iteration", 0) if gap is not None else 0
         if cur_iter < max_iterations:
             # 예산 남음 → IMPROVE_NEEDED (라우터가 prepare_feedback → run_chain 으로 루프백).
@@ -1589,8 +1636,10 @@ def _apply_build_failure_override(
                 ),
                 next_action=(
                     "다음 web 빌드 에러를 *최우선 must-fix* 로 해당 파일을 패치하세요 "
-                    "(file(line,col) 위치의 타입/import/번들 오류 수정) — 그 다음 빌드 재시도. "
-                    "기존 충족 요구는 회귀 금지:\n" + errs_block
+                    "(각 에러의 '→ 수정:' 지시를 그대로 적용) — 그 다음 빌드 재시도. "
+                    "**해당 파일 전체 패치 결과를 빠짐없이 반환하세요 (요약·축약·생략 금지, "
+                    "Final Answer 뒤 본문에 전체 코드 블록 포함).** 기존 충족 요구는 회귀 금지:\n"
+                    + errs_block
                 ),
                 must_fix_count=max(decision.must_fix_count, len(build_errors) or 1),
             )
@@ -1621,6 +1670,69 @@ def _apply_build_failure_override(
             "COMPLETE 로 종료하지 않음."
         ),
         must_fix_count=decision.must_fix_count,
+    )
+
+
+def _maybe_salvage_web_build(
+    decision: JudgmentDecision,
+    chain_result: Any,
+    *,
+    salvage_fn=None,
+) -> JudgmentDecision:
+    """v13 Phase 6.E P13 — 예산 소진 BLOCKED(BUILD_FAILED) salvage 우회.
+
+    web 빌드 실패가 *타입체크 전용*(tsc error, 번들/설치/런타임 에러 부재) 이면 vite-only
+    (tsc 게이트 제외) 빌드를 1회 실행해 dist/ 를 산출하고 COMPLETE(타입 경고 첨부)로 수렴시킨다.
+    번들/설치/런타임 등 실제 실패는 종전대로 BLOCKED 유지. desktop/비-web 은 무조건 불변.
+
+    Args:
+        decision: ``_apply_build_failure_override`` 산출 (BLOCKED(BUILD_FAILED) 일 때만 동작).
+        chain_result: ``executor_result`` + ``saved_code_files`` + ``saved_dir`` 보유.
+        salvage_fn: ``(code_files, saved_dir) -> bool`` — vite-only 빌드 성공 여부. None 이면
+            production 경로 (``_run_web_build(vite_only=True)``). 테스트 주입용.
+
+    Returns:
+        salvage 성공 시 COMPLETE JudgmentDecision, 그 외 원본 ``decision``.
+    """
+    if decision.verdict != Verdict.BLOCKED or decision.blocked_cause != BlockedCause.BUILD_FAILED:
+        return decision
+    if chain_result is None:
+        return decision
+    executor_result = getattr(chain_result, "executor_result", None)
+    if executor_result is None or not _is_web_build_result(executor_result):
+        return decision  # desktop/비-web — 불변
+    stderr = getattr(executor_result, "stderr", "") or ""
+    if not _is_type_only_failure(stderr):
+        return decision  # 번들/설치/런타임 실제 실패 — BLOCKED 유지
+
+    code_files = list(getattr(chain_result, "saved_code_files", None) or [])
+    saved_dir = getattr(chain_result, "saved_dir", None)
+    ok = False
+    try:
+        if salvage_fn is not None:
+            ok = bool(salvage_fn(code_files, saved_dir))
+        elif saved_dir is not None:
+            from src.workflows.build_workflow import _run_web_build  # noqa: PLC0415
+
+            res = _run_web_build(code_files, Path(saved_dir), vite_only=True)
+            ok = bool(getattr(res, "success", False)) and getattr(res, "exe_path", None) is not None
+    except Exception:  # noqa: BLE001 — salvage 실패는 graceful (BLOCKED 유지)
+        ok = False
+    if not ok:
+        return decision
+
+    warn = _format_build_errors_with_hints(
+        _parse_web_build_errors(stderr), "타입 경고 (런타임 영향 없음)"
+    )
+    return JudgmentDecision(
+        verdict=Verdict.COMPLETE,
+        blocked_cause=BlockedCause.NONE,
+        reason=(
+            "WEB_BUILD_SALVAGED — 타입체크 전용 에러만 잔존하나 vite-only(tsc 게이트 제외) "
+            "빌드로 dist/ 산출 성공. 런타임 동작 정상, 타입 경고는 후속 정리."
+        ),
+        next_action="잔존 TS 타입 경고 (vite salvage 로 dist/ 산출됨, 후속 정리 권장):\n" + warn,
+        must_fix_count=0,
     )
 
 
@@ -1797,6 +1909,8 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         gap=gap,
         max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
     )
+    # v13 Phase 6.E P13 — cap 도달 web 타입체크 전용 실패면 vite-only salvage → dist/ 시 COMPLETE.
+    decision = _maybe_salvage_web_build(decision, state.get("chain_result"))
     return {
         "decision": decision,
         "budget_tokens_remaining": budget,
