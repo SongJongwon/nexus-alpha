@@ -430,6 +430,47 @@ def _default_npm_build_runner(code_dir: Path, timeout_sec: int) -> tuple[bool, s
         return False, f"web build 예외: {exc!r}", 0.0
 
 
+def _default_vite_salvage_runner(code_dir: Path, timeout_sec: int) -> tuple[bool, str, float]:
+    """v13 Phase 6.E P13 — vite-only salvage 빌드 (tsc 타입체크 게이트 제외).
+
+    package.json 의 ``build`` 스크립트(보통 ``tsc && vite build``) 대신 ``npm exec -- vite
+    build`` 로 vite(esbuild) 단독 실행 → 타입 에러를 무시하고 transpile. **타입체크 전용
+    에러로만 막힌** web 산출을 dist/ 까지 도달시키는 최후 salvage 전용 (런타임 동작 정상).
+    설치는 P11 과 동일 ``--legacy-peer-deps``. npm 미설치/예외는 graceful.
+    """
+    import shutil
+    import time
+
+    npm = shutil.which("npm")
+    if npm is None:
+        return False, "npm 미설치 — vite salvage 불가 (node/npm 필요).", 0.0
+    t0 = time.monotonic()
+    try:
+        inst = subprocess.run(
+            [npm, "ci", "--legacy-peer-deps"], cwd=str(code_dir), capture_output=True,
+            text=True, timeout=timeout_sec, encoding="utf-8", errors="replace",
+        )
+        if inst.returncode != 0:
+            inst = subprocess.run(
+                [npm, "install", "--legacy-peer-deps"], cwd=str(code_dir),
+                capture_output=True, text=True,
+                timeout=timeout_sec, encoding="utf-8", errors="replace",
+            )
+        # tsc 게이트 제외 — vite(esbuild) 단독 빌드 (타입 에러 무시 transpile)
+        bld = subprocess.run(
+            [npm, "exec", "--", "vite", "build"], cwd=str(code_dir), capture_output=True,
+            text=True, timeout=timeout_sec, encoding="utf-8", errors="replace",
+        )
+        elapsed = time.monotonic() - t0
+        log = (
+            (inst.stdout or "")[-1500:] + (inst.stderr or "")[-1500:]
+            + (bld.stdout or "")[-3000:] + (bld.stderr or "")[-3000:]
+        )
+        return bld.returncode == 0, log, elapsed
+    except Exception as exc:  # noqa: BLE001 — graceful
+        return False, f"vite salvage 예외: {exc!r}", 0.0
+
+
 def _run_web_build(
     code_files: list[Path],
     workflow_dir: Path,
@@ -437,11 +478,15 @@ def _run_web_build(
     *,
     npm_runner=None,
     timeout_sec: int = 600,
+    vite_only: bool = False,
 ) -> ExecuteResult:
     """web 프로젝트를 ``npm run build`` 로 빌드해 dist/ 산출을 ExecuteResult 로 반환 (P7).
 
     성공 기준 = ``dist/index.html`` 생성 (.exe 아님). 실패 시 web 전용 진단 메시지
     (PyInstaller/SyntaxError 오진 아님). ``npm_runner`` 주입 시 실 npm 회피(테스트).
+
+    v13 Phase 6.E P13 — ``vite_only=True`` 면 tsc 게이트를 제외한 vite-only salvage 러너
+    사용 (타입체크 전용 에러로 막힌 산출의 최후 dist/ salvage). npm_runner 주입 시 그 러너 우선.
     """
     import hashlib
 
@@ -453,7 +498,9 @@ def _run_web_build(
     code_dir = (workflow_dir / "code") if workflow_dir is not None else (
         code_files[0].parent if code_files else Path("code")
     )
-    runner = npm_runner or _default_npm_build_runner
+    runner = npm_runner or (
+        _default_vite_salvage_runner if vite_only else _default_npm_build_runner
+    )
     ok, log, elapsed = runner(code_dir, timeout_sec)
     dist = code_dir / "dist"
     index = dist / "index.html"
