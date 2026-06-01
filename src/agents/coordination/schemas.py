@@ -109,7 +109,7 @@ class SharedKickoffDecisions:
     # task description 주입용 markdown 변환
     # ------------------------------------------------------------------
     def to_kickoff_context_directive(
-        self, prior_agent_roles: Sequence[str] = ()
+        self, prior_agent_roles: Sequence[str] = (), *, product_scoped: bool = False
     ) -> str:
         """task description 끝에 append 할 *공유 결정 + consistency 강조* 섹션.
 
@@ -123,7 +123,16 @@ class SharedKickoffDecisions:
 
         Returns:
             markdown 섹션 문자열. 빈 결정 + 빈 prior_agent_roles 면 ``""``.
+
+        v13 Phase 6.E P14 — ``product_scoped=True`` (제품 코드 생성기 전용):
+            시스템 내부 정보가 *생성 제품* 컨텍스트로 새는 것을 차단하기 위해 부서별 책임
+            (agent_responsibilities = 시스템 에이전트 명단) · cross-agent consistency
+            (prior_agent_roles = 에이전트 역할명) · RAG recall(recalled_knowledge_markdown
+            = 과거 시스템 정보) 섹션을 *제거*. 제품 관련 결정(shared_assumptions/open_questions)
+            만 유지. default False → 기존 모든 호출자 동작 불변 (회귀 0).
         """
+        if product_scoped:
+            prior_agent_roles = ()  # 에이전트 역할명 누수 차단
         has_decisions = bool(self.shared_assumptions) or bool(
             self.agent_responsibilities
         )
@@ -150,7 +159,7 @@ class SharedKickoffDecisions:
                 )
             lines.append("")
 
-        if self.agent_responsibilities:
+        if self.agent_responsibilities and not product_scoped:  # P14 — 제품 컨텍스트엔 누수 금지
             lines.append("### 부서별 책임 (킥오프 분담)")
             for role, items in self.agent_responsibilities.items():
                 if not items:
@@ -189,7 +198,7 @@ class SharedKickoffDecisions:
         # PR #152 — RAG recall markdown append (본인 비전 통찰 6 Phase 3 cycle wiring).
         # _node_kickoff_meeting 이 채워 둔 ``recalled_knowledge_markdown`` 가 있으면
         # 본 directive 끝에 그대로 이어 붙임 → 모든 agent 가 과거 빌드 패턴 인지.
-        if has_recalled:
+        if has_recalled and not product_scoped:  # P14 — 과거 시스템 정보 누수 금지
             lines.append(self.recalled_knowledge_markdown.rstrip())
             lines.append("")
 

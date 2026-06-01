@@ -118,10 +118,10 @@ class TestExpandRequirementsBuildsChecklist:
     def test_3d_request_yields_4_item_checklist(
         self, _mock_crew_cls, _mock_factory
     ) -> None:
-        """3D BIM 요청 → domain_checklist 4 항목 (3D 도메인 템플릿)."""
+        """3D BIM 요청 → domain_checklist 5 항목 (3D 도메인 템플릿, P14 scene-render 추가)."""
         # 우회 — 직접 build_domain_checklist 만 호출 (LLM Crew 우회)
         checklist = build_domain_checklist("3D BIM 건축 모델 뷰어")
-        assert len(checklist) == 4
+        assert len(checklist) == 5
         ids = {c.id for c in checklist}
         assert "3d-camera-orbit" in ids
         assert "3d-real-3d-not-isometric" in ids
@@ -167,12 +167,13 @@ class TestJudgeNodeWireRule0:
         """3D 체크리스트 + Engineer 산출에 키워드 모두 → Rule 0 통과 → COMPLETE."""
         code_dir = tmp_path / "code"
         code_dir.mkdir()
-        # 4 체크리스트 항목 모두의 detect_keywords 가 포함된 코드
+        # 5 체크리스트 항목 모두의 detect_keywords 가 포함된 코드 (P14: scene-render-loop 추가)
         (code_dir / "viewport.py").write_text(
             "OrbitControls + rotate + camera.position\n"
             "WebGLRenderer + three.js\n"
             "zoom + pan + reset + wheel + controls.update\n"
-            "rotateY + rotation.z + Vector3 + PerspectiveCamera + DirectionalLight\n",
+            "rotateY + rotation.z + Vector3 + PerspectiveCamera + DirectionalLight\n"
+            "new THREE.Scene + renderer.render + scene.add + requestAnimationFrame\n",
             encoding="utf-8",
         )
         chain = SimpleNamespace(saved_dir=tmp_path)
@@ -194,8 +195,8 @@ class TestJudgeNodeWireRule0:
         )
         result = _node_judge_convergence(state)
         assert result["decision"].verdict == Verdict.IMPROVE_NEEDED
-        # Rule 0 가 4 항목 모두 미충족 강제
-        assert len(result["decision"].domain_unsatisfied) == 4
+        # Rule 0 가 5 항목 모두 미충족 강제 (P14: scene-render-loop 추가)
+        assert len(result["decision"].domain_unsatisfied) == 5
         assert "3d-real-3d-not-isometric" in result["decision"].domain_unsatisfied
 
     def test_3d_checklist_with_isometric_only_forces_improve(
@@ -219,7 +220,7 @@ class TestJudgeNodeWireRule0:
         # Gap Analyst 가 COMPLETE 라도 (must_fix=0) Rule 0 가 override
         assert result["decision"].verdict == Verdict.IMPROVE_NEEDED
         assert result["decision"].blocked_cause == BlockedCause.NONE
-        assert len(result["decision"].domain_unsatisfied) == 4
+        assert len(result["decision"].domain_unsatisfied) == 5  # P14: scene-render-loop 추가
 
     def test_fake_packages_still_takes_priority_over_rule0(self) -> None:
         """⭐ Rule -1 (fake) > Rule 0 (domain) 우선순위 보존."""

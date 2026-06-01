@@ -428,6 +428,8 @@ def format_consistency_directive(prior_agent_roles: Sequence[str]) -> str:
 def format_kickoff_context_directive(
     decisions,  # SharedKickoffDecisions | None — 순환 import 회피로 untyped
     prior_agent_roles: Sequence[str] = (),
+    *,
+    product_scoped: bool = False,
 ) -> str:
     """킥오프 회의 결정 + consistency directive 를 task description 에 append.
 
@@ -447,8 +449,14 @@ def format_kickoff_context_directive(
     """
     if decisions is not None:
         # SharedKickoffDecisions 의 to_kickoff_context_directive 사용 — 완전판
+        # v13 Phase 6.E P14 — product_scoped 면 시스템 내부 정보(부서 명단/RAG recall 등) 제거.
         try:
-            return decisions.to_kickoff_context_directive(prior_agent_roles)
+            return decisions.to_kickoff_context_directive(
+                prior_agent_roles, product_scoped=product_scoped
+            )
         except AttributeError:  # 잘못된 객체 주입 시 minimal 로 fallback
             pass
+    if product_scoped:
+        # 제품 컨텍스트엔 cross-agent 역할명 directive 도 주입 안 함 (누수 차단).
+        return ""
     return format_consistency_directive(prior_agent_roles)

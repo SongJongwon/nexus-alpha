@@ -386,6 +386,35 @@ def _detect_extraction_loss(
     return None
 
 
+# v13 Phase 6.E P14 (수정3) — 코드젠 출력 무결성: 비현실적 단축 산출 = 생성 실패
+_MIN_GUI_CODE_BYTES: int = 200  # 추출 코드 총 바이트가 이 미만이면 degenerate (예: 31 bytes)
+
+
+def _is_degenerate_codegen(code_paths: list[Path], platform_intent: str) -> bool:
+    """P14(수정3) — 코드 생성 산출이 비현실적으로 짧거나 entry/manifest 부재면 True.
+
+    retry_short_tasks_in_chain 후에도 단축(예: block01.py 31 bytes)이거나, web 인데
+    index.html·package.json 둘 다 부재면 '생성 실패' 로 판정 (깨진 출력이 유효 산출로
+    빌드/COMPLETE 게이트를 통과하지 않게). test_*.py 는 entry 후보에서 제외하고 집계.
+    """
+    real = [p for p in code_paths if not p.name.lower().startswith("test_")]
+    if not real:
+        return True
+    total = 0
+    for p in real:
+        try:
+            total += p.stat().st_size
+        except OSError:  # noqa: PERF203 — 파일 부재는 degenerate 신호
+            continue
+    if total < _MIN_GUI_CODE_BYTES:
+        return True
+    if platform_intent == "web":
+        names = {p.name.lower() for p in code_paths}
+        if "index.html" not in names and "package.json" not in names:
+            return True
+    return False
+
+
 # v13 Phase 6.E P10a(3) — web 빌드 필수 manifest 보장 (salvage → synthesize, fail-loud)
 _REQUIRED_WEB_MANIFESTS: tuple[str, ...] = ("package.json", "tsconfig.json")
 # bare module import (상대/절대 경로 아님) — import X from 'pkg' / import('pkg') / from 'pkg'
@@ -1082,6 +1111,38 @@ def _maybe_regenerate_on_platform_drift(
     return new_output
 
 
+def _build_product_anchor(user_request: str) -> str:
+    """v13 Phase 6.E P14 — 생성 제품의 *최상위 권위 앵커* + 시스템 컨텍스트 격리 directive.
+
+    배경 (P13 런 iter4): 코드 생성기가 사용자 요청("3D BIM 뷰어")이 아니라 시스템(Nexus Alpha)
+    자기 자신의 관제 대시보드(에이전트 명단 테이블 등)를 생성. 시스템 내부 컨텍스트가 제품
+    생성 프롬프트에 새어들어 사용자 요청의 지배력을 잃은 앵커링 버그. 본 앵커는 사용자 요청을
+    프롬프트 최상위 권위로 고정하고, 시스템 내부 정보(에이전트/아키텍처/자체 대시보드)는 제품
+    내용이 아님을 명시한다. 빈 요청이면 빈 string (회귀 0).
+    """
+    req = (user_request or "").strip()
+    if not req:
+        return ""
+    return (
+        "## 🎯 [제품 명세 — 최상위 권위 앵커 (P14)]\n"
+        "당신이 만들 제품은 아래 *사용자 요청 그 자체* 입니다. 이것이 유일한 진실의 원천이며 "
+        "다른 모든 컨텍스트(킥오프/이전 산출/시스템 정보)보다 우선합니다:\n\n"
+        f"```\n{req}\n```\n\n"
+        "## ⚠️ [컨텍스트 격리 — 시스템 누수 금지 (CRITICAL)]\n"
+        "당신을 실행하는 시스템(Nexus Alpha)의 내부 정보는 **생성할 제품의 내용이 절대 아닙니다**:\n"
+        "- 내부 부서/에이전트 명단(Requirement Expander · GUI Designer · Theme Designer · "
+        "Code Generator · Code Reviewer · Pytest Author · Deploy · Monitor 등), 시스템 "
+        "아키텍처, 자체 관제/대시보드/파이프라인 UI 개념, 내부 문서·지식 — 이런 정보가 "
+        "컨텍스트에 보여도 **제품에 절대 반영하지 마세요.**\n"
+        "- 제품은 'Nexus Alpha 를 위한/관한' 것이 아니라, **위 [제품 명세]의 사용자 요청을 "
+        "외부 신규 제품으로** 구현한 것이어야 합니다. ('활성 Agent / 진행 작업 / 성공률 / "
+        "파이프라인' 류 시스템 자체 모니터링 대시보드를 만들지 마세요.)\n"
+        "- 예: '3D BIM 뷰어: Three.js + BIM, 카메라 회전, 클릭 시 속성, 다크 관제센터' → 산출은 "
+        "Three.js 3D 장면 + 다크 테마 + 클릭 가능한 건물 요소(속성 표출) 여야 하며, 에이전트 "
+        "모니터링 대시보드가 아닙니다.\n\n"
+    )
+
+
 def _build_gui_code_gen_task(
     coder,
     uiux_task: Task,
@@ -1090,6 +1151,7 @@ def _build_gui_code_gen_task(
     *,
     shared_kickoff_decisions=None,
     platform_intent: str = "unspecified",
+    user_request: str = "",
 ) -> Task:
     """GUI Code Generator Task — 셋 모두 컨텍스트로.
 
@@ -1125,13 +1187,19 @@ def _build_gui_code_gen_task(
             "코드 + 실행 방법 + 작성자 노트)로 작성하세요. 각 파일은 fence 코드 블록 + "
             "첫 줄 `# file:` / `// file:` / `<!-- file: -->` 헤더 포함."
         ) + _build_web_platform_directive()
+    # v13 Phase 6.E P14 — 제품 코드 생성기는 시스템 내부 컨텍스트 누수 차단 (product_scoped):
+    # 부서 명단/cross-agent 역할명/RAG recall 제거 → 사용자 요청만 제품으로 구현.
     consistency_directive = format_kickoff_context_directive(
         shared_kickoff_decisions,
         prior_agent_roles=["UI/UX Analyst", "GUI Designer", "Theme Designer"],
+        product_scoped=True,
     )
 
+    # v13 Phase 6.E P14 — 사용자 요청을 최상위 권위 앵커로 prepend (시스템 자기-생성 버그 차단).
+    product_anchor = _build_product_anchor(user_request)
+
     kwargs: dict = dict(
-        description=base_description + consistency_directive,
+        description=product_anchor + base_description + consistency_directive,
         expected_output=(
             "프레임워크 선택 근거 + Python GUI 코드(파일 여러 개) + 실행 방법 + "
             "작성자 노트. 마지막 줄 `Final Answer: framework=..., files=N개, entry=...`."
@@ -1752,6 +1820,7 @@ def _run_gui_branch_chain(
         theme_task,
         shared_kickoff_decisions=shared_kickoff_decisions,
         platform_intent=platform_intent,
+        user_request=user_request,  # P14 — 제품 최상위 권위 앵커
     )
     pytest_author_task = _build_pytest_author_task(
         pytest_author,
@@ -1853,6 +1922,16 @@ def _run_gui_branch_chain(
     if _loss_warning:
         (workflow_dir / "13b_extraction_warning.txt").write_text(
             _loss_warning, encoding="utf-8"
+        )
+    # v13 Phase 6.E P14 (수정3) — 비현실적 단축/entry 부재 = 생성 실패 처리 (fail-loud 아티팩트).
+    # Rule 0(도메인 마커 0매칭 → IMPROVE) + 빌드 실패(no-entry/manifest → P12 web 루프) 가
+    # 자가수정을 잇고, 본 아티팩트가 '깨진 산출이 유효로 통과하지 않음' 을 가시화.
+    if _is_degenerate_codegen(code_paths, platform_intent):
+        (workflow_dir / "13d_generation_failed.txt").write_text(
+            "⚠ 생성 실패(degenerate) — 코드 산출이 비현실적으로 짧거나 entry/manifest 부재. "
+            "retry 후에도 유효 산출 미생성 → 빌드/COMPLETE 부적격, 다음 iteration 재생성 필요 "
+            "(P14 수정3).",
+            encoding="utf-8",
         )
     if pytest_suite:
         # pytest 산출은 python-only 유지 (test_*.py) — 평탄 (preserve_tree=False, 기본)
