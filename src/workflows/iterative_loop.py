@@ -305,6 +305,10 @@ class _LoopState(TypedDict, total=False):
     satisfied_history: list[int]  # iteration 별 satisfied_count
     feedback_history: list[str]
     iteration_artifacts: list[str]  # Path.as_posix() 문자열
+    # v13 Phase 6.E P15 — iteration 별 품질 기록 (best-iteration 선택용).
+    # 루프가 깨진 마지막 iteration 으로 종단하지 않고, 빌드 성공+도메인 충족한 *최고*
+    # iteration 산출을 최종으로 채택하기 위함. judge 노드가 매 iter 1건씩 append.
+    iteration_records: list[Any]
 
 
 # ---------------------------------------------------------------------------
@@ -1736,6 +1740,121 @@ def _maybe_salvage_web_build(
     )
 
 
+def _iteration_quality(
+    chain_result: Any,
+    gap: Optional[GapReport],
+    decision: Optional[JudgmentDecision],
+    platform_intent: str,
+) -> dict:
+    """v13 Phase 6.E P15 — iteration 품질 메타 산출 (best-iteration 선택 점수).
+
+    품질 신호: degenerate(단축/엔트리 부재, P14 _is_degenerate_codegen 재사용) /
+    build_ok(executor 성공 + 산출물 경로 = web dist/ 또는 .exe) / domain_ok(도메인
+    체크리스트 충족) / must_fix(낮을수록 좋음). degenerate 는 큰 음수로 disqualify →
+    유효 iteration 이 하나라도 있으면 degenerate 를 최종으로 채택하지 않는다.
+    """
+    code_files = list(getattr(chain_result, "saved_code_files", None) or []) if chain_result else []
+    degenerate = True
+    if chain_result is not None:
+        try:
+            from src.workflows.analyze_and_implement import (  # noqa: PLC0415
+                _is_degenerate_codegen,
+            )
+
+            degenerate = _is_degenerate_codegen(code_files, platform_intent or "unspecified")
+        except Exception:  # noqa: BLE001 — 안전 폴백: 코드 파일 없으면 degenerate
+            degenerate = not code_files
+    exec_res = getattr(chain_result, "executor_result", None) if chain_result else None
+    build_ok = bool(getattr(exec_res, "success", False)) and (
+        getattr(exec_res, "exe_path", None) is not None
+    )
+    domain_ok = not bool(getattr(decision, "domain_unsatisfied", []) or [])
+    must_fix = (getattr(gap, "unsatisfied_blockers", 0) or 0) + (
+        getattr(gap, "unsatisfied_majors", 0) or 0
+    )
+    iteration = getattr(gap, "iteration", 0) or 0
+    score = 0.0
+    if degenerate:
+        score -= 1000.0  # disqualify — 유효 iteration 보다 항상 낮게
+    if build_ok:
+        score += 100.0
+    if domain_ok:
+        score += 50.0
+    score -= float(must_fix)
+    score += iteration * 0.01  # 동점 시 후기(더 정제된) iteration 선호
+    return {
+        "iteration": iteration,
+        "chain_result": chain_result,
+        "gap": gap,
+        "decision": decision,
+        "execution_result": None,  # judge 노드가 채움
+        "build_ok": build_ok,
+        "domain_ok": domain_ok,
+        "degenerate": degenerate,
+        "must_fix": must_fix,
+        "score": score,
+    }
+
+
+def _select_best_iteration(records: list) -> Optional[dict]:
+    """v13 Phase 6.E P15 — 최고 품질 iteration record 반환 (degenerate/회귀 종단 금지).
+
+    점수 최대 record 선택. 유효 iteration 이 있으면 degenerate 보다 항상 우선되고,
+    빌드 성공 + 도메인 충족 iteration 이 가장 높은 점수를 받는다. 빈 입력 → None
+    (호출부가 현행 '마지막 iteration' 동작으로 폴백).
+    """
+    if not records:
+        return None
+    return max(records, key=lambda r: r.get("score", float("-inf")))
+
+
+def _resolve_best_output(
+    final_state: dict, decision: JudgmentDecision, gap: GapReport
+) -> tuple:
+    """v13 Phase 6.E P15 — 최종 산출로 *최고 iteration* 을 채택.
+
+    반환 ``(sel_chain, sel_exec, sel_gap, sel_decision)``:
+      - 유효 iteration record 가 없으면 현행(마지막) 그대로 폴백.
+      - 최고 iteration 이 빌드 성공(dist/.exe) + 도메인 충족 → verdict=COMPLETE (후속
+        회귀/degenerate note 첨부).
+      - 그 외 → 최고 *유효* iteration 의 산출/결정을 surface (깨진 stub 말고), gap 유지.
+    루프는 절대 degenerate/회귀 상태로 종단하지 않는다 (유효 iteration 이 하나라도 있으면).
+    """
+    sel_chain = final_state.get("chain_result")
+    sel_exec = final_state.get("execution_result")
+    best = _select_best_iteration(final_state.get("iteration_records", []))
+    # 유효(non-degenerate) iteration 이 없으면 현행(마지막) 폴백 — 회귀 0.
+    # (best 가 degenerate 면 모든 iter 가 degenerate → 마지막을 그대로 surface.)
+    if best is None or best.get("chain_result") is None or best.get("degenerate"):
+        return sel_chain, sel_exec, gap, decision
+
+    sel_chain = best["chain_result"]
+    sel_exec = best.get("execution_result")
+    sel_gap = best.get("gap") or gap
+    best_dec = best.get("decision") or decision
+    last_iter = final_state.get("iteration", best["iteration"])
+    if best["build_ok"] and best["domain_ok"]:
+        note = (
+            f" (후속 iteration(들)이 회귀/degenerate — iter {best['iteration']} 산출을 최종 채택)"
+            if best["iteration"] < last_iter
+            else ""
+        )
+        sel_decision = JudgmentDecision(
+            verdict=Verdict.COMPLETE,
+            blocked_cause=BlockedCause.NONE,
+            reason=(
+                f"BEST_ITERATION_ADOPTED — iter {best['iteration']} 빌드 성공 + 도메인 충족 "
+                f"→ COMPLETE{note}"
+            ),
+            next_action=getattr(best_dec, "next_action", "") or "최고 iteration 산출 채택.",
+            must_fix_count=best["must_fix"],
+            domain_unsatisfied=list(getattr(best_dec, "domain_unsatisfied", []) or []),
+        )
+    else:
+        sel_decision = best_dec
+    return sel_chain, sel_exec, sel_gap, sel_decision
+
+
 def _extract_engineer_output_excerpt(
     chain_result: Any, *, max_chars: int = 30_000
 ) -> str:
@@ -1911,9 +2030,18 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
     )
     # v13 Phase 6.E P13 — cap 도달 web 타입체크 전용 실패면 vite-only salvage → dist/ 시 COMPLETE.
     decision = _maybe_salvage_web_build(decision, state.get("chain_result"))
+    # v13 Phase 6.E P15 — iteration 품질 기록 (best-iteration 선택용). 깨진 마지막
+    # iteration 으로 종단하지 않고 빌드 성공+도메인 충족한 최고 iteration 을 채택하기 위함.
+    record = _iteration_quality(
+        state.get("chain_result"), gap, decision, state.get("platform_intent", "unspecified")
+    )
+    record["execution_result"] = state.get("execution_result")
+    records = list(state.get("iteration_records", []))
+    records.append(record)
     return {
         "decision": decision,
         "budget_tokens_remaining": budget,
+        "iteration_records": records,
     }
 
 
@@ -2282,6 +2410,11 @@ def run_iterative_loop(
         decision: JudgmentDecision = final_state["decision"]
         gap: GapReport = final_state.get("gap_report") or GapReport()
 
+        # v13 Phase 6.E P15 — 최고 iteration 채택 (깨진/회귀 마지막 iteration 종단 금지).
+        #   루프가 어떤 사유로 끝나든(특히 ITERATION_CAP), 마지막이 아니라 빌드 성공+도메인
+        #   충족한 *최고* iteration 산출을 최종 결과로 surface (degenerate 는 유효 iter 있으면 제외).
+        sel_chain, sel_exec, gap, decision = _resolve_best_output(final_state, decision, gap)
+
         curated_entry_path_str = final_state.get("curated_entry_path", "")
         curated_index_path_str = final_state.get("curated_index_path", "")
         retro_md_path_str = final_state.get("retrospective_md_path", "")
@@ -2291,8 +2424,8 @@ def run_iterative_loop(
             blocked_cause=decision.blocked_cause,
             iterations_run=final_state.get("iteration", 0),
             spec_markdown=final_state.get("spec_markdown", ""),
-            final_chain_result=final_state.get("chain_result"),
-            final_execution_result=final_state.get("execution_result"),
+            final_chain_result=sel_chain,
+            final_execution_result=sel_exec,
             final_gap_report_raw=final_state.get("gap_report_raw", ""),
             final_gap_report=gap,
             final_decision=decision,
@@ -2312,7 +2445,7 @@ def run_iterative_loop(
         if telemetry.enabled:
             exe_path = ""
             saved_dir = ""
-            chain = final_state.get("chain_result")
+            chain = sel_chain  # P15 — 채택된 최고 iteration 의 산출 기준 (마지막 아님)
             if chain is not None:
                 exec_res = getattr(chain, "executor_result", None)
                 if exec_res is not None:
