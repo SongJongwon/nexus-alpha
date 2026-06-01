@@ -77,6 +77,9 @@ class BlockedCause(str, Enum):
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     ITERATION_CAP = "ITERATION_CAP"
     FAKE_PACKAGE = "FAKE_PACKAGE"
+    # v13 P16 (수정2) — 그래프 실행 예외(GraphRecursionError 등)를 일반 BLOCKED 와 구분.
+    # judge 가 산출하지 않음 — run_iterative_loop 의 invoke try/except 만 채움 (크래시 보존).
+    INTERNAL_ERROR = "INTERNAL_ERROR"
     NONE = "NONE"
 
 

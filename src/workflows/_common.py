@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 
 from crewai import Crew, Process, Task
 
@@ -102,8 +102,17 @@ def retry_task_if_short(
     kickoff_fn: Callable[[Task], None],
     max_retries: int = 1,
     threshold: int = SUSPICIOUS_OUTPUT_THRESHOLD,
+    *,
+    code_measure: Optional[Callable[[str], int]] = None,
 ) -> bool:
     """task 출력이 짧으면 동일 task 를 재실행 — 이슈 6 fix (LLM 비결정성 방어선 1).
+
+    v13 P16 (수정1a) — *코드 추출 인지형* 가드: ``code_measure`` 가 주어지면 "짧음"
+    판정에 직렬화 총길이 대신 ``code_measure(raw)`` (추출 가능한 *실제 코드* 길이)를
+    쓴다. 배경(HARNESS_AUDIT): codegen pydantic(GUICodeOutput 등)은 산문 필드가 길면
+    ``to_markdown()`` 총길이가 임계를 넘어 "충분히 김" 으로 통과하지만 code_blocks 가
+    비어 추출 코드 0 → degenerate. code_measure 로 *산문 길이 무시*, 실코드만 측정.
+    기본 None → 기존 동작(총길이) 그대로 (회귀 0).
 
     PR #25 의 prompt restructuring 으로 *대부분* 의 에이전트는 본문을 출력하지만,
     LLM 의 통계적 행동으로 가끔 Final Answer 한 줄만 캡처되는 경우가 잔존
@@ -122,7 +131,9 @@ def retry_task_if_short(
         False: 재시도 불필요 (이미 충분히 길거나 비어있음) 또는 모든 재시도 실패.
     """
     raw = task_output_text(task)
-    if not raw or len(raw.strip()) >= threshold:
+    # P16 수정1a — code_measure 가 있으면 *추출 코드* 길이로 판정 (산문 길이 무시).
+    measured = code_measure(raw) if (code_measure is not None and raw) else len(raw.strip() if raw else "")
+    if not raw or measured >= threshold:
         return False  # OK or empty — no retry needed
 
     # PR #93 — 재시도 시 progressively stronger directive 주입.
@@ -152,7 +163,11 @@ def retry_task_if_short(
             # 재시도 자체가 실패하면 원본 유지하고 다음 시도
             continue
         retry_raw = task_output_text(retry_task)
-        if retry_raw and len(retry_raw.strip()) >= threshold:
+        retry_measured = (
+            code_measure(retry_raw) if (code_measure is not None and retry_raw)
+            else len(retry_raw.strip() if retry_raw else "")
+        )
+        if retry_raw and retry_measured >= threshold:
             task.output = retry_task.output
             return True
     return False

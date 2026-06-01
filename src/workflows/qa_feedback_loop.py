@@ -173,6 +173,19 @@ def _is_module_installed(module_name: str) -> bool:
         return False
 
 
+# v13 P16 (수정4) — web 타깃 인지 (vite/SPA/.ts/.html). vision_qa(데스크탑 .exe 스크린샷)
+# 는 web 산출에 부적합 → SKIP 대상. 파이프라인이 이미 web↔desktop 을 구분(vite vs PyInstaller)
+# 하는 그 신호를 산출 파일에서 재판별.
+_WEB_TARGET_EXTS: frozenset = frozenset(
+    {".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".vue", ".svelte"}
+)
+_WEB_CONTENT_MARKERS: tuple = (
+    "import * as three", "from 'three'", 'from "three"', "web-ifc",
+    "defineconfig", "<!doctype html", '<script type="module"',
+    "reactdom", "react-dom",
+)
+
+
 def detect_artifact_category(
     target_script: Optional[Any] = None,
     target_exe: Optional[Any] = None,
@@ -222,6 +235,10 @@ def detect_artifact_category(
     """
     if target_script is not None:
         script_path = Path(target_script)
+        # P16 수정4 — web 타깃 우선 판별 (확장자 또는 내용 마커). vision_qa(.exe 스크린샷)
+        # 부적합 → 아래 _classify_skipped 가 web 카테고리에서 gui 도구를 SKIP.
+        if script_path.suffix.lower() in _WEB_TARGET_EXTS:
+            return "web"
         if script_path.exists() and script_path.is_file():
             try:
                 content = script_path.read_text(encoding="utf-8", errors="ignore")
@@ -229,6 +246,8 @@ def detect_artifact_category(
                 content = ""
             if content:
                 lower = content.lower()
+                if any(m in lower for m in _WEB_CONTENT_MARKERS):
+                    return "web"
                 if any(kw.lower() in lower for kw in _GUI_FRAMEWORK_KEYWORDS):
                     return "gui"
                 # PR #96 — external_dependent 가 CLI 보다 우선.
@@ -280,6 +299,16 @@ def _classify_skipped(
         return True, (
             f"{tool_name}: [SKIPPED] GUI 산출물에 부적합 — "
             "stdin 기반 검증이 GUI event loop 와 미스매치"
+        )
+
+    # v13 P16 (수정4) — web(vite/SPA) 타깃: vision_qa(gui) 는 데스크탑 .exe 스크린샷용이라
+    # screenshots=0 → FAIL → retry → 데스크탑 .exe 재빌드로 web 산출이 떠밀리던 회귀 차단.
+    # gui(=vision) + stdin 기반 functional/robustness 를 *우아하게 SKIP* (FAIL 아님) → retry 미발동.
+    # web 을 headless 브라우저로 실제 스크린샷하는 건 후속 과제 (본 PR 범위 아님). desktop 불변.
+    if artifact_category == "web" and tool_name in ("gui", "functional", "robustness"):
+        return True, (
+            f"{tool_name}: [SKIPPED] web(vite/SPA) 타깃 — vision_qa/stdin 기반 검증은 "
+            "데스크탑 .exe 용이라 N/A. web 산출 보존 (headless 브라우저 검증은 후속 과제)."
         )
 
     # PR #95 — external_dependent: subprocess 직접 실행 시 ModuleNotFoundError

@@ -166,6 +166,9 @@ class LoopOutcome:
     # PR #149 — Retrospective Lead (Phase 3 cycle 완성, 본부 10 두 번째 멤버)
     retrospective_report: Optional[RetrospectiveReport] = None
     retrospective_md_path: Optional[Path] = None
+    # v13 P16 (수정2) — 그래프 실행 예외(GraphRecursionError 등)로 종단 시 예외 repr 보존.
+    # None 이면 정상 종단 (회귀 0). blocked_cause=INTERNAL_ERROR 와 함께 채워짐.
+    crash_reason: Optional[str] = None
 
 
 def _format_blocked_partial_hint(cause: BlockedCause) -> str:
@@ -182,6 +185,8 @@ def _format_blocked_partial_hint(cause: BlockedCause) -> str:
         return " — 토큰 예산 소진 (--budget-tokens 늘려 재시도 가능)"
     if cause == BlockedCause.STAGNATION:
         return " — 진행 정체 (2 iter 연속 gap 변화 없음 — 요구사항 모호 가능)"
+    if cause == BlockedCause.INTERNAL_ERROR:
+        return " — 내부 오류로 중단 (그래프 실행 예외 — crash_reason 확인, 재시도 가능)"
     return ""
 
 
@@ -2405,7 +2410,55 @@ def run_iterative_loop(
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.
         recursion_limit = max(50, max_iterations * 7 + 10)
-        final_state = compiled.invoke(initial_state, config={"recursion_limit": recursion_limit})
+        # v13 P16 (수정2) — 그래프 실행 예외(GraphRecursionError 등)를 구조화 LoopOutcome 으로.
+        # 이전엔 except 부재로 예외가 LoopOutcome 없이 루프를 탈출(2026-05-29 크래시). 이제
+        # *항상* 구조화 결과 반환 — verdict=BLOCKED(INTERNAL_ERROR) + crash_reason 에 예외 보존.
+        # finally 블록(텔레메트리 run_end/정리)은 early-return 에도 실행됨.
+        try:
+            final_state = compiled.invoke(
+                initial_state, config={"recursion_limit": recursion_limit}
+            )
+        except Exception as exc:  # noqa: BLE001 — 크래시를 구조화 verdict 로 변환 (COMPLETE 오보 금지)
+            crash_repr = f"{type(exc).__name__}: {exc}"
+            crash_decision = JudgmentDecision(
+                verdict=Verdict.BLOCKED,
+                blocked_cause=BlockedCause.INTERNAL_ERROR,
+                reason=f"그래프 실행 예외로 중단: {crash_repr}",
+                next_action=(
+                    "내부 오류 — LLM/provider 오류, GraphRecursionError, OSError 등. "
+                    "로그/crash_reason 확인 후 재시도. (COMPLETE 아님 — 산출물 미보장.)"
+                ),
+                must_fix_count=0,
+            )
+            crash_outcome = LoopOutcome(
+                user_request=user_request,
+                verdict=Verdict.BLOCKED,
+                blocked_cause=BlockedCause.INTERNAL_ERROR,
+                iterations_run=0,
+                spec_markdown="",
+                final_chain_result=None,
+                final_execution_result=None,
+                final_gap_report_raw="",
+                final_gap_report=GapReport(),
+                final_decision=crash_decision,
+                budget_remaining_at_end=NO_BUDGET_GATE,
+                crash_reason=crash_repr,
+            )
+            if telemetry.enabled:
+                try:
+                    telemetry.emit(ResultEvent(
+                        verdict="BLOCKED",
+                        blocked_cause="INTERNAL_ERROR",
+                        iterations_run=0,
+                        max_iterations=max_iterations,
+                        exe_path="",
+                        duration_sec=round(time.monotonic() - run_started_at, 3),
+                        saved_dir="",
+                        summary_line=f"verdict=BLOCKED(INTERNAL_ERROR) — {crash_repr}",
+                    ))
+                except Exception:  # noqa: BLE001
+                    pass
+            return crash_outcome  # finally(텔레메트리 정리) 실행 후 반환
 
         decision: JudgmentDecision = final_state["decision"]
         gap: GapReport = final_state.get("gap_report") or GapReport()

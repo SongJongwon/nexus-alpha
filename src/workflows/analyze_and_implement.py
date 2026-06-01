@@ -1111,6 +1111,79 @@ def _maybe_regenerate_on_platform_drift(
     return new_output
 
 
+def _build_degenerate_regen_directive() -> str:
+    """v13 P16 (수정1b) — 빈/단축 코드(degenerate) 재생성 교정 지시.
+
+    HARNESS_AUDIT: 단축 가드가 to_markdown() 총길이를 재 산문만 길고 코드가 빈 산출을
+    통과시킴 → 추출 코드 0 → degenerate. 본 directive 는 "설명 말고 *실제 코드*를 fenced
+    block 으로 내라" 를 명시해 산문-only 회귀를 차단.
+    """
+    return (
+        "\n\n## 🚨 재생성 directive (P16) — 빈 코드(degenerate) 차단\n"
+        "이전 응답은 설명·산문만 있고 *사용 가능한 실제 코드가 없었습니다* (추출된 코드 0). "
+        "각 파일의 **전체 내용을 fenced 코드 블록**(```lang + 첫 줄 `# file:` / `// file:` / "
+        "`<!-- file: -->` 헤더) 안에 *실제 코드로* 출력하세요. 설명·요약·계획만 쓰지 말고 "
+        "**코드를 내세요.** 최소한 entry 파일을 (web 이면 추가로 package.json · index.html · "
+        "src/ 소스를) 실제 내용으로 포함하세요."
+    )
+
+
+def _maybe_regenerate_on_degenerate(
+    gui_code_output: str,
+    code_paths: list,
+    *,
+    code_gen_task: Task,
+    coder,
+    context_tasks: list,
+    workflow_dir: Path,
+    platform_intent: str,
+    verbose: bool,
+    max_retries: int = _P3_MAX_DRIFT_RETRIES,
+) -> tuple:
+    """v13 P16 (수정1b) — degenerate(빈/단축 코드) 산출이면 *우회 이전에* 코더 task 를
+    최대 ``max_retries`` 회 '실제 코드 출력' 지시로 재호출 + 재추출. 비-degenerate 가 되면
+    채택; 소진 시 마지막(여전히 degenerate)을 반환 → 기존 13d 마커 + P15 best-iteration 폴백.
+
+    P14 감지 + P15 선택은 유지 — 본 함수는 *우회 전에* 원천 재생성을 끼워넣는 것.
+    pytest 환경은 no-op (실 Crew 미호출 — FakeProvider 경로 보호, drift 재생성과 동일 관례).
+
+    Returns:
+        (gui_code_output, code_paths) — 회복 시 새 산출/추출, 아니면 입력 그대로.
+    """
+    import sys
+
+    if "pytest" in sys.modules:
+        return gui_code_output, code_paths
+    if not _is_degenerate_codegen(code_paths, platform_intent):
+        return gui_code_output, code_paths  # 정상 산출 — no-op (회귀 0)
+
+    code_dir = workflow_dir / "code"
+    for _attempt in range(max_retries):
+        regen_task = Task(
+            description=code_gen_task.description + _build_degenerate_regen_directive(),
+            expected_output=code_gen_task.expected_output,
+            agent=coder,
+            context=context_tasks,
+        )
+        Crew(
+            agents=[coder],
+            tasks=[regen_task],
+            process=Process.sequential,
+            verbose=verbose,
+        ).kickoff()
+        new_output = _task_output_text(regen_task)
+        if not new_output:
+            continue
+        # 원 GUI 추출과 동일 파라미터로 재추출 (web 서브트리 보존).
+        new_paths = _extract_code_blocks(
+            new_output, code_dir, languages=_WEB_CODE_LANGS, preserve_tree=True
+        )
+        gui_code_output, code_paths = new_output, new_paths
+        if not _is_degenerate_codegen(new_paths, platform_intent):
+            break  # 회복 — 채택
+    return gui_code_output, code_paths
+
+
 def _build_product_anchor(user_request: str) -> str:
     """v13 Phase 6.E P14 — 생성 제품의 *최상위 권위 앵커* + 시스템 컨텍스트 격리 directive.
 
@@ -1913,6 +1986,21 @@ def _run_gui_branch_chain(
     code_paths = _extract_code_blocks(
         gui_code_output, workflow_dir / "code", languages=_WEB_CODE_LANGS, preserve_tree=True
     )
+    # v13 P16 (수정1b) — degenerate(빈/단축 코드) 산출이면 *우회/manifest 합성 이전에* 코더를
+    # N회 '실제 코드 출력' 지시로 재호출 + 재추출 (원천 재생성). 회복 시 채택, 소진 시 기존
+    # 13d 마커 + P15 best-iteration 폴백. manifest 합성 전 검사라 합성 stub 에 가려지지 않음.
+    gui_code_output, code_paths = _maybe_regenerate_on_degenerate(
+        gui_code_output,
+        code_paths,
+        code_gen_task=code_gen_task,
+        coder=coder,
+        context_tasks=[uiux_task, designer_task, theme_task],
+        workflow_dir=workflow_dir,
+        platform_intent=platform_intent,
+        verbose=verbose,
+    )
+    # 재생성으로 산출이 바뀌었을 수 있으니 13_gui_code_output.md 를 최종본으로 재기록.
+    (workflow_dir / "13_gui_code_output.md").write_text(gui_code_output, encoding="utf-8")
     # P10a(3) — web 빌드 필수 manifest(package.json/tsconfig.json) salvage→synthesize 보장.
     # jsonc/json5 는 P10a(1) 로 이미 추출되나, 미상장 fence·완전 누락까지 fail-loud 로 커버.
     # 비-web(데스크탑) 산출이면 no-op (회귀 0).
