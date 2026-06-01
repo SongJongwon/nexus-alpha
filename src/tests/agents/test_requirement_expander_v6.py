@@ -101,15 +101,16 @@ class TestDetectDomain:
 # 4. build_domain_checklist — 3D 템플릿 + empty
 # =============================================================================
 class TestBuildDomainChecklist:
-    def test_3d_request_returns_4_items(self) -> None:
-        """⭐ 3D 요청 → 4 항목 템플릿 반환."""
+    def test_3d_request_returns_5_items(self) -> None:
+        """⭐ 3D 요청 → 5 항목 템플릿 반환 (P14: scene-render-loop 추가)."""
         checklist = build_domain_checklist("3D BIM 대시보드")
-        assert len(checklist) == 4
+        assert len(checklist) == 5
         ids = [c.id for c in checklist]
         assert "3d-camera-orbit" in ids
         assert "3d-webgl-vs-canvas" in ids
         assert "3d-interactive-controls" in ids
         assert "3d-real-3d-not-isometric" in ids
+        assert "3d-scene-render-loop" in ids  # P14 도메인 충실도
 
     def test_non_3d_request_returns_empty(self) -> None:
         """비-3D 요청 → 빈 list (Rule 0 자동 skip)."""
@@ -120,7 +121,7 @@ class TestBuildDomainChecklist:
         assert build_domain_checklist("") == []
 
     def test_returned_items_are_all_must_satisfy(self) -> None:
-        """⭐ 3D 템플릿 4 항목 모두 must_satisfy=True (BIM 핵심)."""
+        """⭐ 3D 템플릿 항목 모두 must_satisfy=True (BIM 핵심)."""
         checklist = build_domain_checklist("3D viewer")
         for item in checklist:
             assert item.must_satisfy is True, f"{item.id} must_satisfy False"
@@ -136,8 +137,8 @@ class TestBuildDomainChecklist:
 # 5. _TEMPLATE_3D_CHECKLIST schema 검증
 # =============================================================================
 class TestTemplate3DSchema:
-    def test_template_has_4_items(self) -> None:
-        assert len(_TEMPLATE_3D_CHECKLIST) == 4
+    def test_template_has_5_items(self) -> None:
+        assert len(_TEMPLATE_3D_CHECKLIST) == 5  # P14: 3d-scene-render-loop 추가
 
     def test_camera_orbit_item_detect_keywords(self) -> None:
         item = next(c for c in _TEMPLATE_3D_CHECKLIST if c.id == "3d-camera-orbit")

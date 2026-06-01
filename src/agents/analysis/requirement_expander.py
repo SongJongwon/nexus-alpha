@@ -119,6 +119,20 @@ _TEMPLATE_3D_CHECKLIST: list[ChecklistItem] = [
             "PerspectiveCamera", "PointLight", "DirectionalLight",
         ],
     ),
+    # v13 Phase 6.E P14 (수정2) — 실제 3D 씬 + 렌더 루프 존재 검증 (도메인 충실도 must_fix).
+    # 배경(P13 런): 코드젠이 요청한 3D 뷰어 대신 시스템 자체 *모니터링 대시보드* 를 산출 →
+    # 빌드는 됐으나 도메인 불일치. 모든 Three.js 3D 뷰어(BIM/Bloch/CAD 등)는 Scene + render
+    # loop 를 갖지만 일반 대시보드(차트/테이블/카드)는 없음 — 빌드 성공 ≠ COMPLETE 를 강제.
+    ChecklistItem(
+        id="3d-scene-render-loop",
+        domain="3d_visualization",
+        description="실제 3D 씬 + 렌더 루프 (Three.js Scene + render) — 일반 대시보드 산출 차단",
+        must_satisfy=True,
+        detect_keywords=[
+            "new THREE.Scene", "THREE.Scene(", "new Scene(",
+            "renderer.render", "scene.add", "requestAnimationFrame",
+        ],
+    ),
 ]
 
 
