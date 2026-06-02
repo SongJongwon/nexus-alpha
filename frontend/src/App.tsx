@@ -770,6 +770,11 @@ function clampMaxIterations(raw: string): number {
   return Math.min(10, Math.max(1, n))
 }
 
+// P19 — 산출물이 web(.html) 인지 (▶실행 분기용 — Rust open_exe 와 동일 신호).
+function isWebArtifact(path?: string | null): boolean {
+  return !!path && /\.html?$/i.test(path)
+}
+
 function effectiveModel(agent: AgentInfo, hq: HeadquartersDef): ModelTier {
   return agent.model ?? hq.defaultModel
 }
@@ -993,8 +998,13 @@ function App() {
   const handleOpenExe = async (path: string) => {
     setExeRunMessage(null)
     try {
+      // P19 — open_exe 가 타깃 인지형: web(.html) → vite preview + 브라우저, desktop(.exe) → 실행.
       await invoke<void>('open_exe', { path })
-      setExeRunMessage(`실행 시작: ${path.split(/[\\/]/).pop() ?? path}`)
+      setExeRunMessage(
+        isWebArtifact(path)
+          ? 'vite preview 로 로컬 서버 기동 — 잠시 후 기본 브라우저가 열립니다 (보통 localhost:4173, 점유 시 자동 포트).'
+          : `실행 시작: ${path.split(/[\\/]/).pop() ?? path}`,
+      )
     } catch (e) {
       setExeRunMessage(`실행 실패: ${String(e ?? 'unknown')}`)
     }
@@ -1145,7 +1155,9 @@ function App() {
               <span className="text-lg">✅</span>
               <div className="flex-1 min-w-0">
                 <div className="text-emerald-300 font-semibold">
-                  실행 파일 생성 완료 — verdict: {String(resultEvent.verdict ?? '')}
+                  {isWebArtifact(String(resultEvent.exe_path))
+                    ? `web 빌드 완료 — verdict: ${String(resultEvent.verdict ?? '')}`
+                    : `실행 파일 생성 완료 — verdict: ${String(resultEvent.verdict ?? '')}`}
                 </div>
                 <div
                   className="text-slate-400 text-[10px] mt-0.5 truncate font-mono"
@@ -1157,9 +1169,14 @@ function App() {
               <button
                 type="button"
                 onClick={() => void handleOpenExe(String(resultEvent.exe_path))}
+                title={
+                  isWebArtifact(String(resultEvent.exe_path))
+                    ? 'vite preview 로 dist 서빙 후 기본 브라우저로 열기 (보통 localhost:4173)'
+                    : '빌드된 .exe 실행'
+                }
                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded text-xs font-semibold whitespace-nowrap"
               >
-                ▶ 실행
+                {isWebArtifact(String(resultEvent.exe_path)) ? '▶ 브라우저로 열기' : '▶ 실행'}
               </button>
               <button
                 type="button"
