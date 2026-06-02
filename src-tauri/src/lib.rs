@@ -18,6 +18,7 @@
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Seek, SeekFrom},
+    net::TcpListener,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -159,27 +160,160 @@ async fn claude_auth_login() -> Result<AuthStatus, String> {
     claude_auth_status().await
 }
 
-/// 빌드된 .exe 를 detached spawn 으로 실행 (frontend 의 "실행" 버튼).
+/// vite preview 기본 포트 (P19) — vite 기본값이자 사용자 검증 포트. 점유 시 동적 포트로 대체.
+const DEFAULT_PREVIEW_PORT: u16 = 4173;
+
+/// preview 서버에 쓸 포트 선택 (P19). 4173(vite 기본·사용자 검증)이 비어있으면 그대로,
+/// 점유 시 OS 가 빈 포트를 배정(:0 bind). 선택 포트를 vite `--port <p> --strictPort` 로 고정 +
+/// 동일 포트를 브라우저 URL 로 사용 → 4173 하드코딩의 silent fallback(점유 시 vite 는 4174 로
+/// 가는데 브라우저는 stale 4173 을 열던 회귀) 제거. 재실행/더블클릭도 각자 올바른 포트로 동작.
+fn pick_preview_port() -> u16 {
+    if TcpListener::bind(("127.0.0.1", DEFAULT_PREVIEW_PORT)).is_ok() {
+        return DEFAULT_PREVIEW_PORT;
+    }
+    TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
+        .unwrap_or(DEFAULT_PREVIEW_PORT)
+}
+
+/// 산출물이 web(.html) 인지 — desktop(.exe) 와 분기 (P19).
+/// run.py 의 `_is_web_vision_target`(P17) 와 동일 신호(.html/.htm suffix)를 Rust 측에서 재현.
+fn is_web_artifact(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
+        Some("html") | Some("htm")
+    )
+}
+
+/// dist/index.html → web 프로젝트 루트(code_dir = package.json/node_modules/vite.config 위치).
+/// `_run_web_build`(P17) 가 code_dir/dist/index.html 을 exe_path 로 surface 하므로
+/// index_html 의 조부모 디렉터리가 프로젝트 루트.
+fn web_project_dir(index_html: &Path) -> Option<PathBuf> {
+    index_html
+        .parent() // .../dist
+        .and_then(|dist| dist.parent()) // .../code (project root)
+        .map(|d| d.to_path_buf())
+}
+
+/// 로컬 vite 바이너리 경로 (node_modules/.bin/vite[.cmd]) — 빌드 시 npm install 로 생성.
+/// npm script(package.json 의 preview) 의존을 피하고 vite 를 직접 호출 (LLM 산출 변동 무관).
+fn local_vite_bin(project_dir: &Path) -> PathBuf {
+    let bin = project_dir.join("node_modules").join(".bin");
+    if cfg!(windows) {
+        bin.join("vite.cmd")
+    } else {
+        bin.join("vite")
+    }
+}
+
+/// vite preview spawn 인자 — (program, args). Windows 는 `cmd /C` 로 .cmd shim 해소.
+/// `--strictPort` 로 주어진 포트 점유 시 *폴백 대신 즉시 실패* → 브라우저가 여는 포트와
+/// vite 가 바인딩한 포트가 항상 일치(stale 4173 silent 오작동 차단). 순수 함수라 단위 테스트.
+fn vite_preview_invocation(vite_bin: &Path, port: u16) -> (String, Vec<String>) {
+    let bin = vite_bin.to_string_lossy().into_owned();
+    let p = port.to_string();
+    if cfg!(windows) {
+        (
+            "cmd".into(),
+            vec![
+                "/C".into(),
+                bin,
+                "preview".into(),
+                "--port".into(),
+                p,
+                "--strictPort".into(),
+            ],
+        )
+    } else {
+        (bin, vec!["preview".into(), "--port".into(), p, "--strictPort".into()])
+    }
+}
+
+/// 기본 브라우저로 URL 열기 (detached). Windows `cmd /C start`, 기타 `xdg-open`.
+fn open_in_browser(url: &str) -> Result<(), String> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        // start 의 첫 인자 "" 는 창 제목 placeholder (URL 이 제목으로 먹히지 않도록).
+        c.args(["/C", "start", "", url]);
+        c
+    } else {
+        let mut c = Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    cmd.stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null());
+    cmd.spawn()
+        .map_err(|e| format!("브라우저 열기 실패: {e}"))?;
+    Ok(())
+}
+
+/// web 산출물(dist/index.html) 을 vite preview 로 서빙 + 기본 브라우저로 열기 (P19).
+/// vite preview 는 SPA fallback(history 라우팅) 기본 지원. 서버 바인딩 대기 후 브라우저 오픈.
+fn open_web_preview(index_html: &Path) -> Result<(), String> {
+    let project_dir = web_project_dir(index_html)
+        .ok_or_else(|| "web 프로젝트 루트 결정 실패 (dist/index.html 구조 아님)".to_string())?;
+    let vite_bin = local_vite_bin(&project_dir);
+    if !vite_bin.exists() {
+        return Err(format!(
+            "vite 미설치 ({}) — web 빌드(npm install)가 선행돼야 preview 가능합니다.",
+            vite_bin.display()
+        ));
+    }
+    // 빈 포트 선택(4173 우선) → vite 와 브라우저가 동일 포트 사용 보장.
+    let port = pick_preview_port();
+    let (program, args) = vite_preview_invocation(&vite_bin, port);
+    let mut cmd = Command::new(&program);
+    cmd.args(&args)
+        .current_dir(&project_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    cmd.spawn()
+        .map_err(|e| format!("vite preview 실행 실패: {e}"))?;
+
+    // vite preview 가 포트 바인딩할 시간(~1.5s) 후 *선택한 포트* 로 브라우저 오픈 — 명령은 즉시 반환.
+    let url = format!("http://localhost:{port}");
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(1500));
+        let _ = open_in_browser(&url);
+    });
+    Ok(())
+}
+
+/// 빌드 산출물을 실행/열기 (frontend 의 "▶ 실행" 버튼) — P19: 타깃 인지형.
 ///
-/// 2026-05-26 추가 — Sprint 6 의 *GUI 앱 자동 .exe 빌드* 흐름의 마지막 layer.
-/// ResultEvent.exe_path 가 채워진 run 종료 후, frontend 가 본 command 를 invoke
-/// 해서 사용자가 즉시 빌드된 앱을 실행할 수 있도록.
+/// 2026-05-26 추가 — Sprint 6 의 *자동 빌드* 흐름의 마지막 layer. ResultEvent.exe_path
+/// 가 채워진 run 종료 후, frontend 가 본 command 를 invoke 해 산출물을 즉시 연다.
 ///
-/// Detached spawn — Tauri shell 의 stdin/stdout 을 inherit 하지 *않음*. release
-/// 모드의 GUI subsystem 에서는 console 없으니 NULL handle, dev 모드에서는
-/// inherit 가 안전. spawn 후 child handle drop — 부모가 종료해도 child 는 계속
-/// 실행.
+/// P19 — web 산출물(dist/index.html)을 *무조건 .exe 로 spawn* 하던 결함(os error 193) 수정.
+///   * web(.html) → vite preview 로 dist 서빙 + 기본 브라우저로 열기.
+///   * desktop(.exe) → 기존 detached spawn 그대로 (불변).
+///
+/// Detached spawn — Tauri shell 의 stdin/stdout 을 inherit 하지 *않음*. spawn 후
+/// child handle drop — 부모가 종료해도 child 는 계속 실행.
 #[tauri::command]
 async fn open_exe(path: String) -> Result<(), String> {
-    let exe_path = std::path::PathBuf::from(&path);
-    if !exe_path.exists() {
-        return Err(format!("실행 파일 미발견: {path}"));
+    let artifact = std::path::PathBuf::from(&path);
+    if !artifact.exists() {
+        return Err(format!("산출물 미발견: {path}"));
     }
-    if !exe_path.is_file() {
+
+    // P19 — web 타깃은 vite preview + 브라우저. (.exe Win32 spawn 금지 — os error 193 차단.)
+    if is_web_artifact(&artifact) {
+        return open_web_preview(&artifact);
+    }
+
+    // desktop(.exe) — 기존 경로 불변.
+    if !artifact.is_file() {
         return Err(format!("파일 아님 (디렉터리?): {path}"));
     }
-    let mut cmd = Command::new(&exe_path);
-    if let Some(parent) = exe_path.parent() {
+    let mut cmd = Command::new(&artifact);
+    if let Some(parent) = artifact.parent() {
         cmd.current_dir(parent);
     }
     cmd.stdout(Stdio::null()).stderr(Stdio::null()).stdin(Stdio::null());
@@ -790,5 +924,71 @@ final_decision:
         let a = args_for("web", 7, true, true);
         let idx = a.iter().position(|x| x == "--max-iterations").unwrap();
         assert_eq!(a[idx + 1], "7");
+    }
+
+    // -----------------------------------------------------------------------
+    // P19 — ▶실행 타깃 인지 (web vite preview vs desktop .exe spawn)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn is_web_artifact_detects_html() {
+        assert!(is_web_artifact(Path::new("outputs/code/dist/index.html")));
+        assert!(is_web_artifact(Path::new("page.HTM"))); // 대소문자 무관
+    }
+
+    #[test]
+    fn is_web_artifact_rejects_desktop_and_others() {
+        assert!(!is_web_artifact(Path::new("dist/App.exe")));
+        assert!(!is_web_artifact(Path::new("main.py")));
+        assert!(!is_web_artifact(Path::new("noext")));
+    }
+
+    #[test]
+    fn web_project_dir_is_grandparent_of_index_html() {
+        // code_dir/dist/index.html → code_dir
+        let dir = web_project_dir(Path::new("outputs/run/code/dist/index.html"));
+        assert_eq!(dir, Some(PathBuf::from("outputs/run/code")));
+    }
+
+    #[test]
+    fn local_vite_bin_points_into_node_modules() {
+        let bin = local_vite_bin(Path::new("proj"));
+        let s = bin.to_string_lossy();
+        assert!(s.contains("node_modules"));
+        assert!(s.contains(".bin"));
+        // vite 또는 vite.cmd (플랫폼별)
+        assert!(s.ends_with("vite") || s.ends_with("vite.cmd"));
+    }
+
+    #[test]
+    fn vite_preview_invocation_has_preview_port_strictport_args() {
+        let (program, args) =
+            vite_preview_invocation(Path::new("proj/node_modules/.bin/vite.cmd"), 4173);
+        assert!(args.iter().any(|a| a == "preview"));
+        let pidx = args.iter().position(|a| a == "--port").expect("--port 누락");
+        assert_eq!(args[pidx + 1], "4173");
+        // strictPort 로 포트 점유 시 fallback 대신 실패 → 브라우저 URL 과 vite 포트 일치 보장.
+        assert!(args.iter().any(|a| a == "--strictPort"), "--strictPort 누락");
+        if cfg!(windows) {
+            assert_eq!(program, "cmd");
+            assert_eq!(args[0], "/C");
+        } else {
+            assert!(program.ends_with("vite"));
+        }
+    }
+
+    #[test]
+    fn vite_preview_invocation_uses_given_port() {
+        let (_p, args) = vite_preview_invocation(Path::new("proj/node_modules/.bin/vite"), 51234);
+        let pidx = args.iter().position(|a| a == "--port").unwrap();
+        assert_eq!(args[pidx + 1], "51234"); // 동적 포트가 인자에 반영
+    }
+
+    #[test]
+    fn pick_preview_port_returns_bindable_port() {
+        // 선택된 포트는 실제로 바인딩 가능해야 함(4173 또는 OS 동적 포트). 0 이 아님.
+        let port = pick_preview_port();
+        assert!(port > 0);
+        // 선택 직후엔 바인딩 가능(점유 전) — 재바인드로 유효성 확인.
+        assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
     }
 }
