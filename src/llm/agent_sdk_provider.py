@@ -136,3 +136,73 @@ class AgentSDKProvider(BaseLLMProvider):
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         yield block.text
+
+    # ------------------------------------------------------------------
+    # 멀티모달(vision) — v13 P17: vision QA 를 claude-code-default 로 일원화
+    # ------------------------------------------------------------------
+    def supports_vision(self) -> bool:
+        """claude CLI(MAX 구독) 경유 멀티모달 지원.
+
+        claude-agent-sdk 의 streaming-input(AsyncIterable[dict]) 경로로 image
+        content block 을 전달한다. 실제 멀티모달 전달은 CLI/모델 버전에 의존하므로,
+        호출 측은 응답 파싱 실패 시 ANTHROPIC_API_KEY 경로 폴백 또는 graceful SKIP 한다.
+        """
+        return True
+
+    async def generate_vision(
+        self,
+        prompt: str,
+        images: list[tuple[str, str]],
+        system: Optional[str] = None,
+        *,
+        model: Optional[str] = None,
+        max_tokens: int = 512,
+    ) -> str:
+        """이미지 + 텍스트를 claude-agent-sdk streaming-input 으로 전달 (P17).
+
+        ``query(prompt=AsyncIterable[dict])`` 경로로 ``{"type":"user","message":
+        {"role":"user","content":[image_block..., text_block]}}`` 메시지를 흘려보낸다.
+        멀티모달 가능 모델이 필요하므로 ``model`` 인자(또는 인스턴스 model)를 지정한다.
+        응답은 AssistantMessage 의 TextBlock 을 이어붙여 반환한다.
+        """
+        # 멀티모달은 단발 1턴이면 충분 — max_turns=1 로 고정해 비용/지연 최소화.
+        # NOTE: ClaudeAgentOptions 는 max_tokens 필드를 지원하지 않는다(현행 claude-agent-sdk
+        # 전 버전 공통 — 전달 시 TypeError). vision verdict 는 단발 짧은 JSON 이라 출력 상한이
+        # 사실상 무의미하므로 전달하지 않는다. max_tokens 인자는 BaseLLMProvider 계약 유지를 위해
+        # 시그니처엔 남기되, 실제 토큰 상한은 raw SDK(ANTHROPIC_API_KEY) 폴백 경로에서만 적용된다.
+        opt_kwargs: dict = {"max_turns": 1, "permission_mode": self._permission_mode}
+        if system:
+            opt_kwargs["system_prompt"] = system
+        chosen_model = model or self._model
+        if chosen_model:
+            opt_kwargs["model"] = chosen_model
+        options = ClaudeAgentOptions(**opt_kwargs)
+
+        content: list[dict] = [
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": data},
+            }
+            for data, media_type in images
+        ]
+        content.append({"type": "text", "text": prompt})
+        message = {
+            "type": "user",
+            "message": {"role": "user", "content": content},
+        }
+
+        async def _stream_input() -> AsyncIterator[dict]:
+            yield message
+
+        parts: list[str] = []
+        fallback: Optional[str] = None
+        async for msg in query(prompt=_stream_input(), options=options):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        parts.append(block.text)
+            elif isinstance(msg, ResultMessage) and msg.result:
+                fallback = msg.result
+        if parts:
+            return "".join(parts)
+        return fallback or ""

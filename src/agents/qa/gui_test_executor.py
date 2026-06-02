@@ -363,6 +363,53 @@ def _encode_image_base64(image_path: Path) -> tuple[str, str]:
     return data, media_type
 
 
+def _vision_complete_via_provider(
+    prompt: str,
+    b64_data: str,
+    media_type: str,
+    *,
+    model: str,
+    max_tokens: int,
+) -> Optional[str]:
+    """v13 P17 (수정1) — 공통 LLM Provider(claude-code-default) 로 vision 완성 시도.
+
+    나머지 에이전트와 동일한 ``get_llm_provider()`` 경로를 쓴다. 기본 Provider
+    (AgentSDKProvider)는 Claude Code MAX 구독 경유라 별도 ANTHROPIC_API_KEY 가
+    필요 없다. Provider 가 vision 미지원이거나 호출/import 가 실패하면 None 반환
+    → 호출 측이 기존 ANTHROPIC_API_KEY(raw SDK) 경로로 폴백한다 (회귀 0).
+    """
+    try:
+        import anyio  # noqa: PLC0415
+
+        from src.llm.factory import get_llm_provider  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — import 실패 시 폴백
+        return None
+    try:
+        provider = get_llm_provider()
+    except Exception:  # noqa: BLE001 — Provider 초기화 실패(예: api_key 모드 키 누락) → 폴백
+        return None
+    if not provider.supports_vision():
+        return None
+
+    async def _call() -> str:
+        return await provider.generate_vision(
+            prompt, [(b64_data, media_type)], model=model, max_tokens=max_tokens
+        )
+
+    try:
+        text = anyio.run(_call)
+    except Exception:  # noqa: BLE001 — 멀티모달 호출 실패(CLI/모델 미지원 등) → 폴백
+        return None
+    if not text:
+        return None
+    # claude-code-default 가 이미지 블록을 실제로 소비 못 하고 비-JSON 산문(예: "이미지를 볼 수
+    # 없습니다")을 낼 수 있다. 그 경우 raw_text 가 truthy 라 raw-SDK(ANTHROPIC_API_KEY) 폴백을
+    # 건너뛰면 검증된 멀티모달 경로가 사문화된다 → JSON 추출 불가면 None 반환해 폴백을 트리거.
+    if _extract_json_from_response(text) is None:
+        return None
+    return text
+
+
 def analyze_screenshot(
     screenshot_path: Path,
     *,
@@ -371,9 +418,12 @@ def analyze_screenshot(
     api_key: Optional[str] = None,
     max_tokens: int = 512,
 ) -> VisionAnalysis:
-    """Anthropic Vision API 로 스크린샷 1장 분석.
+    """스크린샷 1장을 Claude Vision 으로 분석.
 
-    Optional 의존성 / 키 부재 시 ``success=False`` 로 graceful return.
+    v13 P17 (수정1) — 인증 일원화: ① 공통 Provider(claude-code-default, 키 불필요)
+    경유를 *우선* 시도하고, ② 불가하면 기존 ANTHROPIC_API_KEY(raw anthropic SDK)
+    경로로 폴백한다. 둘 다 불가하면 ``success=False`` graceful return (→ 호출 측이
+    VISION_UNAVAILABLE/SKIPPED 로 처리, FAIL 아님). 데스크탑 경로 동작 불변.
     """
     if not screenshot_path.exists():
         return VisionAnalysis(
@@ -383,59 +433,66 @@ def analyze_screenshot(
             error_message=f"screenshot 파일 부재: {screenshot_path}",
         )
 
-    if not _is_anthropic_available():
-        return VisionAnalysis(
-            screenshot_path=screenshot_path,
-            model=model,
-            success=False,
-            error_message="anthropic SDK 미설치",
-        )
+    b64_data, media_type = _encode_image_base64(screenshot_path)
 
-    resolved_key = _resolve_anthropic_api_key(api_key)
-    if not resolved_key:
-        return VisionAnalysis(
-            screenshot_path=screenshot_path,
-            model=model,
-            success=False,
-            error_message="ANTHROPIC_API_KEY 미설정",
-        )
+    # ① claude-code-default(공통 Provider) 우선 — 별도 키 없이 동작.
+    raw_text = _vision_complete_via_provider(
+        prompt, b64_data, media_type, model=model, max_tokens=max_tokens
+    )
 
-    try:
-        from anthropic import Anthropic  # type: ignore
+    # ② 폴백 — 기존 ANTHROPIC_API_KEY(raw anthropic SDK) 경로 (검증된 멀티모달 경로 보존).
+    if not raw_text:
+        if not _is_anthropic_available():
+            return VisionAnalysis(
+                screenshot_path=screenshot_path,
+                model=model,
+                success=False,
+                error_message="vision 평가 불가 — claude-code-default 미가용 + anthropic SDK 미설치",
+            )
+        resolved_key = _resolve_anthropic_api_key(api_key)
+        if not resolved_key:
+            return VisionAnalysis(
+                screenshot_path=screenshot_path,
+                model=model,
+                success=False,
+                error_message="vision 평가 불가 — claude-code-default 미가용 + ANTHROPIC_API_KEY 미설정",
+            )
+        try:
+            from anthropic import Anthropic  # type: ignore
 
-        client = Anthropic(api_key=resolved_key)
-        b64_data, media_type = _encode_image_base64(screenshot_path)
-
-        msg = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": b64_data,
+            client = Anthropic(api_key=resolved_key)
+            msg = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": b64_data,
+                                },
                             },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-        )
-        # response content blocks → 첫 text 블록만
-        text_parts = [block.text for block in msg.content if getattr(block, "type", "") == "text"]
-        raw_text = "\n".join(text_parts)
-    except Exception as e:
-        return VisionAnalysis(
-            screenshot_path=screenshot_path,
-            model=model,
-            success=False,
-            error_message=f"Vision API 호출 실패: {type(e).__name__}: {e}",
-        )
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+            )
+            # response content blocks → 첫 text 블록만
+            text_parts = [
+                block.text for block in msg.content if getattr(block, "type", "") == "text"
+            ]
+            raw_text = "\n".join(text_parts)
+        except Exception as e:  # noqa: BLE001
+            return VisionAnalysis(
+                screenshot_path=screenshot_path,
+                model=model,
+                success=False,
+                error_message=f"Vision API 호출 실패: {type(e).__name__}: {e}",
+            )
 
     parsed = _extract_json_from_response(raw_text)
     if parsed is None:
@@ -498,6 +555,24 @@ def run_gui_test(
             elapsed_sec=time.time() - started,
             target_path=target_path,
             error_message=f"target 부재: {target_path}",
+        )
+
+    # v13 P17 (수정2) — web 타깃 심층 방어선: .html/.htm 은 데스크탑 GUI(.exe) 가 아니라
+    # web(vite/SPA) 산출이다. pyautogui 로 전체 화면을 찍어봐야 의미 없고(브라우저 미실행),
+    # subprocess 로 .html 직접 실행은 0 screenshots → FAIL → 파괴적 retry-rebuild 로 이어진다.
+    # web 시각 QA 는 run_web_vision_qa(headless 브라우저) 경로를 써야 하므로 여기선 *우아하게
+    # SKIP*(FAIL 아님) — 어떤 호출자가 web 산출을 잘못 넘겨도 retry 미발동. 데스크탑(.exe) 불변.
+    if target_path.suffix.lower() in (".html", ".htm"):
+        return GUITestResult(
+            success=False,
+            skipped=True,
+            elapsed_sec=time.time() - started,
+            target_path=target_path,
+            process_terminated_by="skipped",
+            error_message=(
+                "web(.html) 타깃 — 데스크탑 GUI 스크린샷 경로 부적합. "
+                "web 시각 QA 는 run_web_vision_qa(headless 브라우저)를 사용하세요. SKIPPED."
+            ),
         )
 
     if not _is_pyautogui_available():

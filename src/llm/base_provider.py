@@ -51,8 +51,49 @@ class BaseLLMProvider(ABC):
         """
 
     # ------------------------------------------------------------------
-    # 선택적 훅
+    # 선택적 훅 — 멀티모달(vision) 역량 (v13 P17)
     # ------------------------------------------------------------------
+    def supports_vision(self) -> bool:
+        """이 Provider 가 이미지 입력(멀티모달)을 지원하는지.
+
+        기본 False — 텍스트 전용. 멀티모달을 지원하는 Provider(예: AgentSDKProvider
+        의 claude-code-default 경로)만 True 로 오버라이드한다. vision QA(스크린샷
+        평가) 호출 측은 이 훅으로 claude-code-default 경유 가능 여부를 판별하고,
+        불가하면 기존 ANTHROPIC_API_KEY 경로로 폴백한다 (P17 수정1).
+        """
+        return False
+
+    async def generate_vision(
+        self,
+        prompt: str,
+        images: list[tuple[str, str]],
+        system: Optional[str] = None,
+        *,
+        model: Optional[str] = None,
+        max_tokens: int = 512,
+    ) -> str:
+        """이미지(base64) + 텍스트 프롬프트로 멀티모달 완성을 반환한다 (P17).
+
+        Args:
+            prompt: 이미지와 함께 보낼 텍스트 지시.
+            images: ``(base64_data, media_type)`` 튜플 리스트. media_type 은
+                ``image/png`` / ``image/jpeg`` 등.
+            system: 선택적 system prompt.
+            model: 멀티모달 가능 모델 ID(미지정 시 Provider 기본).
+            max_tokens: 응답 최대 토큰.
+
+        Returns:
+            모델이 생성한 텍스트 응답.
+
+        Raises:
+            NotImplementedError: 멀티모달 미지원 Provider(기본). 호출 측은
+                ``supports_vision()`` 로 사전 분기하거나 예외를 잡아 폴백한다.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} 는 멀티모달(vision) 입력을 지원하지 않습니다. "
+            "supports_vision() 로 사전 분기하세요."
+        )
+
     def _model_identifier(self) -> str:
         """LangFuse 로깅에 사용할 모델 식별자. 하위 클래스에서 오버라이드 권장."""
         return "unknown"
