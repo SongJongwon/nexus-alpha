@@ -108,14 +108,10 @@ class TestDeriveRoutes:
             encoding="utf-8",
         )
         routes = derive_routes(tmp_path)
-        assert routes[0] == "/"  # 랜딩 우선
-        assert "/about" in routes
-        assert "/dashboard" in routes  # 상대 → 절대
-        assert "/#/settings" in routes  # 해시 라우트
-        # 외부/에셋/앵커 제외
-        assert not any("x.com" in r for r in routes)
-        assert not any(r.endswith(".png") for r in routes)
-        assert "/#" not in routes
+        # 결정적 정확 매칭 — 동일 출처(절대/상대→절대/해시 라우트)만 포함하고 외부 링크
+        # (https://...)·mailto·에셋(.png)·빈 앵커(#)는 결과 목록에 *아예 없음*.
+        # (URL 부분문자열 검사 대신 리스트 동등성으로 검증 — 포함+제외를 동시에 잠금.)
+        assert routes == ["/", "/about", "/dashboard", "/#/settings"]
 
     def test_routes_capped(self, tmp_path: Path) -> None:
         links = "".join(f"<a href='/r{i}'>x</a>" for i in range(20))
