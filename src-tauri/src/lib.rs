@@ -4,7 +4,9 @@
 //!   * claude_auth_status — `claude auth status --json` 호출 + JSON parse
 //!   * claude_auth_login  — `claude auth login` (브라우저 OAuth 인터랙티브)
 //!   * claude_auth_logout — `claude auth logout`
-//!   * start_run          — Python sidecar spawn (--force-cli + claude.exe PATH 주입)
+//!   * start_run          — Python sidecar spawn (P18: 빌드 타깃 web/desktop/none +
+//!                          max-iterations + tech-scout/auto-iterate 플래그 매핑,
+//!                          build_run_args 참조; claude.exe PATH 주입)
 //!
 //! ## Windows PATH 결함 처방 (2026-05-26)
 //! Windows 의 `where claude` 가 3 후보 반환 — `claude.exe` (native),
@@ -206,19 +208,81 @@ async fn claude_auth_logout() -> Result<(), String> {
 // Python sidecar spawn + jsonl tail
 // ---------------------------------------------------------------------------
 
+/// scripts/run.py 호출 인자 벡터 구성 (P18 — UI 컨트롤 → run.py 플래그 매핑).
+///
+/// **순수 함수** — 부수효과 없이 인자만 산출하므로 단위 테스트로 매핑을 검증한다.
+/// 하네스(Python) 로직은 일절 건드리지 않고 *기존 run.py 플래그* 만 조합한다.
+///
+/// 매핑 (PowerShell `run.py` 와 동등):
+///   * `build_target`:
+///       - `"web"`     → `--build` + **`--force-cli` 미부착** (Track A GUI/web 분기
+///                       활성 → web SPA 요청이 vite 빌드 → dist/index.html). ★앱이
+///                       못 하던 web 빌드 갭 해소.
+///       - `"desktop"` → `--build` + `--force-cli` (기존 PyInstaller 경로 *그대로* — 회귀 0).
+///       - 그 외(`"none"`) → 빌드 없음 + `--force-cli` (기존 비-빌드 동작 보존).
+///   * `--max-iterations N` (auto-iterate 시 최대 iteration).
+///   * `--enable-tech-scout` (toggle ON 일 때만).
+///   * `--auto-iterate` / `--no-auto-iterate` (toggle).
+///   * 공통: `--request` / `--track` / `--emit-events` / `--non-interactive`.
+fn build_run_args(
+    run_script: &Path,
+    request: &str,
+    track: &str,
+    build_target: &str,
+    max_iterations: u32,
+    enable_tech_scout: bool,
+    auto_iterate: bool,
+    events_path: &Path,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        run_script.to_string_lossy().into_owned(),
+        "--request".into(),
+        request.to_string(),
+        "--track".into(),
+        track.to_string(),
+        "--emit-events".into(),
+        events_path.to_string_lossy().into_owned(),
+        "--max-iterations".into(),
+        max_iterations.to_string(),
+        "--non-interactive".into(),
+    ];
+    // web 만 GUI/web 분기 활성 (force-cli 제거). desktop/none 은 기존대로 --force-cli.
+    if build_target != "web" {
+        args.push("--force-cli".into());
+    }
+    // web/desktop → --build (run.py/_is_web_project 가 web vs PyInstaller 결정). none → 빌드 없음.
+    if build_target == "web" || build_target == "desktop" {
+        args.push("--build".into());
+    }
+    if enable_tech_scout {
+        args.push("--enable-tech-scout".into());
+    }
+    if auto_iterate {
+        args.push("--auto-iterate".into());
+    } else {
+        args.push("--no-auto-iterate".into());
+    }
+    args
+}
+
 /// Python sidecar (`scripts/run.py`) spawn + events.jsonl tail thread.
 ///
 /// 본 PR (2026-05-26) 부터 spawn 시점에 *claude.exe 의 디렉터리* 를 자식
 /// process 의 PATH 에 prepend + `CLAUDE_CLI_PATH` env var 전달. 향후 백엔드가
 /// claude CLI 를 자식 process 로 호출할 때 *Rust 에서 결정한 절대 경로* 를
 /// 그대로 사용 가능 (현재 scripts/run.py 는 미사용이지만 일관성).
+///
+/// P18 — `build` (bool) → `build_target` ("web"/"desktop"/"none") 로 교체 + run 옵션
+/// (`enable_tech_scout` / `auto_iterate`) 노출. 플래그 매핑은 `build_run_args` 참조.
 #[tauri::command]
 async fn start_run(
     app: AppHandle,
     request: String,
     track: String,
-    build: bool,
+    build_target: String,
     max_iterations: u32,
+    enable_tech_scout: bool,
+    auto_iterate: bool,
 ) -> Result<String, String> {
     let project_root = resolve_project_root()?;
     let events_path = project_root.join("outputs").join("events.jsonl");
@@ -249,18 +313,21 @@ async fn start_run(
         ));
     }
 
+    // P18 — UI 컨트롤(빌드 타깃 / max-iterations / tech-scout / auto-iterate)을
+    // run.py 플래그로 매핑. 순수 함수라 단위 테스트(build_run_args_*)로 검증됨.
+    let run_args = build_run_args(
+        &run_script,
+        &request,
+        &track,
+        &build_target,
+        max_iterations,
+        enable_tech_scout,
+        auto_iterate,
+        &events_path,
+    );
+
     let mut cmd = Command::new(&python);
-    cmd.arg(&run_script)
-        .arg("--request")
-        .arg(&request)
-        .arg("--track")
-        .arg(&track)
-        .arg("--force-cli") // Claude Code CLI 구독 흐름 강제 (Track A 의 GUI 분기 비활성)
-        .arg("--emit-events")
-        .arg(&events_path)
-        .arg("--max-iterations")
-        .arg(max_iterations.to_string())
-        .arg("--non-interactive")
+    cmd.args(&run_args)
         .current_dir(&project_root)
         // 2026-05-26 fix — Stdio::piped() 인데 부모가 read 안 하면 child 의
         // OS write buffer full → Python sidecar 가 BrokenPipeError 로 즉시 사망 →
@@ -269,9 +336,6 @@ async fn start_run(
         // handle inherit (조용히 무시) — 양쪽 모두 broken pipe 회피.
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    if build {
-        cmd.arg("--build");
-    }
 
     // claude.exe 디렉터리를 자식 process 의 PATH 에 prepend + 절대 경로 env var.
     // PM 요청 2: "run.py 호출 시에도 동일하게 claude.exe 전체 경로를 사용".
@@ -643,5 +707,88 @@ final_decision:
         assert_eq!(json["budget"]["estimated_cost_usd"], 2.0);
         assert_eq!(json["final_decision"]["outcome"], "approved");
         assert_eq!(json["final_decision"]["blocked_by"].as_array().unwrap().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // P18 — build_run_args 플래그 매핑 (UI 컨트롤 → run.py 플래그)
+    // -----------------------------------------------------------------------
+    fn args_for(
+        build_target: &str,
+        max_iterations: u32,
+        enable_tech_scout: bool,
+        auto_iterate: bool,
+    ) -> Vec<String> {
+        build_run_args(
+            Path::new("scripts/run.py"),
+            "칸반 보드 웹앱",
+            "A",
+            build_target,
+            max_iterations,
+            enable_tech_scout,
+            auto_iterate,
+            Path::new("outputs/events.jsonl"),
+        )
+    }
+
+    #[test]
+    fn build_args_common_flags_always_present() {
+        let a = args_for("web", 3, true, true);
+        assert_eq!(a[0], "scripts/run.py");
+        for pair in [
+            ("--request", "칸반 보드 웹앱"),
+            ("--track", "A"),
+            ("--emit-events", "outputs/events.jsonl"),
+            ("--max-iterations", "3"),
+        ] {
+            let idx = a.iter().position(|x| x == pair.0).expect("flag 누락");
+            assert_eq!(a[idx + 1], pair.1, "{} 값 불일치", pair.0);
+        }
+        assert!(a.contains(&"--non-interactive".to_string()));
+    }
+
+    #[test]
+    fn build_args_web_target_drops_force_cli_and_builds() {
+        // web — GUI/web 분기 활성(force-cli 제거) + --build. ★앱 web 빌드 갭 해소.
+        let a = args_for("web", 3, true, true);
+        assert!(!a.contains(&"--force-cli".to_string()), "web 은 --force-cli 미부착");
+        assert!(a.contains(&"--build".to_string()), "web 은 --build");
+    }
+
+    #[test]
+    fn build_args_desktop_target_keeps_force_cli_and_builds() {
+        // desktop — 기존 PyInstaller 경로 *그대로* (force-cli + build). 회귀 0.
+        let a = args_for("desktop", 3, false, true);
+        assert!(a.contains(&"--force-cli".to_string()), "desktop 은 --force-cli 유지");
+        assert!(a.contains(&"--build".to_string()), "desktop 은 --build");
+    }
+
+    #[test]
+    fn build_args_none_target_no_build_keeps_force_cli() {
+        let a = args_for("none", 3, false, true);
+        assert!(!a.contains(&"--build".to_string()), "none 은 --build 없음");
+        assert!(a.contains(&"--force-cli".to_string()), "none 은 기존대로 --force-cli");
+    }
+
+    #[test]
+    fn build_args_tech_scout_toggle() {
+        assert!(args_for("web", 3, true, true).contains(&"--enable-tech-scout".to_string()));
+        assert!(!args_for("web", 3, false, true).contains(&"--enable-tech-scout".to_string()));
+    }
+
+    #[test]
+    fn build_args_auto_iterate_toggle() {
+        let on = args_for("web", 5, true, true);
+        assert!(on.contains(&"--auto-iterate".to_string()));
+        assert!(!on.contains(&"--no-auto-iterate".to_string()));
+        let off = args_for("web", 5, true, false);
+        assert!(off.contains(&"--no-auto-iterate".to_string()));
+        assert!(!off.contains(&"--auto-iterate".to_string()));
+    }
+
+    #[test]
+    fn build_args_max_iterations_passthrough() {
+        let a = args_for("web", 7, true, true);
+        let idx = a.iter().position(|x| x == "--max-iterations").unwrap();
+        assert_eq!(a[idx + 1], "7");
     }
 }
