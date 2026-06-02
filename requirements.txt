@@ -26,7 +26,7 @@ langfuse>=2.0.0
 
 # 환경변수
 # .env 파일에서 환경 변수 로드
-python-dotenv>=1.0.0
+python-dotenv>=1.2.2
 
 # 데이터 처리
 # 표 형식 데이터 분석 및 조작
