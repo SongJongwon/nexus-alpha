@@ -712,6 +712,11 @@ def _run_track_a(args: argparse.Namespace) -> int:
             enable_publish=args.release,
             publish_as_draft=True,
             repo_url=args.repo,
+            # v13 P20 — 사람 개입 체크포인트 (opt-in). 헤드리스/non-interactive 무 GUI 면
+            # 훅이 자동 진행하므로 별도 클램프 불필요 (모드 판별은 _intervention 내부).
+            # getattr 기본값 — run.py 의 emit_events/non_interactive 와 동일 방어 패턴(구 fixture 호환).
+            intervene=getattr(args, "intervene", False),
+            intervene_timeout=getattr(args, "intervene_timeout", 90),
         )
         result = outcome.final_chain_result
         # PR #174 — BLOCKED UX 개선 (blocked_cause + partial output 안내)
@@ -1296,6 +1301,20 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "default OFF — 기존 사용자 영향 0. 환경변수 NEXUS_TELEMETRY_PATH 와 "
             "동등 (flag 가 env var 를 set). 예: --emit-events events.jsonl"
         ),
+    )
+    parser.add_argument(
+        "--intervene", dest="intervene", action="store_true", default=False,
+        help=(
+            "v13 P20 — codegen 직전 사람 개입(human-in-the-loop) 체크포인트 opt-in. "
+            "첫 codegen 직전 1회 멈춰 계획/스펙을 보여주고(checkpoint 이벤트) 피드백을 "
+            "받아 P12 메커니즘으로 codegen 입력에 반영. 무입력이면 --intervene-timeout "
+            "후 자동 진행. default OFF — 켤 때만 멈춤(기존 런 100% 동일). GUI(--emit-events)는 "
+            "intervention_in.json 파일 폴링, 콘솔(tty)은 타임아웃 stdin, 헤드리스는 자동 진행."
+        ),
+    )
+    parser.add_argument(
+        "--intervene-timeout", dest="intervene_timeout", type=int, default=90,
+        help="v13 P20 — 개입 체크포인트 대기 타임아웃(초, 기본 90). 무입력 시 자동 진행.",
     )
     return parser.parse_args(argv)
 

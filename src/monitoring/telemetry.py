@@ -170,6 +170,26 @@ class ResultEvent:
     type: str = "result"
 
 
+@dataclass
+class CheckpointEvent:
+    """v13 P20 — codegen 직전 사람 개입(human-in-the-loop) 체크포인트.
+
+    Tauri UI: 이 이벤트 수신 시 *개입 패널* 표시 — 계획/스펙 요약 + 피드백 입력칸 +
+    카운트다운(timeout_sec) + "주입 후 계속"/"그냥 계속". 사용자가 ``intervention_file``
+    경로에 ``{"feedback":..,"action":"inject"|"continue"}`` 를 기록하면 하네스가 폴링해
+    읽는다. 개입 OFF(기본) 면 emit 자체가 일어나지 않음 → 패널 미표시.
+    """
+    checkpoint_id: str       # 예: "pre_codegen"
+    node: str                # 예: "run_chain"
+    plan_summary: str        # 계획/스펙 요약 (truncated)
+    timeout_sec: int         # 대기 타임아웃 (카운트다운)
+    intervention_file: str   # GUI 가 피드백을 기록할 파일 절대경로 (하네스가 폴링)
+    run_id: str = ""
+    iteration: int = 0
+    ts: str = field(default_factory=_now_ts)
+    type: str = "checkpoint"
+
+
 # ---------------------------------------------------------------------------
 # TelemetryEmitter (싱글톤)
 # ---------------------------------------------------------------------------
@@ -376,6 +396,7 @@ __all__ = [
     "AgentMessageEvent",
     "IterationProgressEvent",
     "ResultEvent",
+    "CheckpointEvent",
     "TelemetryEmitter",
     "get_telemetry_emitter",
 ]
