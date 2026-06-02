@@ -253,6 +253,9 @@ class _LoopState(TypedDict, total=False):
     release_tag: str  # Track B run_automate_workflow 의 release_tag
     # PR #183 — Track B 도메인 자동 분류 우회 (CLI --forced-domain)
     forced_domain: Any  # AutomationDomain | None — Track B 전용, None 이면 휴리스틱
+    # v13 P20 — codegen 직전 사람 개입 체크포인트 (opt-in, 기본 OFF)
+    intervene: bool  # True 면 첫 codegen 직전 1회 체크포인트 (파일/콘솔). False 면 no-op.
+    intervene_timeout: int  # 개입 대기 타임아웃 (초). 무입력 시 자동 진행.
 
     # v13 Phase 1 2단계 (PR #217) — 본부 9 Runtime Verification opt-in wire
     enable_rv: bool  # --enable-rv flag. False (default) 면 _node_runtime_verify pass-through
@@ -877,6 +880,29 @@ def _build_platform_constraint(platform_intent: str) -> str:
     )
 
 
+def _build_checkpoint_plan_summary(state: _LoopState) -> str:
+    """v13 P20 — codegen 직전 체크포인트에서 사람에게 보여줄 계획/스펙 요약 조립.
+
+    이 시점(run_chain 진입, 첫 codegen 직전)에 확정된 재료: 요청 + 플랫폼 의도 +
+    스펙(expand_requirements 산출) + 킥오프 계획(kickoff_meeting 산출). 코드는 아직 미생성.
+    """
+    parts: list[str] = []
+    req = (state.get("user_request") or "").strip()
+    if req:
+        parts.append(f"[요청]\n{req[:400]}")
+    parts.append(f"[플랫폼 의도] {state.get('platform_intent', 'unspecified')}")
+    spec = (state.get("spec_markdown") or "").strip()
+    if spec:
+        parts.append(f"[스펙 (Requirement Expander)]\n{spec[:1500]}")
+    skd = state.get("shared_kickoff_decisions")
+    if skd is not None:
+        try:
+            parts.append(f"[킥오프 계획]\n{str(skd)[:800]}")
+        except Exception:  # noqa: BLE001
+            pass
+    return "\n\n".join(parts)
+
+
 def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     """analyze_and_implement (Track A) 또는 automate_workflow (Track B) 체인 호출.
 
@@ -888,6 +914,27 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     """
     next_iter = state["iteration"] + 1
     feedback = state.get("feedback", "")
+
+    # ★ v13 P20 — codegen 직전 사람 개입 체크포인트 (opt-in, 첫 codegen 1회만).
+    # 그래프 순서상 expand_requirements(스펙)+kickoff_meeting(계획)이 이미 끝났고 codegen
+    # 체인은 아직 미실행 = "계획·스펙 확정 후, 코드 생성 전". intervene=False(기본)면 완전 no-op
+    # (import 조차 없음 → 회귀 0). 입력 시 P12 conduit(feedback→request_with_feedback)로 주입.
+    if next_iter == 1 and state.get("intervene", False):
+        from src.workflows._intervention import (  # noqa: PLC0415
+            DEFAULT_INTERVENE_TIMEOUT_SEC,
+            format_intervention_directive,
+            request_codegen_intervention,
+        )
+
+        human_feedback = request_codegen_intervention(
+            _build_checkpoint_plan_summary(state),
+            intervene=True,
+            timeout_sec=state.get("intervene_timeout", DEFAULT_INTERVENE_TIMEOUT_SEC),
+        )
+        if human_feedback:
+            directive = format_intervention_directive(human_feedback)
+            feedback = (feedback + directive) if feedback else directive
+
     # ★ Phase 6.E (PR #232) — iter 2+ 진입 시 이전 chain_result 의 코드 첨부.
     # iter 1 진입 시 state["chain_result"] = None → 빈 context → 회귀 0.
     prev_code_context = ""
@@ -2268,6 +2315,9 @@ def run_iterative_loop(
     release_tag: str = "",
     # PR #183 — CLI --forced-domain 전달 (Track B 도메인 자동 분류 우회)
     forced_domain: Any = None,
+    # v13 P20 — codegen 직전 사람 개입 체크포인트 (opt-in, 기본 OFF — 회귀 0)
+    intervene: bool = False,
+    intervene_timeout: int = 90,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -2406,6 +2456,9 @@ def run_iterative_loop(
             "release_tag": release_tag,
             # PR #183 — CLI --forced-domain 전달 (Track B 도메인 자동 분류 우회)
             "forced_domain": forced_domain,
+            # v13 P20 — 사람 개입 체크포인트 (기본 OFF)
+            "intervene": intervene,
+            "intervene_timeout": intervene_timeout,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.

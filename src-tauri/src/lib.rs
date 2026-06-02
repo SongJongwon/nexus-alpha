@@ -322,6 +322,34 @@ async fn open_exe(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// v13 P20 — intervention_in.json payload(JSON) 구성 (순수 함수, 단위 테스트 대상).
+fn intervention_payload_json(feedback: &str, action: &str) -> String {
+    serde_json::json!({ "feedback": feedback, "action": action }).to_string()
+}
+
+/// v13 P20 — 개입 피드백을 intervention_in.json 에 *원자적* 기록 (frontend 개입 패널 → 하네스 폴링).
+///
+/// frontend(웹뷰)는 파일을 직접 쓸 수 없으므로 본 command 경유. 같은 디렉터리 temp 파일에
+/// 쓴 뒤 rename → 하네스(`_intervention._poll_intervention_file`)가 *부분 JSON* 을 읽는 레이스
+/// 방지. `action`: "inject"(feedback 반영) | "continue"(그냥 계속). checkpoint 이벤트의
+/// `intervention_file` 절대경로를 그대로 path 로 받는다.
+#[tauri::command]
+async fn write_intervention_file(
+    path: String,
+    feedback: String,
+    action: String,
+) -> Result<(), String> {
+    let target = std::path::PathBuf::from(&path);
+    let json = intervention_payload_json(&feedback, &action);
+    // 같은 디렉터리 temp(.tmp) → rename (원자적, 동일 파일시스템).
+    let tmp = target.with_extension("tmp");
+    std::fs::write(&tmp, json.as_bytes())
+        .map_err(|e| format!("intervention temp 기록 실패 ({}): {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &target)
+        .map_err(|e| format!("intervention rename 실패 ({}): {e}", target.display()))?;
+    Ok(())
+}
+
 /// `claude auth logout` 실행. 성공 시 token 삭제.
 #[tauri::command]
 async fn claude_auth_logout() -> Result<(), String> {
@@ -366,6 +394,7 @@ fn build_run_args(
     max_iterations: u32,
     enable_tech_scout: bool,
     auto_iterate: bool,
+    intervene: bool,
     events_path: &Path,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
@@ -396,6 +425,11 @@ fn build_run_args(
     } else {
         args.push("--no-auto-iterate".into());
     }
+    // v13 P20 — 런 중 사람 개입 체크포인트 (opt-in). 앱은 --emit-events 도 보내므로 하네스가
+    // 파일(intervention_in.json) 모드로 codegen 직전 1회 멈춘다. OFF 면 미부착(기존 런 동일).
+    if intervene {
+        args.push("--intervene".into());
+    }
     args
 }
 
@@ -408,6 +442,7 @@ fn build_run_args(
 ///
 /// P18 — `build` (bool) → `build_target` ("web"/"desktop"/"none") 로 교체 + run 옵션
 /// (`enable_tech_scout` / `auto_iterate`) 노출. 플래그 매핑은 `build_run_args` 참조.
+/// P20 — `intervene` (런 중 사람 개입 체크포인트 토글) 추가 → `--intervene` 매핑.
 #[tauri::command]
 async fn start_run(
     app: AppHandle,
@@ -417,6 +452,7 @@ async fn start_run(
     max_iterations: u32,
     enable_tech_scout: bool,
     auto_iterate: bool,
+    intervene: bool,
 ) -> Result<String, String> {
     let project_root = resolve_project_root()?;
     let events_path = project_root.join("outputs").join("events.jsonl");
@@ -427,6 +463,14 @@ async fn start_run(
     }
     let _ = std::fs::File::create(&events_path)
         .map_err(|e| format!("events.jsonl 초기화 실패: {e}"))?;
+
+    // v13 P20 — 매 런 시작 시 이전 런의 고아 intervention 파일 정리 (housekeeping).
+    // 막판 제출/타임아웃 직후 도착으로 남은 intervention_in.json(+.tmp)을 best-effort 삭제 →
+    // 새 런을 클린 상태로. (정확성엔 영향 없음 — 하네스도 체크포인트 진입 시 stale 제거.)
+    if let Some(out_dir) = events_path.parent() {
+        let _ = std::fs::remove_file(out_dir.join("intervention_in.json"));
+        let _ = std::fs::remove_file(out_dir.join("intervention_in.tmp"));
+    }
 
     let python = project_root
         .join(".venv")
@@ -457,6 +501,7 @@ async fn start_run(
         max_iterations,
         enable_tech_scout,
         auto_iterate,
+        intervene,
         &events_path,
     );
 
@@ -767,6 +812,7 @@ pub fn run() {
             claude_auth_login,
             claude_auth_logout,
             open_exe,
+            write_intervention_file,
             list_board_decisions,
             read_board_decision,
             list_boardroom_sessions,
@@ -860,6 +906,7 @@ final_decision:
             max_iterations,
             enable_tech_scout,
             auto_iterate,
+            false, // intervene — 기존 테스트는 OFF (P20 토글은 별도 테스트)
             Path::new("outputs/events.jsonl"),
         )
     }
@@ -924,6 +971,50 @@ final_decision:
         let a = args_for("web", 7, true, true);
         let idx = a.iter().position(|x| x == "--max-iterations").unwrap();
         assert_eq!(a[idx + 1], "7");
+    }
+
+    // -----------------------------------------------------------------------
+    // P20 — 런 중 개입 토글 → --intervene 매핑 + intervention payload
+    // -----------------------------------------------------------------------
+    fn args_with_intervene(intervene: bool) -> Vec<String> {
+        build_run_args(
+            Path::new("scripts/run.py"),
+            "칸반 보드 웹앱",
+            "A",
+            "web",
+            3,
+            true,
+            true,
+            intervene,
+            Path::new("outputs/events.jsonl"),
+        )
+    }
+
+    #[test]
+    fn build_args_intervene_toggle() {
+        // ON → --intervene 부착, OFF → 미부착 (기본 OFF = 기존 런 동일).
+        assert!(args_with_intervene(true).contains(&"--intervene".to_string()));
+        assert!(!args_with_intervene(false).contains(&"--intervene".to_string()));
+    }
+
+    #[test]
+    fn build_args_off_target_has_no_intervene() {
+        // args_for 헬퍼(기존 테스트)는 intervene=false → 어떤 타깃도 --intervene 없음.
+        for t in ["web", "desktop", "none"] {
+            assert!(!args_for(t, 3, true, true).contains(&"--intervene".to_string()));
+        }
+    }
+
+    #[test]
+    fn intervention_payload_json_has_feedback_and_action() {
+        let json = intervention_payload_json("배경을 다크 테마로", "inject");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["feedback"], "배경을 다크 테마로");
+        assert_eq!(v["action"], "inject");
+        // continue 액션도 직렬화 — feedback 비어도 유효 JSON.
+        let cont: serde_json::Value =
+            serde_json::from_str(&intervention_payload_json("", "continue")).unwrap();
+        assert_eq!(cont["action"], "continue");
     }
 
     // -----------------------------------------------------------------------

@@ -648,6 +648,12 @@ interface TelemetryEvent {
   role?: string
   prompt_preview?: string
   output_preview?: string
+  // P20 — checkpoint 이벤트 필드 (type === 'checkpoint')
+  plan_summary?: string
+  timeout_sec?: number
+  intervention_file?: string
+  checkpoint_id?: string
+  node?: string
   [k: string]: unknown
 }
 
@@ -817,6 +823,11 @@ function App() {
   const [maxIterStr, setMaxIterStr] = useState<string>('3')
   const [autoIterate, setAutoIterate] = useState<boolean>(true)
   const [enableTechScout, setEnableTechScout] = useState<boolean>(true)
+  // P20 — 런 중 사람 개입 체크포인트 (기본 OFF). ON 이면 --intervene 전달.
+  const [interveneEnabled, setInterveneEnabled] = useState<boolean>(false)
+  const [checkpoint, setCheckpoint] = useState<TelemetryEvent | null>(null)
+  const [checkpointFeedback, setCheckpointFeedback] = useState<string>('')
+  const [checkpointRemaining, setCheckpointRemaining] = useState<number>(0)
   const [resultEvent, setResultEvent] = useState<TelemetryEvent | null>(null)
   const [exeRunMessage, setExeRunMessage] = useState<string | null>(null)
 
@@ -901,6 +912,12 @@ function App() {
         // 빌드된 .exe 경로 보존 — banner + 실행 버튼용
         setResultEvent(parsed)
       }
+      // P20 — codegen 직전 개입 체크포인트: 패널 표시 + 카운트다운 시작.
+      if (parsed?.type === 'checkpoint') {
+        setCheckpoint(parsed)
+        setCheckpointFeedback('')
+        setCheckpointRemaining(Number(parsed.timeout_sec) || 90)
+      }
       if (
         parsed?.type === 'result' ||
         (parsed?.type === 'iteration_progress' && parsed.phase === 'run_end')
@@ -908,6 +925,8 @@ function App() {
         setRunning(false)
         setActiveHqs(new Set())
         setCurrentNodeByHq({})
+        // 런 종료 시 잔존 체크포인트 패널 닫기 (안전).
+        setCheckpoint(null)
       }
     })
       .then((fn) => {
@@ -921,6 +940,22 @@ function App() {
       unlisten?.()
     }
   }, [])
+
+  // P20 — 체크포인트 카운트다운. 패널이 열려 있으면 1초마다 남은 시간 감소, 0 이면 자동 닫힘
+  // (하네스도 동일 타임아웃으로 자동 진행). 패널이 바뀌거나 닫히면 타이머 정리.
+  useEffect(() => {
+    if (!checkpoint) return
+    const id = setInterval(() => {
+      setCheckpointRemaining((prev) => {
+        if (prev <= 1) {
+          setCheckpoint(null) // 타임아웃 — 패널 닫힘, 런은 하네스가 자동 진행
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(id)
+  }, [checkpoint])
 
   const counts = useMemo(() => {
     const acc: Record<string, number> = {
@@ -978,6 +1013,7 @@ function App() {
     setExpandedMsg(new Set())
     setResultEvent(null)
     setExeRunMessage(null)
+    setCheckpoint(null)
     try {
       const path = await invoke<string>('start_run', {
         request,
@@ -986,6 +1022,7 @@ function App() {
         maxIterations: clampMaxIterations(maxIterStr),
         enableTechScout,
         autoIterate,
+        intervene: interveneEnabled,
       })
       setEventsPath(path)
     } catch (e) {
@@ -1007,6 +1044,25 @@ function App() {
       )
     } catch (e) {
       setExeRunMessage(`실행 실패: ${String(e ?? 'unknown')}`)
+    }
+  }
+
+  // P20 — 체크포인트 제출. action='inject'(피드백 반영) | 'continue'(그냥 계속).
+  // intervention_file 절대경로(checkpoint 이벤트 제공)에 원자적 기록 → 하네스가 폴링해 읽음.
+  const handleCheckpoint = async (action: 'inject' | 'continue') => {
+    const file = checkpoint?.intervention_file
+    setCheckpoint(null) // 패널 즉시 닫기 (하네스는 파일/타임아웃으로 진행)
+    if (!file) return
+    try {
+      await invoke<void>('write_intervention_file', {
+        path: String(file),
+        feedback: action === 'inject' ? checkpointFeedback : '',
+        action,
+      })
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[Checkpoint] intervention 기록 실패', e)
+      setError(`개입 피드백 전달 실패: ${String(e ?? 'unknown')}`)
     }
   }
 
@@ -1049,6 +1105,75 @@ function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#0d1117] text-slate-100">
+      {/* ============ 0. P20 개입 체크포인트 패널 (modal overlay) ============ */}
+      {checkpoint && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+          <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-lg border-2 border-amber-500/70 bg-[#161b22] shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🙋</span>
+                <span className="text-sm font-bold text-amber-300">
+                  개입 체크포인트 — codegen 직전
+                </span>
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${
+                  checkpointRemaining <= 10
+                    ? 'bg-red-600/40 text-red-200'
+                    : 'bg-slate-700/60 text-slate-200'
+                }`}
+                title="남은 시간 — 0 이 되면 자동 진행"
+              >
+                ⏳ {checkpointRemaining}s
+              </span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
+                  계획 / 스펙 요약
+                </div>
+                <pre className="text-[11px] text-slate-300 whitespace-pre-wrap break-words bg-slate-950/60 rounded p-2 max-h-[40vh] overflow-y-auto leading-relaxed">
+                  {String(checkpoint.plan_summary ?? '(요약 없음)')}
+                </pre>
+              </div>
+              <div>
+                <label
+                  htmlFor="checkpoint-feedback"
+                  className="block text-[10px] uppercase tracking-wide text-slate-400 mb-1"
+                >
+                  피드백 (선택) — 코드 생성에 반영할 지시
+                </label>
+                <textarea
+                  id="checkpoint-feedback"
+                  rows={4}
+                  value={checkpointFeedback}
+                  onChange={(e) => setCheckpointFeedback(e.target.value)}
+                  placeholder="예: 다크 테마로, 좌측 사이드바에 필터 추가, 모바일 반응형 우선…"
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-700">
+              <button
+                type="button"
+                onClick={() => void handleCheckpoint('continue')}
+                className="px-3 py-1.5 rounded border border-slate-600 hover:border-slate-400 text-slate-200 text-xs"
+              >
+                그냥 계속
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCheckpoint('inject')}
+                disabled={!checkpointFeedback.trim()}
+                className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-semibold"
+              >
+                주입 후 계속
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ============ 1. Top Toolbar ============ */}
       <header className="flex-shrink-0 border-b border-slate-800 bg-[#161b22]">
         <div className="px-6 py-2.5 flex items-center justify-between gap-4">
@@ -1392,6 +1517,21 @@ function App() {
                 className="accent-sky-500"
               />
               <span>tech-scout (패키지 가드)</span>
+            </label>
+
+            {/* P20 — 런 중 사람 개입 체크포인트 토글 (기본 OFF) */}
+            <label
+              className="flex items-center gap-1.5 text-[10px] text-slate-300 cursor-pointer select-none"
+              title="codegen 직전 1회 멈춰 계획/스펙을 보여주고 피드백을 받습니다. 무입력 시 타임아웃 자동 진행. OFF(기본)면 멈춤 없음."
+            >
+              <input
+                type="checkbox"
+                checked={interveneEnabled}
+                onChange={(e) => setInterveneEnabled(e.target.checked)}
+                disabled={running}
+                className="accent-sky-500"
+              />
+              <span>런 중 개입 (codegen 직전)</span>
             </label>
             <button
               type="button"
