@@ -57,6 +57,12 @@ requests>=2.31.0
 # 본 PR #52 에서 정식 의존성 화 — 미설치 시 graceful skip 되지만, GUI 풀체인의
 # active QA gating 을 위해 필수.
 pyautogui>=0.9.54
+# web(vite/SPA) 산출물 시각 QA — headless Chromium 캡처 (v13 P17).
+# web_vision_qa 가 빌드된 dist/ 를 띄워 스크린샷 → vision 평가에 사용.
+# NOTE: pip 설치만으로는 브라우저 바이너리가 안 들어옴 — `playwright install chromium`
+#       별도 필요. 미설치(모듈 또는 브라우저) 시 graceful SKIP (FAIL 아님 → retry 미발동).
+#       CI(ubuntu)는 브라우저 미설치라 web 시각 QA 가 자동 SKIP 된다 (pyautogui 와 동일 관례).
+playwright>=1.40.0
 
 # 개발/테스트 (Phase 2 — pytest 하네스)
 # 단위·통합 테스트 러너

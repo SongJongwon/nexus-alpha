@@ -274,33 +274,60 @@ def _print_result_summary(
 # ---------------------------------------------------------------------------
 # Vision QA — PR #141 Phase 2 (본인 비전 통찰 6, D-3)
 # ---------------------------------------------------------------------------
+def _is_web_vision_target(target_path: Path) -> bool:
+    """vision QA 타깃이 web(vite/SPA) 산출인지 — .html/.htm 이면 web (P17).
+
+    web 빌드(_run_web_build)는 ExecuteResult.exe_path 를 dist/index.html 로 surface
+    하므로 suffix 가 가장 신뢰할 신호. 데스크탑(.exe)은 False → 기존 경로 불변.
+    """
+    return target_path.suffix.lower() in (".html", ".htm")
+
+
 def _run_vision_qa_full(
     exe_path: Path,
     outputs_dir: Path,
     *,
     skip_vision: bool = False,
 ):
-    """빌드된 .exe 에 대해 gui_test_executor 호출 → GUITestResult 객체 반환.
+    """빌드 산출에 대해 시각 QA 실행 → GUITestResult 객체 반환.
 
-    PR #150 Phase 4 (2026-05-15): PR #147 의 ``_run_vision_qa`` 가 str summary 만
-    반환했던 것을 확장 — 결과 객체 자체를 반환해 후속 ``qa_feedback_loop`` 평가에
-    활용. 실패 / pyautogui 미설치 등 호출 자체 불가 시 None.
+    PR #150 Phase 4 (2026-05-15): str summary 만 반환하던 것을 결과 객체로 확장.
+    v13 P17 (수정1/2): 타깃이 web(dist/index.html)이면 ``run_web_vision_qa``
+        (정적 서버 + headless 브라우저 캡처 + vision)로 디스패치. 데스크탑(.exe)은
+        기존 ``run_gui_test`` 경로 불변. 캡처/평가 불가 시 GUITestResult(skipped=True)
+        → qa_feedback_loop 가 retry 미발동(파괴적 재빌드 차단). 호출 자체 불가 시 None.
     """
-    try:
-        from src.agents.qa.gui_test_executor import run_gui_test
-    except ImportError:
-        return None
-
     vision_dir = outputs_dir / "vision_qa"
     vision_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        result = run_gui_test(
-            target_path=exe_path,
-            output_dir=vision_dir,
-            skip_vision=skip_vision,
-        )
-    except Exception:  # noqa: BLE001 — wiring 실패는 정보로만
-        return None
+
+    if _is_web_vision_target(exe_path):
+        # web — headless 브라우저 시각 QA (dist = index.html 의 부모 디렉터리).
+        try:
+            from src.agents.qa.web_vision_qa import run_web_vision_qa
+        except ImportError:
+            return None
+        try:
+            result = run_web_vision_qa(
+                dist_dir=exe_path.parent,
+                output_dir=vision_dir,
+                skip_vision=skip_vision,
+            )
+        except Exception:  # noqa: BLE001 — wiring 실패는 정보로만
+            return None
+    else:
+        # desktop(.exe / .py) — 기존 pyautogui 기반 GUI 캡처 (불변).
+        try:
+            from src.agents.qa.gui_test_executor import run_gui_test
+        except ImportError:
+            return None
+        try:
+            result = run_gui_test(
+                target_path=exe_path,
+                output_dir=vision_dir,
+                skip_vision=skip_vision,
+            )
+        except Exception:  # noqa: BLE001 — wiring 실패는 정보로만
+            return None
 
     try:
         (vision_dir / "summary.txt").write_text(
@@ -333,6 +360,7 @@ def _evaluate_vision_qa_via_feedback_loop(
     *,
     retry_count: int = 0,
     max_retries: int = 0,
+    artifact_category: Optional[str] = None,
 ):
     """Vision QA 결과를 ``qa_feedback_loop.evaluate_qa_results`` 로 평가.
 
@@ -347,6 +375,11 @@ def _evaluate_vision_qa_via_feedback_loop(
         vision_result: ``GUITestResult`` (duck-typed).
         retry_count: 현재까지의 retry 횟수 (0=첫 평가).
         max_retries: 허용 retry 총 횟수.
+        artifact_category: ``detect_artifact_category`` 산출 (예: "web"). v13 P17
+            (수정4 완성) — 이전엔 미전달이라 qa_feedback_loop 의 카테고리 기반 SKIP
+            보호가 닿지 않았다. 단, production 키 "vision_qa" 는 web 캡처 불가 시
+            ``vision_result.skipped=True`` (mechanism-1)로 이미 SKIP 되고, web 실
+            결함은 success=False 로 retry(=web 재빌드)되므로 본 인자는 보강/일관성용.
 
     Returns:
         ``(summary_line, QAFeedbackDecision_or_None)``. ``QAFeedbackDecision`` 이
@@ -361,6 +394,7 @@ def _evaluate_vision_qa_via_feedback_loop(
         results={"vision_qa": vision_result},
         retry_count=retry_count,
         max_retries=max_retries,
+        artifact_category=artifact_category,
     )
     return decision.summary_line(), decision
 
@@ -377,6 +411,7 @@ def _retry_engineer_with_vision_feedback(
     retry_index: int,
     max_retries: int,
     verbose: bool = False,
+    is_web: bool = False,
 ) -> Optional[Path]:
     """Vision QA 결함을 Engineer 에게 피드백해 *Engineer + Build 만* 재실행.
 
@@ -419,6 +454,7 @@ def _retry_engineer_with_vision_feedback(
         results={"vision_qa": vision_result},
         retry_count=retry_index - 1,
         max_retries=max_retries,
+        artifact_category="web" if is_web else None,
     )
     vision_report_text = (
         vision_result.summary_line() if hasattr(vision_result, "summary_line") else str(vision_result)
@@ -431,19 +467,26 @@ def _retry_engineer_with_vision_feedback(
     retry_dir.mkdir(parents=True, exist_ok=True)
     (retry_dir / "feedback_for_engineer.md").write_text(feedback_md, encoding="utf-8")
 
-    # 2. 이전 코드를 markdown 으로 조립 — Engineer 가 그대로 revision 가능하도록
-    prior_code_parts: list[str] = []
-    for code_path in getattr(prev_result, "saved_code_files", []) or []:
-        try:
-            content = Path(code_path).read_text(encoding="utf-8")
-        except OSError:
-            continue
-        prior_code_parts.append(
-            f"```python\n# file: {Path(code_path).name}\n{content}\n```"
+    # 2. 이전 코드를 markdown 으로 조립 — Engineer 가 그대로 revision 가능하도록.
+    # v13 P17 (수정3) — web 타깃이면 이미 올바른 fence/파일헤더를 가진 gui_code_output
+    # (web 코드젠 산출 markdown)을 그대로 prior context 로 쓴다 (python fence 강제 X).
+    if is_web:
+        prior_code_md = (
+            getattr(prev_result, "gui_code_output", "") or ""
+        ) or "# (이전 web 산출 코드 없음)"
+    else:
+        prior_code_parts: list[str] = []
+        for code_path in getattr(prev_result, "saved_code_files", []) or []:
+            try:
+                content = Path(code_path).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            prior_code_parts.append(
+                f"```python\n# file: {Path(code_path).name}\n{content}\n```"
+            )
+        prior_code_md = (
+            "\n\n".join(prior_code_parts) if prior_code_parts else "# (이전 산출 코드 없음)"
         )
-    prior_code_md = (
-        "\n\n".join(prior_code_parts) if prior_code_parts else "# (이전 산출 코드 없음)"
-    )
 
     # 3. Engineer agent + 단일 revision task — GUI 분기 / CLI 분기 자동 판별
     try:
@@ -456,31 +499,55 @@ def _retry_engineer_with_vision_feedback(
         return None
 
     is_gui = bool(getattr(prev_result, "gui_code_output", "") or "")
+    # web 은 GUI Code Generator 산출(웹 코드)이므로 web/desktop GUI 모두 gui_code_generator 사용.
     engineer = (
         create_gui_code_generator_agent(verbose=verbose)
-        if is_gui
+        if (is_gui or is_web)
         else create_python_engineer_agent(verbose=verbose)
     )
 
-    revision_task = Task(
-        description=(
-            f"사용자 원 요청: {user_request}\n\n"
-            "## 이전 코드 산출물\n\n"
-            f"{prior_code_md}\n\n"
-            "## Vision QA 자동 검증 피드백\n\n"
-            f"{feedback_md}\n\n"
-            "## 보정 지시\n\n"
-            "위 Vision QA 피드백의 *결함* 만 보정한 새 코드를 산출하세요. 무관한 "
-            "리팩토링은 금지. 산출 규약: 각 파일은 ```python 코드 블록 + 첫 줄 "
-            "`# file: <상대경로>` 헤더 주석 + 단독 실행 가능 (`python <entry>.py`) "
-            "구조."
-        ),
-        expected_output=(
-            "이전 코드의 Vision QA 결함을 보정한 완전한 Python 코드 세트 "
-            "(```python 블록 + # file: 헤더 + python <entry>.py 실행 가능)."
-        ),
-        agent=engineer,
-    )
+    if is_web:
+        # v13 P17 (수정3) — web 보정: 산출은 web 파일(.ts/.tsx/.html/.css 등), npm 빌드 대상.
+        revision_task = Task(
+            description=(
+                f"사용자 원 요청: {user_request}\n\n"
+                "## 이전 web 코드 산출물\n\n"
+                f"{prior_code_md}\n\n"
+                "## Vision QA 자동 검증 피드백 (headless 브라우저 캡처 기반)\n\n"
+                f"{feedback_md}\n\n"
+                "## 보정 지시\n\n"
+                "위 Vision QA 피드백의 *시각 결함* 만 보정한 새 web 코드를 산출하세요. "
+                "무관한 리팩토링은 금지. 산출 규약: 각 파일은 fenced 코드 블록 + 첫 줄 "
+                "`// file: <상대경로>` (또는 `<!-- file: -->` / `# file:`) 헤더 + "
+                "`npm run build` 로 dist/ 빌드 가능한 vite/web 프로젝트 구조 "
+                "(index.html · package.json · src/ 포함, 데스크탑/.py 로 바꾸지 말 것)."
+            ),
+            expected_output=(
+                "이전 web 코드의 Vision QA 결함을 보정한 완전한 web 코드 세트 "
+                "(fenced 블록 + // file: 헤더 + npm run build → dist/index.html 빌드 가능)."
+            ),
+            agent=engineer,
+        )
+    else:
+        revision_task = Task(
+            description=(
+                f"사용자 원 요청: {user_request}\n\n"
+                "## 이전 코드 산출물\n\n"
+                f"{prior_code_md}\n\n"
+                "## Vision QA 자동 검증 피드백\n\n"
+                f"{feedback_md}\n\n"
+                "## 보정 지시\n\n"
+                "위 Vision QA 피드백의 *결함* 만 보정한 새 코드를 산출하세요. 무관한 "
+                "리팩토링은 금지. 산출 규약: 각 파일은 ```python 코드 블록 + 첫 줄 "
+                "`# file: <상대경로>` 헤더 주석 + 단독 실행 가능 (`python <entry>.py`) "
+                "구조."
+            ),
+            expected_output=(
+                "이전 코드의 Vision QA 결함을 보정한 완전한 Python 코드 세트 "
+                "(```python 블록 + # file: 헤더 + python <entry>.py 실행 가능)."
+            ),
+            agent=engineer,
+        )
 
     try:
         crew = Crew(
@@ -509,7 +576,22 @@ def _retry_engineer_with_vision_feedback(
     (retry_dir / "engineer_revised_output.md").write_text(
         revised_output, encoding="utf-8"
     )
-    new_code_paths = _extract_code_blocks(revised_output, retry_dir / "code")
+    # v13 P17 (수정3) — web 타깃이면 web 언어 + 실 src/ 서브트리 보존으로 추출 (python 오추출 차단).
+    # 그래야 run_build_workflow 의 _is_web_project 가 web 으로 인식 → npm 빌드 → dist/ 재생성.
+    if is_web:
+        try:
+            from src.workflows.analyze_and_implement import _WEB_CODE_LANGS
+
+            new_code_paths = _extract_code_blocks(
+                revised_output,
+                retry_dir / "code",
+                languages=_WEB_CODE_LANGS,
+                preserve_tree=True,
+            )
+        except ImportError:
+            new_code_paths = _extract_code_blocks(revised_output, retry_dir / "code")
+    else:
+        new_code_paths = _extract_code_blocks(revised_output, retry_dir / "code")
     if not new_code_paths:
         print("  ⚠️  재산출에서 코드 블록 추출 실패", file=sys.stderr)
         return None
@@ -690,13 +772,18 @@ def _run_track_a(args: argparse.Namespace) -> int:
         # .exe 미생성 또는 vision-qa skip → 잔여 2단계 미실행 → total 후보정.
         tracker.set_total(tracker.current_index)
     if exe_path and exe_path.exists() and not args.no_vision_qa:
-        tracker.start("vision_qa (gui_test_executor 시각 검증)")
+        # v13 P17 — web(dist/index.html) vs desktop(.exe) 판별. web 이면 _run_vision_qa_full
+        # 이 headless 브라우저 경로로 디스패치하고, artifact_category="web" 을 평가에 전달.
+        is_web_target = _is_web_vision_target(exe_path)
+        artifact_category = "web" if is_web_target else None
+        label = "vision_qa (web headless 시각 검증)" if is_web_target else "vision_qa (gui_test_executor 시각 검증)"
+        tracker.start(label)
         vision_result = _run_vision_qa_full(exe_path, outputs_dir)
         if vision_result is not None:
             vision_summary = vision_result.summary_line()
             tracker.end(summary=vision_summary)
         else:
-            vision_summary = "(Vision QA skip — gui_test_executor 호출 불가)"
+            vision_summary = "(Vision QA skip — 시각 QA 호출 불가)"
             tracker.end(summary=vision_summary)
 
         # PR #150 Phase 4 — Vision QA 결과를 qa_feedback_loop.evaluate_qa_results 로 평가
@@ -706,10 +793,14 @@ def _run_track_a(args: argparse.Namespace) -> int:
                 vision_result,
                 retry_count=0,
                 max_retries=args.vision_qa_max_retries,
+                artifact_category=artifact_category,
             )
             tracker.end(summary=qa_verdict_summary)
 
-            # PR #151 — should_retry 일 때 Engineer + Build 재호출 (max_retries 한도 안)
+            # PR #151 — should_retry 일 때 Engineer + Build 재호출 (max_retries 한도 안).
+            # v13 P17 (수정2) — web 캡처 불가 시 vision_result.skipped=True → qa_decision.
+            # should_retry=False → 이 분기 미진입 (파괴적 재빌드 차단). web 실 결함이면
+            # should_retry=True → is_web=True 로 web 재빌드(수정3).
             if (
                 qa_decision is not None
                 and args.vision_qa_max_retries > 0
@@ -728,6 +819,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
                         retry_index=retry_idx,
                         max_retries=args.vision_qa_max_retries,
                         verbose=args.verbose,
+                        is_web=is_web_target,
                     )
                     if new_exe is None:
                         tracker.end(summary="retry skip — 재호출 실패")
@@ -752,6 +844,7 @@ def _run_track_a(args: argparse.Namespace) -> int:
                             new_vision,
                             retry_count=retry_idx,
                             max_retries=args.vision_qa_max_retries,
+                            artifact_category=artifact_category,
                         )
                     )
                     tracker.end(
@@ -926,6 +1019,7 @@ def _run_track_b(args: argparse.Namespace) -> int:
                 vision_result,
                 retry_count=0,
                 max_retries=0,  # Track B 는 retry 비활성 — 자체 qa_loop 가 있음
+                artifact_category="web" if _is_web_vision_target(exe_path) else None,
             )
             tracker.end(summary=qa_verdict_summary)
         else:
