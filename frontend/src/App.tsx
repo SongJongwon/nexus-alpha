@@ -706,6 +706,9 @@ const MENU_ITEMS: MenuItem[] = [
 
 type FilterKey = 'all' | HQKey
 
+// P18 — 빌드 타깃: web(vite→dist 기본) / desktop(PyInstaller .exe) / none(빌드 없음).
+type BuildTarget = 'web' | 'desktop' | 'none'
+
 // =============================================================================
 // 2. PixelCharacter
 // =============================================================================
@@ -758,6 +761,15 @@ function PixelCharacter({ bgClass, bobbing, faded }: PixelCharacterProps) {
 // 3. helpers
 // =============================================================================
 
+// P18 — max-iterations 입력(문자열) → run.py 로 보낼 1~10 정수로 정규화.
+// 빈 입력/비정상은 기본 3 으로 복원, 그 외는 1~10 클램프. 입력 중에는 문자열 state 로
+// 자유 타이핑(일시적 빈 값 포함) 허용하고, 제출/blur 시점에 본 함수로 확정.
+function clampMaxIterations(raw: string): number {
+  const n = Math.round(Number(raw))
+  if (!Number.isFinite(n) || raw.trim() === '') return 3
+  return Math.min(10, Math.max(1, n))
+}
+
 function effectiveModel(agent: AgentInfo, hq: HeadquartersDef): ModelTier {
   return agent.model ?? hq.defaultModel
 }
@@ -794,7 +806,12 @@ function App() {
   const [filter, setFilter] = useState<FilterKey>('all')
   const [agentMessages, setAgentMessages] = useState<TelemetryEvent[]>([])
   const [expandedMsg, setExpandedMsg] = useState<Set<number>>(new Set())
-  const [buildEnabled, setBuildEnabled] = useState<boolean>(true)
+  // P18 — 런 옵션을 PowerShell(run.py)과 동등하게: 빌드 타깃 / max-iterations / 토글.
+  const [buildTarget, setBuildTarget] = useState<BuildTarget>('web')
+  // 문자열 state 로 자유 타이핑 허용 (clampMaxIterations 가 제출/blur 시 1~10 확정).
+  const [maxIterStr, setMaxIterStr] = useState<string>('3')
+  const [autoIterate, setAutoIterate] = useState<boolean>(true)
+  const [enableTechScout, setEnableTechScout] = useState<boolean>(true)
   const [resultEvent, setResultEvent] = useState<TelemetryEvent | null>(null)
   const [exeRunMessage, setExeRunMessage] = useState<string | null>(null)
 
@@ -960,8 +977,10 @@ function App() {
       const path = await invoke<string>('start_run', {
         request,
         track: 'A',
-        build: buildEnabled,
-        maxIterations: 1,
+        buildTarget,
+        maxIterations: clampMaxIterations(maxIterStr),
+        enableTechScout,
+        autoIterate,
       })
       setEventsPath(path)
     } catch (e) {
@@ -1159,7 +1178,7 @@ function App() {
                   실행 종료 — verdict: {String(resultEvent.verdict ?? '')}
                 </div>
                 <div className="text-slate-400 text-[10px] mt-0.5">
-                  {String(resultEvent.summary_line ?? resultEvent.blocked_cause ?? '.exe 생성 안 됨 (build 토글 OFF 또는 빌드 단계 실패)')}
+                  {String(resultEvent.summary_line ?? resultEvent.blocked_cause ?? '산출물 경로 없음 (빌드 타깃 "빌드 없음" 또는 빌드 단계 실패)')}
                 </div>
               </div>
               <button
@@ -1280,15 +1299,82 @@ function App() {
               onChange={(e) => setRequest(e.target.value)}
               disabled={running}
             />
-            <label className="flex items-center gap-1.5 text-[10px] text-slate-300 cursor-pointer select-none">
+            {/* P18 — 빌드 타깃 선택 (web 기본 / desktop / 빌드 없음) */}
+            <div className="space-y-1">
+              <label
+                htmlFor="build-target"
+                className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide"
+              >
+                빌드 타깃
+              </label>
+              <select
+                id="build-target"
+                value={buildTarget}
+                onChange={(e) => setBuildTarget(e.target.value as BuildTarget)}
+                disabled={running}
+                title="web = vite → dist/index.html (기본) · desktop = PyInstaller .exe · none = 빌드 없음(사양만)"
+                className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-[10px] text-slate-100 focus:outline-none focus:border-sky-500 disabled:text-slate-500"
+              >
+                <option value="web">web (vite → dist)</option>
+                <option value="desktop">desktop (.exe)</option>
+                <option value="none">빌드 없음</option>
+              </select>
+            </div>
+
+            {/* P18 — auto-iterate (자기 진화 루프) + max-iterations (1~10) */}
+            <label
+              className="flex items-center gap-1.5 text-[10px] text-slate-300 cursor-pointer select-none"
+              title="Convergence Judge 가 COMPLETE/BLOCKED 판정까지 최대 max-iter 회 반복(자기 진화). 비용 주의 — iter 당 ~25min."
+            >
               <input
                 type="checkbox"
-                checked={buildEnabled}
-                onChange={(e) => setBuildEnabled(e.target.checked)}
+                checked={autoIterate}
+                onChange={(e) => setAutoIterate(e.target.checked)}
                 disabled={running}
                 className="accent-sky-500"
               />
-              <span>PyInstaller .exe 빌드</span>
+              <span>auto-iterate (자기 진화)</span>
+            </label>
+            <div
+              className="flex items-center justify-between gap-2"
+              title={
+                autoIterate
+                  ? 'auto-iterate 시 최대 반복 횟수 (1~10). COMPLETE/BLOCKED 판정 시 조기 종료.'
+                  : 'auto-iterate 가 OFF 라 비활성 (1회 실행). auto-iterate 를 켜면 적용됩니다.'
+              }
+            >
+              <label
+                htmlFor="max-iter"
+                className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide"
+              >
+                max-iter
+              </label>
+              <input
+                id="max-iter"
+                type="number"
+                min={1}
+                max={10}
+                value={maxIterStr}
+                onChange={(e) => setMaxIterStr(e.target.value)}
+                onBlur={() => setMaxIterStr(String(clampMaxIterations(maxIterStr)))}
+                disabled={running || !autoIterate}
+                className="w-14 px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-[10px] text-slate-100 text-right focus:outline-none focus:border-sky-500 disabled:text-slate-500"
+              />
+            </div>
+
+            {/* P18 — tech-scout (PyPI 가짜 패키지 가드) 토글 */}
+            <label
+              className="flex items-center gap-1.5 text-[10px] text-slate-300 cursor-pointer select-none"
+              title="PyPI 가짜 패키지(환각) 가드 — Engineer 산출 requirements 의 각 패키지 실존을 PyPI API 로 검증."
+            >
+              <input
+                type="checkbox"
+                checked={enableTechScout}
+                onChange={(e) => setEnableTechScout(e.target.checked)}
+                disabled={running}
+                className="accent-sky-500"
+              />
+              <span>tech-scout (패키지 가드)</span>
             </label>
             <button
               type="button"
