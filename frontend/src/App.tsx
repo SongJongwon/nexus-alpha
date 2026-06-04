@@ -655,6 +655,9 @@ interface TelemetryEvent {
   intervention_file?: string
   checkpoint_id?: string
   node?: string
+  // P22 — iter 간 개입: 패널 분기(iteration>=2) + '빌드 열어보기' 대상(직전 빌드 경로).
+  iteration?: number
+  prev_build_path?: string
   [k: string]: unknown
 }
 
@@ -920,6 +923,8 @@ function App() {
       if (parsed?.type === 'checkpoint') {
         setCheckpoint(parsed)
         setCheckpointFeedback('')
+        // P22 — 순차 체크포인트(iter1→2→3) 간 직전 '빌드 열어보기' 메시지 잔존 방지.
+        setExeRunMessage(null)
         setCheckpointRemaining(Number(parsed.timeout_sec) || 90)
       }
       if (
@@ -1117,7 +1122,9 @@ function App() {
               <div className="flex items-center gap-2">
                 <span className="text-lg">🙋</span>
                 <span className="text-sm font-bold text-amber-300">
-                  개입 체크포인트 — codegen 직전
+                  {Number(checkpoint.iteration ?? 0) >= 2
+                    ? `개입 체크포인트 — iter ${Number(checkpoint.iteration)} (직전 빌드 검토)`
+                    : '개입 체크포인트 — codegen 직전'}
                 </span>
               </div>
               <span
@@ -1132,9 +1139,37 @@ function App() {
               </span>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-3">
+              {/* P22 — iter 2+ 전용: 직전 iteration 빌드 검토 (web=vite preview / desktop=.exe). */}
+              {Number(checkpoint.iteration ?? 0) >= 2 && (
+                <div className="rounded border border-sky-700/50 bg-sky-950/30 p-2 space-y-2">
+                  <div className="text-[10px] uppercase tracking-wide text-sky-300">
+                    직전 iteration 빌드 — 실제 앱을 확인한 뒤 피드백 주입
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleOpenExe(String(checkpoint.prev_build_path ?? ''))
+                    }
+                    disabled={!String(checkpoint.prev_build_path ?? '').trim()}
+                    className="px-3 py-1.5 rounded bg-sky-700 hover:bg-sky-600 active:bg-sky-800 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-semibold"
+                  >
+                    ▶ 빌드 열어보기
+                  </button>
+                  {!String(checkpoint.prev_build_path ?? '').trim() && (
+                    <div className="text-[10px] text-slate-400">
+                      직전 빌드 없음/실패 — 아래 gap 요약·피드백은 그대로 가능합니다.
+                    </div>
+                  )}
+                  {exeRunMessage && (
+                    <div className="text-[10px] text-sky-300 break-words">{exeRunMessage}</div>
+                  )}
+                </div>
+              )}
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
-                  계획 / 스펙 요약
+                  {Number(checkpoint.iteration ?? 0) >= 2
+                    ? '계획 / 직전 gap·QA / 빌드 요약'
+                    : '계획 / 스펙 요약'}
                 </div>
                 <pre className="text-[11px] text-slate-300 whitespace-pre-wrap break-words bg-slate-950/60 rounded p-2 max-h-[40vh] overflow-y-auto leading-relaxed">
                   {String(checkpoint.plan_summary ?? '(요약 없음)')}

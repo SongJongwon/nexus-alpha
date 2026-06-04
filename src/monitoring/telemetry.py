@@ -186,6 +186,10 @@ class CheckpointEvent:
     intervention_file: str   # GUI 가 피드백을 기록할 파일 절대경로 (하네스가 폴링)
     run_id: str = ""
     iteration: int = 0
+    # v13 P22 — iter 2+ 체크포인트: 직전 iteration 빌드 아티팩트 절대경로(읽기/실행 전용).
+    # web=.../dist/index.html, desktop=.../*.exe. 빌드 미존재/실패 시 "" → GUI '빌드 열어보기' 비활성.
+    # iter 1(빌드 전) 및 OFF 경로는 기본값 "" → 회귀 0.
+    prev_build_path: str = ""
     ts: str = field(default_factory=_now_ts)
     type: str = "checkpoint"
 

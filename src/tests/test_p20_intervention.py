@@ -255,6 +255,58 @@ class TestCheckpointEmit:
         finally:
             T.TelemetryEmitter.reset_for_tests()
 
+    def test_iter2_event_carries_prev_build_path_and_iteration(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """v13 P22 — iter 2+ 체크포인트 이벤트가 prev_build_path + iteration 을 함께 실어
+        GUI 가 '직전 빌드 검토' 패널로 분기하고 '빌드 열어보기' 대상 경로를 얻게 한다."""
+        from src.monitoring import telemetry as T
+
+        events_path = tmp_path / "events.jsonl"
+        monkeypatch.setenv("NEXUS_TELEMETRY_PATH", str(events_path))
+        T.TelemetryEmitter.reset_for_tests()
+        try:
+            request_codegen_intervention(
+                "[직전 빌드 (web)] x", intervene=True, run_root=tmp_path,
+                file_poll=lambda: None, timeout_sec=3,
+                iteration=2, prev_build_path=r"C:\out\code\dist\index.html",
+            )
+            lines = [
+                json.loads(ln)
+                for ln in events_path.read_text(encoding="utf-8").splitlines()
+                if ln.strip()
+            ]
+            cps = [e for e in lines if e.get("type") == "checkpoint"]
+            assert len(cps) == 1
+            assert cps[0]["iteration"] == 2
+            assert cps[0]["prev_build_path"] == r"C:\out\code\dist\index.html"
+        finally:
+            T.TelemetryEmitter.reset_for_tests()
+
+    def test_iter1_event_prev_build_path_empty(self, tmp_path: Path, monkeypatch) -> None:
+        """v13 P22 보존 — iter 1(빌드 전) 이벤트는 prev_build_path 가 빈 문자열(기본값)."""
+        from src.monitoring import telemetry as T
+
+        events_path = tmp_path / "events.jsonl"
+        monkeypatch.setenv("NEXUS_TELEMETRY_PATH", str(events_path))
+        T.TelemetryEmitter.reset_for_tests()
+        try:
+            request_codegen_intervention(
+                "[스펙] x", intervene=True, run_root=tmp_path,
+                file_poll=lambda: None, timeout_sec=3, iteration=1,
+            )
+            lines = [
+                json.loads(ln)
+                for ln in events_path.read_text(encoding="utf-8").splitlines()
+                if ln.strip()
+            ]
+            cps = [e for e in lines if e.get("type") == "checkpoint"]
+            assert len(cps) == 1
+            assert cps[0]["prev_build_path"] == ""
+            assert cps[0]["iteration"] == 1  # iter1 = next_iter, 와이어 값 박제
+        finally:
+            T.TelemetryEmitter.reset_for_tests()
+
     def test_off_emits_nothing(self, tmp_path: Path, monkeypatch) -> None:
         from src.monitoring import telemetry as T
 
@@ -330,8 +382,13 @@ class TestNodeRunChainIntegration:
         assert "사용자 개입 지시" not in captured["request"]
         assert captured["request"].startswith("칸반 보드 웹앱")
 
-    def test_intervene_only_first_codegen(self, tmp_path: Path, monkeypatch) -> None:
-        """iter 2+ (next_iter>1)는 체크포인트 미발동 — '한 번' 보장 (게이트 next_iter==1)."""
+    def test_max_iter1_no_iter2_checkpoint(self, tmp_path: Path, monkeypatch) -> None:
+        """v13 P22 보존 — MAX-ITER=1 이면 iter 2+ (next_iter>1) 미발동 = P20 와 100% 동일.
+
+        (P22 일반화 게이트: ``next_iter==1 or max_iter>=2``. max_iterations=1 + next_iter=2 →
+        둘 다 False → 훅 미호출. MAX-ITER=1 런은 애초에 iter 2 에 도달하지 않지만, 게이트 자체를
+        단위로 박제한다.)
+        """
         import src.workflows._intervention as INT
 
         hook_calls = {"n": 0}
@@ -350,12 +407,111 @@ class TestNodeRunChainIntegration:
                                    executor_result=None)
 
         monkeypatch.setattr(IL, "run_analyze_and_implement", _fake_run)
-        # iteration=1 → next_iter=2 → 체크포인트 스킵. chain_result 필요(prev_code_context).
-        st = self._base_state(tmp_path, iteration=1, intervene=True,
+        # iteration=1 → next_iter=2, max_iterations=1 → 체크포인트 스킵 (P20 동일).
+        st = self._base_state(tmp_path, iteration=1, intervene=True, max_iterations=1,
                               chain_result=SimpleNamespace(saved_code_files=[]))
         IL._node_run_chain(st)
-        assert hook_calls["n"] == 0  # iter2 → 훅 미호출
+        assert hook_calls["n"] == 0  # MAX-ITER=1 의 iter2 → 훅 미호출
         assert "사용자 개입 지시" not in captured["request"]
+
+    def test_max_iter1_still_fires_iter1_checkpoint(self, tmp_path: Path, monkeypatch) -> None:
+        """v13 P22 보존(P20 parity) — MAX-ITER=1 이어도 iter 1 체크포인트는 P20 처럼 발동.
+
+        (게이트 ``next_iter==1 or max_iter>=2`` 의 next_iter==1 분기 — max_iter 무관하게 첫
+        codegen 직전 1회 발동. iter1 발동이 default max_iter 로만 검증되던 갭을 메운다.)
+        """
+        import src.workflows._intervention as INT
+
+        hook_calls = {"n": 0}
+
+        def _hook(*a, **k):
+            hook_calls["n"] += 1
+            return "iter1 지시"
+
+        monkeypatch.setattr(INT, "request_codegen_intervention", _hook)
+
+        def _fake_run(req, **kw):
+            return SimpleNamespace(saved_dir=tmp_path, engineer_output="", qa_review="",
+                                   executor_result=None)
+
+        monkeypatch.setattr(IL, "run_analyze_and_implement", _fake_run)
+        # iteration=0 → next_iter=1, max_iterations=1 → 발동(P20 동일).
+        st = self._base_state(tmp_path, iteration=0, intervene=True, max_iterations=1)
+        IL._node_run_chain(st)
+        assert hook_calls["n"] == 1  # MAX-ITER=1 의 iter1 → 발동
+
+    def test_iter2_fires_and_injects_when_max_iter_ge2(self, tmp_path: Path, monkeypatch) -> None:
+        """v13 P22 — MAX-ITER>=2 면 iter 2 codegen 직전에도 체크포인트 발동 + 피드백 주입.
+
+        직전 빌드 경로(executor_result.exe_path) 가 hook 에 prev_build_path 로 전달되고,
+        반환 피드백이 P12 conduit 로 iter2 codegen 요청에 주입됨을 함께 검증.
+        """
+        import src.workflows._intervention as INT
+
+        captured_hook = {}
+
+        def _hook(plan_summary, **k):
+            captured_hook["plan_summary"] = plan_summary
+            captured_hook["iteration"] = k.get("iteration")
+            captured_hook["prev_build_path"] = k.get("prev_build_path")
+            return "iter2 직접 지시 — 헤더 색을 빨강으로"
+
+        monkeypatch.setattr(INT, "request_codegen_intervention", _hook)
+
+        captured = {}
+
+        def _fake_run(req, **kw):
+            captured["request"] = req
+            return SimpleNamespace(saved_dir=tmp_path, engineer_output="", qa_review="",
+                                   executor_result=None)
+
+        monkeypatch.setattr(IL, "run_analyze_and_implement", _fake_run)
+
+        # 직전(iter1) 빌드 = 실재 web 산출물(dist/index.html) → category web, 경로 전달돼야.
+        dist = tmp_path / "code" / "dist"
+        dist.mkdir(parents=True)
+        index = dist / "index.html"
+        index.write_text("<html></html>", encoding="utf-8")
+        prev = SimpleNamespace(executor_result=SimpleNamespace(exe_path=index),
+                               qa_review="QA: 버튼 클릭 OK", saved_code_files=[])
+        st = self._base_state(tmp_path, iteration=1, intervene=True, max_iterations=3,
+                              feedback="이전 gap: 폼 검증 누락", chain_result=prev)
+        IL._node_run_chain(st)
+
+        assert captured_hook.get("iteration") == 2  # next_iter
+        assert captured_hook.get("prev_build_path") == str(index)  # 직전 빌드 경로 전달
+        assert "iter2 직접 지시" in captured["request"]  # P12 주입
+        assert "사용자 개입 지시" in captured["request"]
+        # plan_summary 에 직전 gap·빌드 컨텍스트가 실렸는지
+        assert "직전 빌드" in captured_hook["plan_summary"]
+        assert "폼 검증 누락" in captured_hook["plan_summary"]
+
+    def test_iter2_build_missing_is_graceful(self, tmp_path: Path, monkeypatch) -> None:
+        """v13 P22 — iter 2+ 인데 직전 빌드 미존재(executor_result None) → 예외 없이 진행 +
+        prev_build_path "" 전달(=GUI '빌드 열어보기' 비활성). gap·피드백은 그대로."""
+        import src.workflows._intervention as INT
+
+        captured_hook = {}
+
+        def _hook(plan_summary, **k):
+            captured_hook["plan_summary"] = plan_summary
+            captured_hook["prev_build_path"] = k.get("prev_build_path")
+            return None  # '그냥 계속'
+
+        monkeypatch.setattr(INT, "request_codegen_intervention", _hook)
+
+        def _fake_run(req, **kw):
+            return SimpleNamespace(saved_dir=tmp_path, engineer_output="", qa_review="",
+                                   executor_result=None)
+
+        monkeypatch.setattr(IL, "run_analyze_and_implement", _fake_run)
+        prev = SimpleNamespace(executor_result=None, qa_review="", saved_code_files=[])
+        st = self._base_state(tmp_path, iteration=1, intervene=True, max_iterations=2,
+                              feedback="이전 gap 텍스트", chain_result=prev)
+        # 예외 없이 완료돼야 한다.
+        IL._node_run_chain(st)
+        assert captured_hook.get("prev_build_path") == ""  # 빌드 없음 → 빈 경로
+        assert "없음 또는 실패" in captured_hook["plan_summary"]
 
 
 # =============================================================================
