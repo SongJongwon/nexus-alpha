@@ -60,9 +60,20 @@ def _run_root_from_emitter() -> Optional[Path]:
 
 
 def _emit_checkpoint(
-    plan_summary: str, timeout_sec: int, intervention_file: Path, *, node: str, checkpoint_id: str
+    plan_summary: str,
+    timeout_sec: int,
+    intervention_file: Path,
+    *,
+    node: str,
+    checkpoint_id: str,
+    iteration: int = 0,
+    prev_build_path: str = "",
 ) -> None:
-    """checkpoint 이벤트를 events.jsonl 에 emit (telemetry 활성 시만, fail-safe)."""
+    """checkpoint 이벤트를 events.jsonl 에 emit (telemetry 활성 시만, fail-safe).
+
+    v13 P22 — ``iteration`` (codegen 진입 iteration, GUI 패널 분기용) + ``prev_build_path``
+    (iter 2+ 직전 빌드 경로, '빌드 열어보기'용) 를 함께 실음. 둘 다 기본값이면 P20 와 동일.
+    """
     try:
         from src.monitoring import CheckpointEvent, get_telemetry_emitter  # noqa: PLC0415
 
@@ -75,6 +86,8 @@ def _emit_checkpoint(
                     plan_summary=plan_summary[:4000],
                     timeout_sec=timeout_sec,
                     intervention_file=str(intervention_file),
+                    iteration=iteration,
+                    prev_build_path=prev_build_path,
                 )
             )
     except Exception:  # noqa: BLE001 — emit 실패가 런을 막지 않음
@@ -171,6 +184,9 @@ def request_codegen_intervention(
     timeout_sec: int = DEFAULT_INTERVENE_TIMEOUT_SEC,
     node: str = "run_chain",
     checkpoint_id: str = "pre_codegen",
+    # v13 P22 — codegen 진입 iteration(GUI 패널 분기) + 직전 빌드 경로(iter 2+ '빌드 열어보기').
+    iteration: int = 0,
+    prev_build_path: str = "",
     # --- 테스트 주입 (실 파일/stdin 없이 결정론) ---
     run_root: Optional[Path] = None,
     file_poll: Optional[Callable[[], Optional[str]]] = None,
@@ -195,7 +211,13 @@ def request_codegen_intervention(
         except OSError:
             pass
         _emit_checkpoint(
-            plan_summary, timeout_sec, intervention_file, node=node, checkpoint_id=checkpoint_id
+            plan_summary,
+            timeout_sec,
+            intervention_file,
+            node=node,
+            checkpoint_id=checkpoint_id,
+            iteration=iteration,
+            prev_build_path=prev_build_path,
         )
         if file_poll is not None:
             return file_poll()

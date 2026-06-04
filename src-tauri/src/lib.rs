@@ -190,6 +190,22 @@ fn is_web_artifact(path: &Path) -> bool {
     )
 }
 
+// v13 P22 — 런 중 개입 체크포인트의 GUI 분기·'빌드 열어보기' 계약을 Rust 순수 함수로 박제.
+// 프론트(App.tsx)에 JS 단위 테스트 하네스가 없어, 분기/활성 조건을 여기서 정의·cargo 로 검증한다.
+// 실제 빌드 열기는 기존 `open_exe`(web→open_web_preview / desktop→.exe spawn) 를 *재사용*한다.
+
+/// 체크포인트 패널 분기: iteration>=2 면 '직전 빌드 검토' 패널, 아니면 P20 '계획' 패널.
+#[allow(dead_code)]
+fn checkpoint_is_build_review(iteration: i64) -> bool {
+    iteration >= 2
+}
+
+/// '빌드 열어보기' 버튼 활성 여부 — 직전 빌드 경로가 있고 공백이 아닐 때만(없으면 비활성+안내).
+#[allow(dead_code)]
+fn open_build_enabled(prev_build_path: Option<&str>) -> bool {
+    matches!(prev_build_path, Some(p) if !p.trim().is_empty())
+}
+
 /// dist/index.html → web 프로젝트 루트(code_dir = package.json/node_modules/vite.config 위치).
 /// `_run_web_build`(P17) 가 code_dir/dist/index.html 을 exe_path 로 surface 하므로
 /// index_html 의 조부모 디렉터리가 프로젝트 루트.
@@ -1806,5 +1822,34 @@ final_decision:
             let i = a.iter().position(|x| x == flag).expect("flag 존재");
             assert_eq!(a[i + 1], val);
         }
+    }
+
+    // ----- P22 (iter 간 개입: 패널 분기 + '빌드 열어보기' 매핑/활성) -----
+
+    #[test]
+    fn p22_panel_branch_on_iteration() {
+        // iter 1 → P20 계획 패널, iter 2+ → 직전 빌드 검토 패널.
+        assert!(!checkpoint_is_build_review(0));
+        assert!(!checkpoint_is_build_review(1));
+        assert!(checkpoint_is_build_review(2));
+        assert!(checkpoint_is_build_review(5));
+    }
+
+    #[test]
+    fn p22_open_build_enabled_only_with_path() {
+        assert!(open_build_enabled(Some("C:/out/code/dist/index.html")));
+        assert!(open_build_enabled(Some("C:/out/build_output/dist/App.exe")));
+        // 빌드 null/빈/공백 → 비활성(안내).
+        assert!(!open_build_enabled(None));
+        assert!(!open_build_enabled(Some("")));
+        assert!(!open_build_enabled(Some("   ")));
+    }
+
+    #[test]
+    fn p22_open_build_routes_web_vs_desktop() {
+        // '빌드 열어보기' 는 기존 open_exe 와 동일하게 is_web_artifact 로 web/desktop 라우팅.
+        assert!(is_web_artifact(Path::new("C:/out/code/dist/index.html"))); // web → vite preview
+        assert!(is_web_artifact(Path::new("C:/out/code/dist/index.HTM")));
+        assert!(!is_web_artifact(Path::new("C:/out/build_output/dist/App.exe"))); // desktop → spawn
     }
 }

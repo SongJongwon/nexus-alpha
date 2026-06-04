@@ -880,11 +880,39 @@ def _build_platform_constraint(platform_intent: str) -> str:
     )
 
 
-def _build_checkpoint_plan_summary(state: _LoopState) -> str:
+def _resolve_prev_build_artifact(state: _LoopState) -> tuple[str, str]:
+    """v13 P22 — iter 2+ 체크포인트용 직전 iteration 빌드 아티팩트 경로(읽기 전용, best-effort).
+
+    직전 ``state["chain_result"].executor_result.exe_path`` 만 읽는다(실행·수정 없음). 반환:
+        (path, category) — category 는 확장자 기준 "web"(.html/.htm) | "desktop".
+        빌드 미존재/실패/경로 부재 시 ("", "") → GUI '빌드 열어보기' 비활성 + 안내.
+    """
+    try:
+        prev = state.get("chain_result")
+        exec_res = getattr(prev, "executor_result", None) if prev is not None else None
+        exe = getattr(exec_res, "exe_path", None) if exec_res is not None else None
+        if not exe:
+            return ("", "")
+        p = Path(str(exe))
+        if not p.exists():  # 빌드 SKIP/실패 → dist/ 또는 .exe 미생성
+            return ("", "")
+        category = "web" if p.suffix.lower() in (".html", ".htm") else "desktop"
+        return (str(p), category)
+    except Exception:  # noqa: BLE001 — best-effort, 실패해도 체크포인트는 그대로 진행
+        return ("", "")
+
+
+def _build_checkpoint_plan_summary(
+    state: _LoopState, *, prev_build_path: str = "", prev_build_category: str = ""
+) -> str:
     """v13 P20 — codegen 직전 체크포인트에서 사람에게 보여줄 계획/스펙 요약 조립.
 
     이 시점(run_chain 진입, 첫 codegen 직전)에 확정된 재료: 요청 + 플랫폼 의도 +
     스펙(expand_requirements 산출) + 킥오프 계획(kickoff_meeting 산출). 코드는 아직 미생성.
+
+    v13 P22 — iter 2+(state["iteration"]>=1) 진입 시 직전 iteration 의 gap·피드백 / QA /
+    빌드 경로를 *추가*로 덧붙인다. iter 1(iteration==0) 진입 시엔 아래 블록 전체 skip →
+    P20 요약과 byte 동일(회귀 0).
     """
     parts: list[str] = []
     req = (state.get("user_request") or "").strip()
@@ -900,6 +928,24 @@ def _build_checkpoint_plan_summary(state: _LoopState) -> str:
             parts.append(f"[킥오프 계획]\n{str(skd)[:800]}")
         except Exception:  # noqa: BLE001
             pass
+
+    # ★ v13 P22 — iter 2+ 전용 컨텍스트(직전 빌드/ gap / QA). iter 1 은 진입 안 함.
+    if state.get("iteration", 0) >= 1:
+        prev_fb = (state.get("feedback") or "").strip()
+        if prev_fb:
+            parts.append(f"[직전 iteration gap·피드백]\n{prev_fb[:1200]}")
+        prev = state.get("chain_result")
+        qa = (getattr(prev, "qa_review", "") or "").strip() if prev is not None else ""
+        if qa:
+            parts.append(f"[직전 QA 요약]\n{qa[:800]}")
+        if prev_build_path:
+            cat = prev_build_category or "unknown"
+            parts.append(
+                f"[직전 빌드 ({cat})]\n{prev_build_path}\n"
+                "→ 패널의 '빌드 열어보기'로 실제 앱을 확인한 뒤 피드백을 주입하세요."
+            )
+        else:
+            parts.append("[직전 빌드] (없음 또는 실패 — '빌드 열어보기' 비활성. gap·피드백은 그대로 가능)")
     return "\n\n".join(parts)
 
 
@@ -915,21 +961,35 @@ def _node_run_chain(state: _LoopState) -> dict[str, Any]:
     next_iter = state["iteration"] + 1
     feedback = state.get("feedback", "")
 
-    # ★ v13 P20 — codegen 직전 사람 개입 체크포인트 (opt-in, 첫 codegen 1회만).
+    # ★ v13 P20→P22 — codegen 직전 사람 개입 체크포인트 (opt-in).
     # 그래프 순서상 expand_requirements(스펙)+kickoff_meeting(계획)이 이미 끝났고 codegen
     # 체인은 아직 미실행 = "계획·스펙 확정 후, 코드 생성 전". intervene=False(기본)면 완전 no-op
     # (import 조차 없음 → 회귀 0). 입력 시 P12 conduit(feedback→request_with_feedback)로 주입.
-    if next_iter == 1 and state.get("intervene", False):
+    #
+    # P22 일반화: max_iterations>=2 면 *매 iteration* codegen 직전에 발동(iter 2+ 는 직전
+    # 빌드 + gap 요약 포함). MAX-ITER=1 은 next_iter==1 만 발동 = P20 와 100% 동일(iter 2+ 없음).
+    max_iter = state.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+    if state.get("intervene", False) and (next_iter == 1 or max_iter >= 2):
         from src.workflows._intervention import (  # noqa: PLC0415
             DEFAULT_INTERVENE_TIMEOUT_SEC,
             format_intervention_directive,
             request_codegen_intervention,
         )
 
+        # iter 2+ — 직전 iteration 빌드 아티팩트(읽기 전용). iter 1 은 빌드 전이라 ("", "").
+        prev_build_path, prev_build_category = (
+            _resolve_prev_build_artifact(state) if next_iter >= 2 else ("", "")
+        )
         human_feedback = request_codegen_intervention(
-            _build_checkpoint_plan_summary(state),
+            _build_checkpoint_plan_summary(
+                state,
+                prev_build_path=prev_build_path,
+                prev_build_category=prev_build_category,
+            ),
             intervene=True,
             timeout_sec=state.get("intervene_timeout", DEFAULT_INTERVENE_TIMEOUT_SEC),
+            iteration=next_iter,
+            prev_build_path=prev_build_path,
         )
         if human_feedback:
             directive = format_intervention_directive(human_feedback)
