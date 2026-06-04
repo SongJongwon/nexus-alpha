@@ -194,6 +194,27 @@ class CheckpointEvent:
     type: str = "checkpoint"
 
 
+@dataclass
+class SmokeEvent:
+    """v13 P23 — 데스크탑 .exe 런타임 스모크 게이트 결과.
+
+    빌드 후 판정 직전, desktop .exe 를 잠깐 띄워 크래시/치명 에러를 검출한 결과를 surface.
+    Tauri UI / events.jsonl 소비자: verdict='FAIL' 이면 COMPLETE 가 차단되고 에러가 다음
+    iteration must-fix 로 주입됨을 표시. PASS=정상 생존, SKIPPED=비-desktop/헤드리스/실행불가.
+    desktop 빌드가 아니거나 게이트 OFF 면 emit 자체가 일어나지 않음.
+    """
+    verdict: str             # "PASS" | "FAIL" | "SKIPPED"
+    reason: str = ""
+    signal: str = ""         # exit|silent|spawn|stderr|window|alive|skipped
+    exit_code: int = 0       # None 은 0 으로 정규화 (JSON 안전)
+    exe_path: str = ""       # .exe 파일명 (전체 경로 아님)
+    survived_sec: float = 0.0
+    run_id: str = ""
+    iteration: int = 0
+    ts: str = field(default_factory=_now_ts)
+    type: str = "smoke"
+
+
 # ---------------------------------------------------------------------------
 # TelemetryEmitter (싱글톤)
 # ---------------------------------------------------------------------------
@@ -401,6 +422,7 @@ __all__ = [
     "IterationProgressEvent",
     "ResultEvent",
     "CheckpointEvent",
+    "SmokeEvent",
     "TelemetryEmitter",
     "get_telemetry_emitter",
 ]

@@ -141,3 +141,56 @@ class TestRunExeRuntimeTest:
         result = run_exe_runtime_test(Path("C:/__nonexistent__/x.exe"))
         # spawn 실패는 별개 — telemetry 자체 예외 차단만 검증
         assert isinstance(result, RuntimeTestResult)
+
+
+class TestP23TreeKillAndDrain:
+    """v13 P23 — PASS(생존) 경로의 프로세스 트리 정리(좀비 방지) + 부분 출력 회수."""
+
+    @patch("src.agents.runtime_verification.exe_runtime_tester.subprocess.Popen")
+    def test_pass_drains_partial_stderr(self, mock_popen):
+        """⭐ 생존(PASS) 후 terminate → 잔여 stderr 회수 → 결과에 실림 ((b) 검출 실효화)."""
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_proc.pid = 99999
+        # 1차 communicate(timeout) → TimeoutExpired(생존), 2차 communicate(drain) → 잔여 출력.
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd=["fake.exe"], timeout=0.1),
+            (b"", b"Traceback ... OperationalError: no such column: active"),
+        ]
+        mock_popen.return_value = mock_proc
+
+        exe = _make_fake_exe()
+        try:
+            result = run_exe_runtime_test(exe, timeout_sec=0.1)
+            assert result.verdict == "PASS"
+            assert "OperationalError" in result.stderr  # PASS 라도 잔여 stderr 회수됨
+            mock_proc.terminate.assert_called_once()
+        finally:
+            exe.unlink(missing_ok=True)
+
+    def test_terminate_process_tree_kills_children(self):
+        """⭐ onefile 부트로더 자식까지 트리 종료 (orphan 좀비 방지) — psutil mock."""
+        from src.agents.runtime_verification.exe_runtime_tester import _terminate_process_tree
+
+        proc = MagicMock()
+        proc.pid = 4321
+        child = MagicMock()
+        fake_psutil = MagicMock()
+        fake_psutil.Process.return_value.children.return_value = [child]
+        fake_psutil.wait_procs.return_value = ([], [child])  # child 잔존 → kill 대상
+        with patch.dict("sys.modules", {"psutil": fake_psutil}):
+            _terminate_process_tree(proc)
+        child.terminate.assert_called_once()  # 자식 terminate
+        child.kill.assert_called_once()       # 잔존 자식 강제 kill
+        proc.terminate.assert_called_once()   # 직접 자식(부트로더) terminate
+
+    def test_terminate_process_tree_graceful_without_psutil(self):
+        """psutil 미설치/실패여도 직접 자식 terminate 는 수행 (best-effort fallback)."""
+        from src.agents.runtime_verification.exe_runtime_tester import _terminate_process_tree
+
+        proc = MagicMock()
+        proc.pid = 4321
+        # psutil import 실패 시뮬레이션
+        with patch.dict("sys.modules", {"psutil": None}):
+            _terminate_process_tree(proc)
+        proc.terminate.assert_called_once()

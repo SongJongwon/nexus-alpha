@@ -89,6 +89,66 @@ def _measure_memory_peak(pid: int) -> Optional[float]:
         return None
 
 
+def _terminate_process_tree(proc: "subprocess.Popen") -> None:
+    """프로세스 + 모든 자식(재귀) best-effort 종료.
+
+    v13 P23 — PyInstaller ``--onefile`` 부트로더는 _MEIxxxx 에 풀고 *실제 앱* 을 별도 자식
+    프로세스로 spawn 한다. ``proc.terminate()`` 는 부트로더 PID 만 종료해 실 앱이 orphan 으로
+    남는다(좀비). psutil 로 자식 트리를 함께 종료한다(미설치/실패 시 직접 자식만 — best-effort).
+    """
+    children = []
+    try:
+        import psutil  # type: ignore
+
+        children = psutil.Process(proc.pid).children(recursive=True)
+        for c in children:
+            try:
+                c.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        children = []
+    # 직접 자식(부트로더) 종료.
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    except Exception:  # noqa: BLE001
+        pass
+    # 트리에 살아남은 자식 강제 kill.
+    if children:
+        try:
+            import psutil  # type: ignore
+
+            _, alive = psutil.wait_procs(children, timeout=1.5)
+            for c in alive:
+                try:
+                    c.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _drain_after_kill(proc: "subprocess.Popen") -> tuple[str, str]:
+    """종료된 프로세스의 *잔여* stdout/stderr 회수 → (stderr, stdout).
+
+    v13 P23 — alive(PASS) 경로에서도 부분 출력을 확보해 ``_combine_smoke_verdict`` 의 (b)
+    에러-출력 검출이 실효를 갖게 한다. terminate 후 호출이라 보통 즉시 EOF 로 회수되지만, orphan
+    손자가 stderr 파이프를 물고 있으면 EOF 가 안 올 수 있어 **communicate(timeout=2.0) 로 상한**을
+    둔다(blocking 방지의 실제 근거는 이 timeout). 초과/실패 시 ("", "") (best-effort).
+    """
+    try:
+        out_b, err_b = proc.communicate(timeout=2.0)
+        out = out_b.decode("utf-8", errors="replace") if out_b else ""
+        err = err_b.decode("utf-8", errors="replace") if err_b else ""
+        return (err, out)
+    except Exception:  # noqa: BLE001
+        return ("", "")
+
+
 def run_exe_runtime_test(
     exe_path: Path,
     timeout_sec: float = 3.0,
@@ -200,19 +260,14 @@ def run_exe_runtime_test(
         except subprocess.TimeoutExpired:
             # timeout 동안 살아있음 — PASS (GUI mainloop 정상)
             elapsed_ms = (time.monotonic() - start) * 1000
-            try:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=2.0)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+            # v13 P23 — 프로세스 *트리* 정리(onefile 자식 orphan 방지) + 부분 출력 회수.
+            _terminate_process_tree(proc)
+            alive_stderr, alive_stdout = _drain_after_kill(proc)
 
             result = RuntimeTestResult(
                 exit_code=None,
-                stderr="",
-                stdout="",
+                stderr=alive_stderr,
+                stdout=alive_stdout,
                 startup_time_ms=elapsed_ms,
                 memory_peak_mb=memory_peak_mb,
                 timed_out=True,
