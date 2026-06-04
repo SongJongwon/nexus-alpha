@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import { BoardroomPanel } from './components/BoardroomPanel'
+import { RunReportPanel } from './components/RunReportPanel'
 
 // =============================================================================
 // Sprint 6 — Agent Office (조직도 v12 11 본부 + 54 멤버 + UI polish)
@@ -687,6 +688,7 @@ const MAX_MESSAGES = 80
 type MenuKey =
   | 'agent-map'
   | 'boardroom'
+  | 'run-report'
   | 'system'
   | 'monitor'
   | 'catalog'
@@ -703,6 +705,8 @@ const MENU_ITEMS: MenuItem[] = [
   { key: 'agent-map', label: '에이전트 맵', enabled: true },
   // v13 Phase 5.1 (PR #223) — Boardroom panel + decision.yaml viewer
   { key: 'boardroom', label: '이사회 의결', enabled: true },
+  // v13 P21 — 런 산출물 본부별 리포트 + PDF/HTML/zip 다운로드 (읽기 전용)
+  { key: 'run-report', label: '런 리포트', enabled: true },
   { key: 'system', label: '시스템 개요', enabled: false },
   { key: 'monitor', label: '실시간 모니터', enabled: false },
   { key: 'catalog', label: '카탈로그', enabled: false },
@@ -1555,6 +1559,10 @@ function App() {
           {activeMenu === 'boardroom' ? (
             <div className="flex-1 min-h-0">
               <BoardroomPanel />
+            </div>
+          ) : activeMenu === 'run-report' ? (
+            <div className="flex-1 min-h-0">
+              <RunReportPanel />
             </div>
           ) : activeMenu !== 'agent-map' ? (
             <div className="h-full flex items-center justify-center text-slate-500 text-sm">

@@ -802,6 +802,621 @@ async fn read_boardroom_session(name: String) -> Result<String, String> {
     std::fs::read_to_string(&md_path).map_err(|e| format!("회의록 read 실패: {e}"))
 }
 
+// ===========================================================================
+// P21 — 런 리포트 (읽기 전용): 런 목록 / 본부별 단계 트리 / 파일 읽기 / 내보내기.
+//   * 모든 read 는 outputs/ 하위로 *경로 제한*(safe_outputs_path) — 탈출 차단.
+//   * 런 산출물(alpha_run_*/workflow_*) 은 *수정·삭제 없음*. 내보내기는 별도
+//     outputs/_run_reports/<run_id>/ 에만 쓴다 (산출물 dir 불변 = 읽기 전용 보존).
+//   * LLM 호출 0 — 전부 파일 파싱. PDF/HTML 은 record 와 동일한 python 렌더 파이프라인 재사용.
+// ===========================================================================
+
+const RUN_FILE_READ_LIMIT: usize = 5 * 1024 * 1024; // 미리보기 read 상한 5MB
+
+/// 산출 디렉터리 outputs/ — 모든 P21 read/export 의 sandbox 루트.
+fn outputs_root() -> Result<PathBuf, String> {
+    Ok(resolve_project_root()?.join("outputs"))
+}
+
+/// 단일 경로 요소가 안전한지 (빈/`.`/`..`/separator/null/`:`(드라이브-상대) 금지).
+/// `:` 차단으로 Windows 드라이브-상대 경로("D:", "C:Users") 탈출까지 방어.
+fn is_safe_segment(s: &str) -> bool {
+    !(s.is_empty()
+        || s == "."
+        || s == ".."
+        || s.contains('/')
+        || s.contains('\\')
+        || s.contains('\0')
+        || s.contains(':'))
+}
+
+/// run_id + 상대경로 → outputs/ 하위로 제한된 안전 절대경로. 경로 탈출(`..`·절대·separator)을
+/// 차단: 각 component 검증 + 정규화 후 outputs 루트 포함 검사 (심볼릭 우회까지 방어).
+fn safe_outputs_path(run_id: &str, rel: &str) -> Result<PathBuf, String> {
+    if !is_safe_segment(run_id) {
+        return Err(format!("잘못된 run_id: {run_id:?}"));
+    }
+    let root = outputs_root()?;
+    let mut p = root.join(run_id);
+    for part in rel.split(['/', '\\']) {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if !is_safe_segment(part) {
+            return Err(format!("경로 탈출 차단: {rel:?}"));
+        }
+        p.push(part);
+    }
+    // 존재하면 canonicalize 로 실경로 포함 검사, 미존재(export 대상)면 component 검증으로 충분.
+    match p.canonicalize() {
+        Ok(real) => {
+            let root_c = root.canonicalize().map_err(|e| e.to_string())?;
+            if !real.starts_with(&root_c) {
+                return Err(format!("outputs 밖 접근 차단: {}", real.display()));
+            }
+            Ok(real)
+        }
+        Err(_) => {
+            if !p.starts_with(&root) {
+                return Err("outputs 밖 접근 차단".to_string());
+            }
+            Ok(p)
+        }
+    }
+}
+
+/// alpha_run_<YYYYMMDD_HHMMSS> 디렉터리명 → ISO8601 (실패 시 None).
+fn parse_run_timestamp(name: &str) -> Option<String> {
+    let ts = name.strip_prefix("alpha_run_").unwrap_or(name);
+    let parts: Vec<&str> = ts.splitn(2, '_').collect();
+    if parts.len() != 2 || parts[0].len() != 8 || parts[1].len() != 6 {
+        return None;
+    }
+    let (d, t) = (parts[0], parts[1]);
+    if !d.chars().all(|c| c.is_ascii_digit()) || !t.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{}T{}:{}:{}Z",
+        &d[0..4], &d[4..6], &d[6..8], &t[0..2], &t[2..4], &t[4..6]
+    ))
+}
+
+/// 단계 파일명 → (본부 키, 본부 라벨, 정렬 순서). 파일명 NN_ 접두 기반 *결정론* 매핑
+/// (하네스 스테이지 정의: analyze_and_implement/build_workflow/release_workflow + App.tsx 본부).
+fn stage_hq(filename: &str) -> (&'static str, &'static str, u32) {
+    let lower = filename.to_ascii_lowercase();
+    if lower.starts_with("retrospective") {
+        return ("hq-10", "Coordination · 회고", 90);
+    }
+    if lower.starts_with("knowledge_entry") {
+        return ("hq-5", "지식 관리", 91);
+    }
+    let nn: Option<u32> = filename.get(0..2).and_then(|s| s.parse().ok());
+    match nn {
+        Some(0) => ("input", "입력 · 사용자 요청", 0),
+        Some(1) => ("hq-0", "C-Level · 기술 전략", 1),
+        Some(2) => ("hq-1", "업무 분석", 2),
+        Some(3) => ("hq-3", "개발 · Engineer", 3),
+        Some(4) | Some(5) => ("hq-4", "품질 검증 · QA/Pytest", 4),
+        Some(10) => ("hq-2", "기획·설계 · UI/UX", 10),
+        Some(11) | Some(12) | Some(13) => ("hq-7", "디자인 · GUI/Theme/CodeGen", 11),
+        Some(14) => ("hq-4", "품질 검증 · QA/Pytest", 14),
+        Some(20..=25) | Some(30..=34) => ("hq-8", "빌드 · 배포", 20),
+        Some(26) => ("hq-9", "런타임 검증 · RV", 26),
+        _ => ("other", "기타", 99),
+    }
+}
+
+/// Track B(automate_workflow_*) 는 NN 번호 의미가 Track A 와 다르다(02 코드생성·03 QA·04 빌드).
+/// Track A 본부 매핑을 그대로 쓰면 한 칸씩 밀린 오분류가 되므로, 회고/지식 외에는 *평면*
+/// 'Track B · 자동화 단계' 그룹으로 폴백(번호 순서 보존) — 잘못된 본부 라벨 방지.
+fn track_b_stage(filename: &str) -> (&'static str, &'static str, u32) {
+    let lower = filename.to_ascii_lowercase();
+    if lower.starts_with("retrospective") {
+        return ("hq-10", "Coordination · 회고", 90);
+    }
+    if lower.starts_with("knowledge_entry") {
+        return ("hq-5", "지식 관리", 91);
+    }
+    let order: u32 = filename.get(0..2).and_then(|s| s.parse().ok()).unwrap_or(99);
+    ("track-b", "Track B · 자동화 단계", order)
+}
+
+/// 단계 파일 → 본부 매핑 (Track A/B 분기).
+fn stage_hq_for(filename: &str, is_track_b: bool) -> (&'static str, &'static str, u32) {
+    if is_track_b {
+        track_b_stage(filename)
+    } else {
+        stage_hq(filename)
+    }
+}
+
+/// 확장자 → frontend 렌더 분기용 kind.
+fn file_kind(name: &str) -> &'static str {
+    let l = name.to_ascii_lowercase();
+    if l.ends_with(".md") {
+        "md"
+    } else if l.ends_with(".yaml") || l.ends_with(".yml") {
+        "yaml"
+    } else if l.ends_with(".json") {
+        "json"
+    } else if l.ends_with(".txt") {
+        "txt"
+    } else {
+        "other"
+    }
+}
+
+/// 파일 첫 헤딩/제목 줄 1줄 라벨 추출 (markdown `#` 우선, 없으면 첫 비공백 줄). LLM 0.
+fn extract_label(content: &str) -> String {
+    for line in content.lines().take(40) {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let h = t.trim_start_matches('#').trim();
+        if !h.is_empty() {
+            return h.chars().take(120).collect();
+        }
+    }
+    String::new()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunSummary {
+    pub run_id: String,
+    pub timestamp: String,
+    pub request: String,
+    pub stage_count: u32,
+    pub verdict: String,
+    pub iterations: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StageFile {
+    pub filename: String,
+    pub rel_path: String, // run_id 디렉터리 기준 상대경로 (예: workflow_xx/01_cto_strategy.md)
+    pub hq_key: String,
+    pub hq_label: String,
+    pub order: u32,
+    pub label: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CodeEntry {
+    pub rel_path: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunReport {
+    pub run_id: String,
+    pub timestamp: String,
+    pub request: String,
+    pub verdict: String,
+    pub iterations: String,
+    pub workflow_dir: String,
+    pub stages: Vec<StageFile>,
+    pub code_files: Vec<CodeEntry>,
+}
+
+/// alpha_run_* 안의 *산출 본체* 서브디렉터리(workflow_* 또는 automate_workflow_*) 이름.
+fn find_inner_workflow_dir(run_dir: &Path) -> Option<String> {
+    let mut best: Option<String> = None;
+    if let Ok(entries) = std::fs::read_dir(run_dir) {
+        for e in entries.flatten() {
+            if !e.path().is_dir() {
+                continue;
+            }
+            if let Some(n) = e.file_name().to_str() {
+                if n.starts_with("workflow_") || n.starts_with("automate_workflow_") {
+                    // 가장 최근(이름 desc) 선택
+                    if best.as_deref().map(|b| n > b).unwrap_or(true) {
+                        best = Some(n.to_string());
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
+/// events.jsonl(outputs/events.jsonl) 에서 이 run 의 verdict/iterations best-effort 파싱.
+/// 텔레메트리 OFF/연결 불가면 ("미상","미상") — *날조하지 않음*.
+fn run_verdict_best_effort(run_id: &str, workflow_dir: &str) -> (String, String) {
+    let path = match outputs_root() {
+        Ok(r) => r.join("events.jsonl"),
+        Err(_) => return ("미상".into(), "미상".into()),
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return ("미상".into(), "미상".into()),
+    };
+    for line in text.lines().rev() {
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("result") {
+            continue;
+        }
+        let saved = v.get("saved_dir").and_then(|s| s.as_str()).unwrap_or("");
+        // saved_dir 이 이 run 의 workflow_* 를 가리키는지(부모=run_id, 자신=workflow_dir).
+        let sp = Path::new(saved);
+        let self_match = sp.file_name().and_then(|s| s.to_str()) == Some(workflow_dir);
+        let parent_match = sp
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            == Some(run_id);
+        if self_match || parent_match {
+            let verdict = v
+                .get("verdict")
+                .and_then(|s| s.as_str())
+                .unwrap_or("미상")
+                .to_string();
+            let iters = v
+                .get("iterations_run")
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "미상".into());
+            return (verdict, iters);
+        }
+    }
+    ("미상".into(), "미상".into())
+}
+
+/// 런 목록 — outputs/alpha_run_* 최신순(최대 100). 메타는 전부 파일 파싱(LLM 0).
+#[tauri::command]
+async fn list_runs() -> Result<Vec<RunSummary>, String> {
+    let root = outputs_root()?;
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut items = Vec::new();
+    for e in std::fs::read_dir(&root).map_err(|e| e.to_string())?.flatten() {
+        let path = e.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) if n.starts_with("alpha_run_") => n.to_string(),
+            _ => continue,
+        };
+        let timestamp = parse_run_timestamp(&name).unwrap_or_default();
+        let inner = find_inner_workflow_dir(&path);
+        let (mut request, mut stage_count) = (String::new(), 0u32);
+        if let Some(wf) = &inner {
+            let wf_dir = path.join(wf);
+            if let Ok(req) = std::fs::read_to_string(wf_dir.join("00_user_request.txt")) {
+                request = req.trim().chars().take(300).collect();
+            }
+            // get_run_report 와 동일 기준(파일 + .tmp 제외) — 사이드바 단계 수 일치.
+            if let Ok(files) = std::fs::read_dir(&wf_dir) {
+                for f in files.flatten() {
+                    if f.path().is_file() {
+                        if let Some(fname) = f.file_name().to_str() {
+                            if !fname.ends_with(".tmp") {
+                                stage_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let (verdict, iterations) = match &inner {
+            Some(wf) => run_verdict_best_effort(&name, wf),
+            None => ("미상".into(), "미상".into()),
+        };
+        items.push(RunSummary { run_id: name, timestamp, request, stage_count, verdict, iterations });
+    }
+    items.sort_by(|a, b| b.run_id.cmp(&a.run_id)); // 디렉터리명(타임스탬프) desc = 최신순
+    items.truncate(100);
+    Ok(items)
+}
+
+/// 선택 런의 본부별 단계 트리 + code/ 파일 목록 + 메타. (읽기 전용, LLM 0)
+#[tauri::command]
+async fn get_run_report(run_id: String) -> Result<RunReport, String> {
+    let run_dir = safe_outputs_path(&run_id, "")?;
+    if !run_dir.is_dir() {
+        return Err(format!("런 디렉터리 미발견: {run_id}"));
+    }
+    let workflow_dir = find_inner_workflow_dir(&run_dir)
+        .ok_or_else(|| format!("workflow_* 산출 디렉터리 없음: {run_id}"))?;
+    let wf_path = run_dir.join(&workflow_dir);
+    let is_track_b = workflow_dir.starts_with("automate_workflow_");
+
+    let mut stages: Vec<StageFile> = Vec::new();
+    for e in std::fs::read_dir(&wf_path).map_err(|e| e.to_string())?.flatten() {
+        let p = e.path();
+        if !p.is_file() {
+            continue;
+        }
+        let filename = match p.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if filename.ends_with(".tmp") {
+            continue;
+        }
+        let (hq_key, hq_label, order) = stage_hq_for(&filename, is_track_b);
+        // 첫 ~4KB 만 읽어 라벨 추출 (거대 파일 보호).
+        let head = read_head(&p, 4096);
+        stages.push(StageFile {
+            label: extract_label(&head),
+            kind: file_kind(&filename).to_string(),
+            rel_path: format!("{workflow_dir}/{filename}"),
+            filename,
+            hq_key: hq_key.to_string(),
+            hq_label: hq_label.to_string(),
+            order,
+        });
+    }
+    stages.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.filename.cmp(&b.filename)));
+
+    // code/ 트리 (렌더 대신 목록만)
+    let mut code_files: Vec<CodeEntry> = Vec::new();
+    let code_root = wf_path.join("code");
+    if code_root.is_dir() {
+        collect_code_tree(&code_root, &code_root, &mut code_files);
+        code_files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        code_files.truncate(500);
+    }
+
+    let request = std::fs::read_to_string(wf_path.join("00_user_request.txt"))
+        .map(|s| s.trim().chars().take(2000).collect::<String>())
+        .unwrap_or_default();
+    let (verdict, iterations) = run_verdict_best_effort(&run_id, &workflow_dir);
+
+    Ok(RunReport {
+        run_id,
+        timestamp: String::new(),
+        request,
+        verdict,
+        iterations,
+        workflow_dir,
+        stages,
+        code_files,
+    })
+}
+
+fn read_head(path: &Path, max: usize) -> String {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    if let Ok(f) = std::fs::File::open(path) {
+        // take().read_to_end — 단일 read() 의 부분읽기(EOF 아닌데 적게 반환)를 피해
+        // max 바이트(또는 EOF)까지 결정적으로 채운다.
+        let _ = f.take(max as u64).read_to_end(&mut buf);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+fn collect_code_tree(root: &Path, dir: &Path, out: &mut Vec<CodeEntry>) {
+    if out.len() >= 500 {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_code_tree(root, &p, out);
+            } else if let Ok(rel) = p.strip_prefix(root) {
+                let rel_s = rel.to_string_lossy().replace('\\', "/");
+                out.push(CodeEntry {
+                    kind: file_kind(&rel_s).to_string(),
+                    rel_path: rel_s,
+                });
+            }
+        }
+    }
+}
+
+/// 단계/코드 파일 1개 읽기 — outputs/ 경로 제한. {content, kind} 반환.
+#[tauri::command]
+async fn read_run_file(run_id: String, rel_path: String) -> Result<serde_json::Value, String> {
+    let path = safe_outputs_path(&run_id, &rel_path)?;
+    if !path.is_file() {
+        return Err(format!("파일 미발견: {rel_path}"));
+    }
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() as usize > RUN_FILE_READ_LIMIT {
+        // truncation 안내는 frontend 배지로 일원화 (본문에 덧붙이지 않음).
+        return Ok(serde_json::json!({
+            "kind": file_kind(&rel_path),
+            "truncated": true,
+            "content": read_head(&path, RUN_FILE_READ_LIMIT)
+        }));
+    }
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| String::from("(텍스트가 아닌 파일 — 미리보기 불가)"));
+    Ok(serde_json::json!({ "kind": file_kind(&rel_path), "truncated": false, "content": content }))
+}
+
+/// render_report.py spawn 인자 빌더 (순수 함수 — 단위 테스트 대상).
+fn render_command_args(script: &str, mode: &str, input: &str, out: &str, title: &str) -> Vec<String> {
+    vec![
+        script.into(),
+        "--mode".into(),
+        mode.into(),
+        "--in".into(),
+        input.into(),
+        "--out".into(),
+        out.into(),
+        "--title".into(),
+        title.into(),
+    ]
+}
+
+/// 본부 순서대로 결합 마크다운 조립 (export 공통). 각 단계 파일 내용을 종류별로 감싼다.
+fn build_combined_markdown(report: &RunReport, run_dir: &Path) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("# 런 리포트 — {}\n\n", report.run_id));
+    s.push_str(&format!(
+        "- **요청**: {}\n- **verdict**: {}\n- **iterations**: {}\n- **workflow**: {}\n- **단계 수**: {}\n\n---\n\n",
+        report.request.replace('\n', " "),
+        report.verdict,
+        report.iterations,
+        report.workflow_dir,
+        report.stages.len()
+    ));
+    // 본부별로 묶어 각 본부를 1회만 출력 (frontend 트리와 일치 — 비연속 order(04·14 둘 다 QA)
+    // 로 인한 ## 헤더 중복 방지). 첫 등장 순서 = 파이프라인 순서(stages 는 order 정렬됨).
+    let mut order_seen: Vec<String> = Vec::new();
+    let mut by_hq: std::collections::HashMap<String, Vec<&StageFile>> =
+        std::collections::HashMap::new();
+    for st in &report.stages {
+        if !by_hq.contains_key(&st.hq_label) {
+            order_seen.push(st.hq_label.clone());
+        }
+        by_hq.entry(st.hq_label.clone()).or_default().push(st);
+    }
+    for hq in &order_seen {
+        s.push_str(&format!("\n## {hq}\n\n"));
+        for st in &by_hq[hq] {
+            s.push_str(&format!("### {} — {}\n\n", st.filename, st.label));
+            let content =
+                std::fs::read_to_string(run_dir.join(&st.rel_path)).unwrap_or_default();
+            match st.kind.as_str() {
+                "md" => {
+                    s.push_str(&content);
+                    s.push_str("\n\n");
+                }
+                "yaml" => s.push_str(&format!("```yaml\n{content}\n```\n\n")),
+                "json" => s.push_str(&format!("```json\n{content}\n```\n\n")),
+                _ => s.push_str(&format!("```\n{content}\n```\n\n")),
+            }
+        }
+    }
+    s
+}
+
+/// 런 리포트 내보내기 — format: "zip" | "html" | "pdf".
+/// 산출은 outputs/_run_reports/<run_id>/run_report.<ext> (런 산출물 dir 불변). 저장 경로 반환.
+#[tauri::command]
+async fn export_run_report(run_id: String, format: String) -> Result<String, String> {
+    let run_dir = safe_outputs_path(&run_id, "")?;
+    if !run_dir.is_dir() {
+        return Err(format!("런 디렉터리 미발견: {run_id}"));
+    }
+    let report = get_run_report(run_id.clone()).await?;
+
+    let export_dir = outputs_root()?.join("_run_reports").join(&run_id);
+    std::fs::create_dir_all(&export_dir).map_err(|e| format!("export 디렉터리 생성 실패: {e}"))?;
+
+    match format.as_str() {
+        "zip" => {
+            let out = export_dir.join("run_report.zip");
+            zip_run_files(&report, &run_dir, &out)?;
+            Ok(out.to_string_lossy().into_owned())
+        }
+        "html" | "pdf" => {
+            let combined = build_combined_markdown(&report, &run_dir);
+            let tmp_md = export_dir.join("_combined.md");
+            std::fs::write(&tmp_md, combined.as_bytes())
+                .map_err(|e| format!("결합 마크다운 기록 실패: {e}"))?;
+            let ext = if format == "pdf" { "pdf" } else { "html" };
+            let out = export_dir.join(format!("run_report.{ext}"));
+            run_render_python(&tmp_md, &out, &format, &run_id)?;
+            Ok(out.to_string_lossy().into_owned())
+        }
+        other => Err(format!("지원하지 않는 format: {other}")),
+    }
+}
+
+fn zip_run_files(report: &RunReport, run_dir: &Path, out: &Path) -> Result<(), String> {
+    let file = std::fs::File::create(out).map_err(|e| format!("zip 생성 실패: {e}"))?;
+    let mut zw = zip::ZipWriter::new(file);
+    let opts: zip::write::FileOptions<()> =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    use std::io::Write;
+    let mut added = 0u32;
+    for st in &report.stages {
+        let p = run_dir.join(&st.rel_path);
+        if let Ok(bytes) = std::fs::read(&p) {
+            zw.start_file(st.filename.clone(), opts)
+                .map_err(|e| format!("zip entry 실패: {e}"))?;
+            zw.write_all(&bytes).map_err(|e| format!("zip write 실패: {e}"))?;
+            added += 1;
+        }
+    }
+    zw.finish().map_err(|e| format!("zip finish 실패: {e}"))?;
+    if added == 0 {
+        let _ = std::fs::remove_file(out); // 빈 0-entry zip 정리
+        return Err("zip 에 포함할 단계 파일이 없습니다 (빈 산출 방지).".to_string());
+    }
+    Ok(())
+}
+
+fn run_render_python(in_md: &Path, out: &Path, mode: &str, title: &str) -> Result<(), String> {
+    let project_root = resolve_project_root()?;
+    let python = project_root.join(".venv").join("Scripts").join("python.exe");
+    let script = project_root.join("scripts").join("render_report.py");
+    if !python.exists() {
+        return Err(format!("python 미발견: {}", python.display()));
+    }
+    if !script.exists() {
+        return Err(format!("render_report.py 미발견: {}", script.display()));
+    }
+    let args = render_command_args(
+        &script.to_string_lossy(),
+        mode,
+        &in_md.to_string_lossy(),
+        &out.to_string_lossy(),
+        title,
+    );
+    // .output() 으로 동기 대기 + stderr 캡처 — 실패 시 python traceback 을 사용자에게 surface.
+    let output = Command::new(&python)
+        .args(&args)
+        .current_dir(&project_root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("render_report 실행 실패: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        let tail = lines[lines.len().saturating_sub(8)..].join(" / ");
+        // html/pdf 둘 다 python 파이프라인 — 실패 시 *zip(원본 묶음)* 이 무의존 대체 경로.
+        return Err(format!(
+            "{mode} 생성 실패 (종료코드 {:?}) — ZIP(원본 단계 파일 묶음)으로 대체 가능. {tail}",
+            output.status.code()
+        ));
+    }
+    Ok(())
+}
+
+/// 내보낸 리포트 폴더를 탐색기로 열기 — outputs/_run_reports/<run_id>/ 로 경로 제한.
+#[tauri::command]
+async fn open_report_folder(run_id: String) -> Result<(), String> {
+    if !is_safe_segment(&run_id) {
+        return Err(format!("잘못된 run_id: {run_id:?}"));
+    }
+    let base = outputs_root()?.join("_run_reports");
+    let dir = base.join(&run_id);
+    if !dir.is_dir() {
+        return Err("내보낸 리포트 폴더 없음 — 먼저 내보내기 하세요.".to_string());
+    }
+    // 경로 탈출 차단(다른 4개 command 과 동일 불변식) — canonicalize 후 _run_reports 하위 검사.
+    let real = dir.canonicalize().map_err(|e| e.to_string())?;
+    let base_c = base.canonicalize().map_err(|e| e.to_string())?;
+    if !real.starts_with(&base_c) {
+        return Err("outputs/_run_reports 밖 접근 차단".to_string());
+    }
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("explorer");
+        c.arg(&dir);
+        c
+    } else {
+        let mut c = Command::new("xdg-open");
+        c.arg(&dir);
+        c
+    };
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.spawn().map_err(|e| format!("폴더 열기 실패: {e}"))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -817,6 +1432,11 @@ pub fn run() {
             read_board_decision,
             list_boardroom_sessions,
             read_boardroom_session,
+            list_runs,
+            get_run_report,
+            read_run_file,
+            export_run_report,
+            open_report_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1081,5 +1701,110 @@ final_decision:
         assert!(port > 0);
         // 선택 직후엔 바인딩 가능(점유 전) — 재바인드로 유효성 확인.
         assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // P21 — 런 리포트: 단계→본부 매핑 / 경로 제한 / 메타 파싱 / render 인자 / kind
+    // -----------------------------------------------------------------------
+    #[test]
+    fn stage_hq_maps_pipeline_stages_to_headquarters() {
+        assert_eq!(stage_hq("00_user_request.txt").0, "input");
+        assert_eq!(stage_hq("01_cto_strategy.md").0, "hq-0");
+        assert_eq!(stage_hq("02_analyst_brief.md").0, "hq-1");
+        assert_eq!(stage_hq("03_engineer_output.md").0, "hq-3");
+        assert_eq!(stage_hq("04_qa_review.md").0, "hq-4");
+        assert_eq!(stage_hq("05_pytest_suite.md").0, "hq-4");
+        assert_eq!(stage_hq("10_ui_ux_spec.md").0, "hq-2");
+        assert_eq!(stage_hq("11_gui_design.md").0, "hq-7");
+        assert_eq!(stage_hq("13_gui_code_output.md").0, "hq-7");
+        assert_eq!(stage_hq("13d_generation_failed.txt").0, "hq-7"); // 조건부 진단도 디자인
+        assert_eq!(stage_hq("14_pytest_suite.md").0, "hq-4");
+        assert_eq!(stage_hq("20_dependency_report.md").0, "hq-8");
+        assert_eq!(stage_hq("25_executor_result.md").0, "hq-8");
+        assert_eq!(stage_hq("26_runtime_verify_pass.md").0, "hq-9");
+        assert_eq!(stage_hq("33_distribution_spec.md").0, "hq-8");
+        assert_eq!(stage_hq("retrospective.md").0, "hq-10");
+        assert_eq!(stage_hq("retrospective_llm_raw.json").0, "hq-10");
+        assert_eq!(stage_hq("knowledge_entry.yaml").0, "hq-5");
+        assert_eq!(stage_hq("weird_unmapped.txt").0, "other");
+    }
+
+    #[test]
+    fn stage_hq_order_follows_pipeline() {
+        assert!(stage_hq("01_cto_strategy.md").2 < stage_hq("10_ui_ux_spec.md").2);
+        assert!(stage_hq("10_ui_ux_spec.md").2 < stage_hq("20_dependency_report.md").2);
+        assert!(stage_hq("20_dependency_report.md").2 < stage_hq("retrospective.md").2);
+    }
+
+    #[test]
+    fn safe_outputs_path_blocks_traversal() {
+        assert!(safe_outputs_path("../etc", "x").is_err());
+        assert!(safe_outputs_path("run", "../../secret").is_err());
+        assert!(safe_outputs_path("run", "..\\..\\secret").is_err());
+        assert!(safe_outputs_path("a/b", "x").is_err()); // run_id 에 separator
+        assert!(safe_outputs_path("..", "").is_err());
+        // 드라이브-상대 탈출 차단 (":" 거부) — open_report_folder 우회 회귀 방지.
+        assert!(safe_outputs_path("D:", "").is_err());
+        assert!(safe_outputs_path("C:Users", "").is_err());
+        assert!(!is_safe_segment("D:"));
+        assert!(!is_safe_segment("C:Users"));
+    }
+
+    #[test]
+    fn track_b_stage_uses_flat_group_not_track_a_hq() {
+        // Track B 02/03/04 는 Track A 의미와 달라 평면 'Track B' 그룹으로 폴백 (오분류 방지).
+        assert_eq!(track_b_stage("02_agent_output.md").0, "track-b");
+        assert_eq!(track_b_stage("03_pytest_suite.md").0, "track-b");
+        assert_eq!(track_b_stage("04_executor_result.md").0, "track-b");
+        // 회고/지식 은 Track 무관 동일 본부.
+        assert_eq!(track_b_stage("retrospective.md").0, "hq-10");
+        assert_eq!(track_b_stage("knowledge_entry.yaml").0, "hq-5");
+        // 분기 함수: is_track_b=false 면 Track A 매핑.
+        assert_eq!(stage_hq_for("02_analyst_brief.md", false).0, "hq-1");
+        assert_eq!(stage_hq_for("02_agent_output.md", true).0, "track-b");
+    }
+
+    #[test]
+    fn safe_outputs_path_allows_normal_under_outputs() {
+        let p = safe_outputs_path("alpha_run_20260603_013051", "workflow_x/01_cto_strategy.md")
+            .expect("정상 경로는 허용");
+        let s = p.to_string_lossy().replace('\\', "/");
+        assert!(s.contains("/outputs/alpha_run_20260603_013051/workflow_x/01_cto_strategy.md"));
+    }
+
+    #[test]
+    fn parse_run_timestamp_parses_alpha_run_dir() {
+        assert_eq!(
+            parse_run_timestamp("alpha_run_20260603_013051"),
+            Some("2026-06-03T01:30:51Z".to_string())
+        );
+        assert_eq!(parse_run_timestamp("not_a_run"), None);
+    }
+
+    #[test]
+    fn file_kind_branches_by_extension() {
+        assert_eq!(file_kind("a.md"), "md");
+        assert_eq!(file_kind("a.YAML"), "yaml");
+        assert_eq!(file_kind("a.json"), "json");
+        assert_eq!(file_kind("a.txt"), "txt");
+        assert_eq!(file_kind("a.png"), "other");
+    }
+
+    #[test]
+    fn extract_label_takes_first_heading() {
+        assert_eq!(extract_label("# CTO 전략\n본문..."), "CTO 전략");
+        assert_eq!(extract_label("\n\n## 분석 브리프\nx"), "분석 브리프");
+        assert_eq!(extract_label("그냥 텍스트 첫 줄\n둘째"), "그냥 텍스트 첫 줄");
+        assert_eq!(extract_label(""), "");
+    }
+
+    #[test]
+    fn render_command_args_has_mode_in_out_title() {
+        let a = render_command_args("scripts/render_report.py", "pdf", "c.md", "out.pdf", "런 X");
+        assert_eq!(a[0], "scripts/render_report.py");
+        for (flag, val) in [("--mode", "pdf"), ("--in", "c.md"), ("--out", "out.pdf"), ("--title", "런 X")] {
+            let i = a.iter().position(|x| x == flag).expect("flag 존재");
+            assert_eq!(a[i + 1], val);
+        }
     }
 }

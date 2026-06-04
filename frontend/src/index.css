@@ -79,6 +79,29 @@ body,
   animation: card-pulse 1.1s ease-in-out infinite;
 }
 
+/* v13 P21 — 런 리포트 마크다운 렌더(.report-md) 스타일 (react-markdown raw 엘리먼트). */
+.report-md {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+.report-md h1 { font-size: 18px; font-weight: 700; color: #f1f5f9; margin: 12px 0 8px; border-bottom: 1px solid #30363d; padding-bottom: 4px; }
+.report-md h2 { font-size: 15px; font-weight: 700; color: #e2e8f0; margin: 12px 0 6px; }
+.report-md h3 { font-size: 13px; font-weight: 700; color: #cbd5e1; margin: 10px 0 4px; }
+.report-md p { margin: 6px 0; }
+.report-md ul, .report-md ol { margin: 6px 0; padding-left: 20px; }
+.report-md li { margin: 2px 0; }
+.report-md a { color: #58a6ff; text-decoration: none; }
+.report-md code { background: #1e293b; color: #e2e8f0; padding: 1px 5px; border-radius: 3px; font-family: Consolas, monospace; font-size: 11px; }
+.report-md pre { background: #0b1220; color: #e2e8f0; padding: 10px 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; border: 1px solid #1e293b; }
+.report-md pre code { background: transparent; padding: 0; }
+.report-md table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 11px; display: block; overflow-x: auto; }
+.report-md th, .report-md td { border: 1px solid #30363d; padding: 4px 8px; text-align: left; }
+.report-md th { background: #161b22; color: #e2e8f0; }
+.report-md blockquote { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.08); margin: 8px 0; padding: 4px 12px; color: #fcd34d; }
+.report-md hr { border: none; border-top: 1px solid #30363d; margin: 12px 0; }
+.report-md img { max-width: 100%; }
+
 /* 스크롤바 다크 모드 친화 */
 *::-webkit-scrollbar {
   width: 8px;
