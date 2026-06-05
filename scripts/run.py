@@ -717,6 +717,9 @@ def _run_track_a(args: argparse.Namespace) -> int:
             # getattr 기본값 — run.py 의 emit_events/non_interactive 와 동일 방어 패턴(구 fixture 호환).
             intervene=getattr(args, "intervene", False),
             intervene_timeout=getattr(args, "intervene_timeout", 90),
+            # v13 P23 — desktop 런타임 스모크 게이트 (기본 ON; desktop 빌드만 작동).
+            enable_smoke=getattr(args, "enable_smoke", True),
+            smoke_timeout=getattr(args, "smoke_timeout", 8),
         )
         result = outcome.final_chain_result
         # PR #174 — BLOCKED UX 개선 (blocked_cause + partial output 안내)
@@ -958,6 +961,9 @@ def _run_track_b(args: argparse.Namespace) -> int:
             release_tag=args.tag,
             # PR #183 — CLI --forced-domain Track B 자동 분류 우회
             forced_domain=forced_domain_enum,
+            # v13 P23 — desktop 런타임 스모크 게이트 (기본 ON; --no-smoke 가 Track B 도 끄도록 배선).
+            enable_smoke=getattr(args, "enable_smoke", True),
+            smoke_timeout=getattr(args, "smoke_timeout", 8),
         )
         chain = outcome.final_chain_result
         # PR #174 — BLOCKED UX 개선 (Track B 동일 포맷 — blocked_cause + partial hint)
@@ -1315,6 +1321,18 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--intervene-timeout", dest="intervene_timeout", type=int, default=90,
         help="v13 P20 — 개입 체크포인트 대기 타임아웃(초, 기본 90). 무입력 시 자동 진행.",
+    )
+    parser.add_argument(
+        "--smoke-timeout", dest="smoke_timeout", type=int, default=8,
+        help=(
+            "v13 P23 — 데스크탑 .exe 런타임 스모크 대기(초, 기본 8). 빌드 후 판정 직전 .exe 를 잠깐 "
+            "띄워 실행 즉시/실행 중 크래시·치명 에러를 검출, FAIL 이면 COMPLETE 차단 + 다음 iteration "
+            "must-fix 주입. desktop 빌드만 작동(web/none/비-win32 헤드리스 자동 SKIP)."
+        ),
+    )
+    parser.add_argument(
+        "--no-smoke", dest="enable_smoke", action="store_false", default=True,
+        help="v13 P23 — 데스크탑 런타임 스모크 게이트 비활성 (기본 ON).",
     )
     return parser.parse_args(argv)
 

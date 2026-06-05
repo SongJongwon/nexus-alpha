@@ -31,6 +31,10 @@ from src.agents.runtime_verification.auto_fix_coordinator import (
     AutoFixDecision,
     decide_auto_fix,
 )
+from src.agents.runtime_verification.desktop_smoke_gate import (
+    DesktopSmokeResult,
+    run_desktop_smoke_gate,
+)
 
 RV_DEPARTMENT: str = "rv"
 """Telemetry 부서 식별자 — 본부 9 의 모든 agent 가 emit 시 사용."""
@@ -50,6 +54,9 @@ __all__ = [
     # Auto-Fix Coordinator
     "AutoFixDecision",
     "decide_auto_fix",
+    # v13 P23 — Desktop .exe runtime smoke gate
+    "DesktopSmokeResult",
+    "run_desktop_smoke_gate",
     # Department identifier
     "RV_DEPARTMENT",
 ]

@@ -308,6 +308,12 @@ class _LoopState(TypedDict, total=False):
     gap_report_raw: str
     gap_report: Any  # GapReport
     decision: Any  # JudgmentDecision
+    # v13 P23 — desktop .exe 런타임 스모크 게이트 (기본 ON, desktop 빌드만). enable_rv 와 독립.
+    # enable_smoke: 게이트 토글 (기본 True — sibling enable_* 와 달리 ON-by-default).
+    # smoke_timeout: .exe 생존 판정 대기(초, 기본 8). smoke_result: DesktopSmokeResult | None.
+    enable_smoke: bool
+    smoke_timeout: int
+    smoke_result: Any  # DesktopSmokeResult | None — judge 의 _apply_smoke_failure_override 가 소비
 
     # 누적 이력 (stagnation 감지·결과 요약용)
     satisfied_history: list[int]  # iteration 별 satisfied_count
@@ -1254,6 +1260,107 @@ def _node_run_sandbox(state: _LoopState) -> dict[str, Any]:
     return {"execution_result": result}
 
 
+def _write_desktop_smoke_artifact(saved_dir: Path, result: Any, exe_path: Path) -> None:
+    """v13 P23 — `27_desktop_smoke_<verdict>.md` 작성 (25_executor_result.md 직후 가시 증거)."""
+    verdict_lower = str(getattr(result, "verdict", "unknown")).lower()
+    artifact_path = saved_dir / f"27_desktop_smoke_{verdict_lower}.md"
+    body_lines = [
+        "# Desktop .exe Runtime Smoke (v13 P23)",
+        "",
+        f"- **verdict**: `{getattr(result, 'verdict', '?')}`",
+        f"- **signal**: `{getattr(result, 'signal', '')}`",
+        f"- **exe**: `{exe_path.name}`",
+        f"- **exit_code**: {getattr(result, 'exit_code', None)}",
+        f"- **survived_sec**: {getattr(result, 'survived_sec', 0.0)}",
+        f"- **reason**: {getattr(result, 'reason', '')}",
+        "",
+        "## error_excerpt",
+        "",
+        "```",
+        (getattr(result, "error_excerpt", "") or "(없음)").strip()[:2000],
+        "```",
+    ]
+    artifact_path.write_text("\n".join(body_lines), encoding="utf-8")
+
+
+def _emit_smoke_event(result: Any, exe_path: Path) -> None:
+    """v13 P23 — SmokeEvent 를 events.jsonl 에 emit (telemetry 활성 시만, fail-safe)."""
+    from src.monitoring import SmokeEvent, get_telemetry_emitter  # noqa: PLC0415
+
+    emitter = get_telemetry_emitter()
+    if getattr(emitter, "enabled", False):
+        ec = getattr(result, "exit_code", None)
+        emitter.emit(
+            SmokeEvent(
+                verdict=str(getattr(result, "verdict", "")),
+                reason=(getattr(result, "reason", "") or "")[:500],
+                signal=str(getattr(result, "signal", "")),
+                exit_code=ec if isinstance(ec, int) else 0,
+                exe_path=exe_path.name,
+                survived_sec=float(getattr(result, "survived_sec", 0.0) or 0.0),
+            )
+        )
+
+
+def _run_desktop_smoke_gate(state: _LoopState) -> dict[str, Any]:
+    """v13 P23 — 빌드된 desktop .exe 런타임 스모크 (기본 ON, desktop+.exe 한정).
+
+    ``enable_rv``(opt-in)와 *독립* — 기본 ON. 빌드 후 판정 직전 .exe 를 잠깐 띄워 실행 즉시/
+    실행 중 크래시·치명 에러를 검출, 결과를 ``state["smoke_result"]`` 에 보존한다. judge 노드의
+    ``_apply_smoke_failure_override`` 가 이를 읽어 FAIL 시 COMPLETE 를 차단하고 에러를 다음
+    iteration must-fix 로 주입한다.
+
+    no-op 조건 (기존 동작 보존 — 회귀 0). **stale 방지**: no-op 도 ``{}`` 가 아니라
+    ``{"smoke_result": None}`` 을 반환해 *매 iteration* 직전 값을 명시적으로 비운다 — 어떤
+    iteration 의 desktop FAIL 이 이후 web/none/skip iteration 의 COMPLETE 를 거짓 차단하지 않게:
+        - ``enable_smoke`` False (--no-smoke).
+        - executor_result 없음 / 빌드 실패(success=False) → 기존 build override 에 위임(이중 실패 X).
+        - web 빌드(_is_web_build_result) → P17 web 시각 QA 가 커버.
+        - exe_path 가 .exe 가 아니거나(.html 등) 디스크에 없음 → skip.
+        - 스모크 실행 예외 → silent (검증 실패가 cycle 차단 X).
+    """
+    # enable_smoke=False(--no-smoke) → smoke 가 이 런에서 한 번도 안 돎 → stale 없음 → 순수 no-op({}).
+    if not state.get("enable_smoke", True):
+        return {}
+    # 이하 no-op 분기는 smoke 가 *켜진* 런의 비대상(web/none/.exe 부재) iteration —
+    # 직전 desktop FAIL 의 stale 을 None 으로 덮어써 후속 COMPLETE 거짓 차단 방지.
+    cleared = {"smoke_result": None}
+    chain = state.get("chain_result")
+    exec_res = getattr(chain, "executor_result", None) if chain is not None else None
+    if exec_res is None:
+        return cleared
+    if not getattr(exec_res, "success", False):
+        return cleared  # 빌드 실패 → _apply_build_failure_override 가 처리
+    if _is_web_build_result(exec_res):
+        return cleared  # web → P17 커버
+    exe = getattr(exec_res, "exe_path", None)
+    if not exe:
+        return cleared
+    p = Path(str(exe))
+    if p.suffix.lower() != ".exe" or not p.exists():
+        return cleared
+
+    try:
+        from src.agents.runtime_verification import run_desktop_smoke_gate  # noqa: PLC0415
+
+        result = run_desktop_smoke_gate(p, timeout_sec=float(state.get("smoke_timeout", 8)))
+    except Exception:  # noqa: BLE001 — 스모크 실패가 메인 cycle 차단 X
+        return cleared
+
+    saved_dir = getattr(chain, "saved_dir", None)
+    if isinstance(saved_dir, Path) and saved_dir.exists():
+        try:
+            _write_desktop_smoke_artifact(saved_dir, result, p)
+        except Exception:  # noqa: BLE001
+            pass  # artifact 실패가 메인 cycle 차단 X
+    try:
+        _emit_smoke_event(result, p)
+    except Exception:  # noqa: BLE001
+        pass  # emit 실패가 메인 cycle 차단 X
+
+    return {"smoke_result": result}
+
+
 def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
     """v13 Phase 1 2단계 — 본부 9 Runtime Verification opt-in 노드.
 
@@ -1266,12 +1373,19 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
         ``enable_rv=False`` (default) 면 즉시 빈 dict 반환 (no-op). LangGraph
         state 변경 0 → 기존 1477 PASS 안정성 회귀 위험 0.
 
+    v13 P23 — 진입 시 *항상* desktop .exe 런타임 스모크 게이트를 먼저 실행한다(기본 ON,
+    enable_rv 와 독립). 스모크 결과는 ``smoke_result`` 로 보존되어 judge 가 소비한다. 이후
+    기존 RV(opt-in) 경로는 그대로 — enable_rv=False 면 스모크 결과만 반환.
+
     Returns:
-        ``{}`` (enable_rv=False) — pass-through
-        ``{"rv_result": RuntimeTestResult, "rv_failure_detected": bool}``
+        ``{**smoke_update}`` (enable_rv=False) — desktop 스모크 결과(있으면) + RV pass-through
+        ``{**smoke_update, "rv_result": RuntimeTestResult, "rv_failure_detected": bool, ...}``
     """
+    # v13 P23 — desktop 런타임 스모크 게이트 (기본 ON, enable_rv 와 독립).
+    smoke_update = _run_desktop_smoke_gate(state)
+
     if not state.get("enable_rv", False):
-        return {}
+        return smoke_update
 
     # 빌드된 .exe 경로 추출 — chain_result 의 executor_result 또는 saved_dir 기반.
     chain: WorkflowResult = state.get("chain_result")  # type: ignore
@@ -1285,7 +1399,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
 
     if exe_path is None:
         # 빌드 산출물 없음 — RV 실행 불가, no-op (회귀 0)
-        return {}
+        return smoke_update
 
     try:
         from src.agents.runtime_verification import run_exe_runtime_test
@@ -1293,7 +1407,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
         rv_result = run_exe_runtime_test(exe_path, timeout_sec=3.0)
     except Exception:  # noqa: BLE001
         # RV 실패가 메인 cycle 차단 X — silent + no-op
-        return {}
+        return smoke_update
 
     failure_detected = rv_result.verdict in ("SILENT_FAIL", "CRASH")
 
@@ -1342,6 +1456,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
             pass  # Strategist 실패가 메인 cycle 차단 X
 
     return {
+        **smoke_update,  # v13 P23 — desktop 스모크 결과 보존 (enable_rv 경로에서도)
         "rv_result": rv_result,
         "rv_failure_detected": failure_detected,
         "consecutive_rv_failures": consecutive,
@@ -1789,6 +1904,73 @@ def _apply_build_failure_override(
     )
 
 
+def _apply_smoke_failure_override(
+    decision: JudgmentDecision,
+    smoke_result: Any,
+    *,
+    gap: Optional[GapReport] = None,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
+) -> JudgmentDecision:
+    """v13 P23 — desktop 런타임 스모크 FAIL 시 COMPLETE 를 차단하고 에러를 must-fix 로 주입.
+
+    ``_apply_build_failure_override`` 의 형제 override (같은 자리·order discipline 으로 judge
+    노드에서 호출). 빌드 .exe 산출은 성공했지만 *실행하면 크래시/치명 에러* 인 경우 — Gap
+    Analyst 가 COMPLETE 라 해도 사용자 손에서 동작하지 않으므로 COMPLETE 는 거짓.
+
+    적용 조건 (모두 충족):
+        - ``decision.verdict == Verdict.COMPLETE`` (COMPLETE 만 차단; IMPROVE/BLOCKED 는 그대로).
+        - ``smoke_result`` 가 not None 이고 ``verdict == "FAIL"`` (PASS/SKIPPED/미실행 → 원본 유지).
+
+    동작:
+        - 예산 남음(iter < max) → IMPROVE_NEEDED. 에러를 ``next_action`` 에 실어 P12 conduit
+          (next_action → _format_feedback_for_next_iteration → feedback → run_chain)로 다음
+          iteration CTO/Engineer 에 must-fix 주입 (자체 주입 로직 신설 0).
+        - 예산 소진 → BLOCKED(BUILD_FAILED) + 마지막 런타임 에러 첨부.
+    예외는 원본 decision 반환 (override 실패가 cycle 차단 X).
+    """
+    try:
+        if decision is None or decision.verdict != Verdict.COMPLETE:
+            return decision
+        if smoke_result is None or getattr(smoke_result, "verdict", None) != "FAIL":
+            return decision  # PASS / SKIPPED / 미실행 → COMPLETE 유지 (회귀 0)
+
+        err = (
+            getattr(smoke_result, "error_excerpt", "")
+            or getattr(smoke_result, "reason", "")
+            or "(런타임 에러 상세 없음)"
+        )[:1500]
+        signal = getattr(smoke_result, "signal", "")
+        exit_code = getattr(smoke_result, "exit_code", None)
+        cur_iter = getattr(gap, "iteration", 0) if gap is not None else 0
+        head = (
+            f"🖥️ 데스크탑 런타임 스모크 FAIL (signal={signal}, exit={exit_code}) — 빌드된 .exe 가 "
+            "실행 즉시/실행 중 크래시 또는 치명 에러. Gap Analyst 는 COMPLETE 였으나 사용자가 앱을 "
+            "열면 동작하지 않음."
+        )
+        if cur_iter < max_iterations:
+            return JudgmentDecision(
+                verdict=Verdict.IMPROVE_NEEDED,
+                blocked_cause=BlockedCause.NONE,
+                reason=f"{head} 자가수정 루프 계속 (iter {cur_iter}/{max_iterations}).",
+                next_action=(
+                    "아래 런타임 에러를 *최우선 must-fix* 로 수정한 뒤 재빌드하세요 (원인 코드/쿼리/"
+                    "초기화 경로를 직접 패치). 기존 충족 요구는 회귀 금지:\n" + err
+                ),
+                must_fix_count=max(decision.must_fix_count, 1),
+            )
+        return JudgmentDecision(
+            verdict=Verdict.BLOCKED,
+            blocked_cause=BlockedCause.BUILD_FAILED,
+            reason=f"{head} iteration 예산 소진(iter {cur_iter}/{max_iterations}) — 종료.",
+            next_action=(
+                "마지막 런타임 스모크 에러 (예산 소진 — --max-iterations 증액 시 자가수정 계속):\n" + err
+            ),
+            must_fix_count=max(decision.must_fix_count, 1),
+        )
+    except Exception:  # noqa: BLE001 — override 실패가 cycle 차단 X
+        return decision
+
+
 def _maybe_salvage_web_build(
     decision: JudgmentDecision,
     chain_result: Any,
@@ -2142,6 +2324,14 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
     )
     # v13 Phase 6.E P13 — cap 도달 web 타입체크 전용 실패면 vite-only salvage → dist/ 시 COMPLETE.
     decision = _maybe_salvage_web_build(decision, state.get("chain_result"))
+    # v13 P23 — desktop 런타임 스모크 FAIL 시 COMPLETE 차단 + must-fix 주입.
+    # salvage *이후* 적용 — salvage 가 COMPLETE 로 되살린 빌드라도 실 런타임 크래시면 재차단.
+    decision = _apply_smoke_failure_override(
+        decision,
+        state.get("smoke_result"),
+        gap=gap,
+        max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
+    )
     # v13 Phase 6.E P15 — iteration 품질 기록 (best-iteration 선택용). 깨진 마지막
     # iteration 으로 종단하지 않고 빌드 성공+도메인 충족한 최고 iteration 을 채택하기 위함.
     record = _iteration_quality(
@@ -2378,6 +2568,9 @@ def run_iterative_loop(
     # v13 P20 — codegen 직전 사람 개입 체크포인트 (opt-in, 기본 OFF — 회귀 0)
     intervene: bool = False,
     intervene_timeout: int = 90,
+    # v13 P23 — desktop .exe 런타임 스모크 게이트 (기본 ON — desktop 빌드만; web/none/헤드리스 자동 SKIP)
+    enable_smoke: bool = True,
+    smoke_timeout: int = 8,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -2519,6 +2712,9 @@ def run_iterative_loop(
             # v13 P20 — 사람 개입 체크포인트 (기본 OFF)
             "intervene": intervene,
             "intervene_timeout": intervene_timeout,
+            # v13 P23 — desktop 런타임 스모크 게이트 (기본 ON)
+            "enable_smoke": enable_smoke,
+            "smoke_timeout": smoke_timeout,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.
