@@ -29,7 +29,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from crewai import Crew, Process, Task
 
@@ -57,6 +57,7 @@ from src.workflows._schemas import (
     PytestSuiteOutput,
     ThemeTokensOutput,
     UIUXSpecOutput,
+    qa_review_body_is_empty,
 )
 
 
@@ -870,6 +871,10 @@ def _build_qa_task(
         "    API 호출 / 데이터 저장 방식) 과 코드 산출이 일치하는지 명시적으로 "
         "    검증하고, 불일치 발견 시 ``NEEDS_REVISION`` 으로 차단. 환율 변환기 "
         "    사례 (API 가정 vs 정적 dict 구현) 재발 차단.\n"
+        "  - **NEEDS_REVISION 이면 반드시 실행가능 본문을 채웁니다 (P24):** §3 발견된 이슈에 "
+        "    최소 1개 — `[BLOCKER|MAJOR|MINOR] 파일:라인 — 인용 + 원칙 + 보정안` 형식의 *구체* "
+        "    항목, §4 권장 보정에 대응 보정안. '<본문>'·'...'·'해당 없음' 같은 플레이스홀더만 "
+        "    있는 NEEDS_REVISION 은 *무효* (후속이 무엇을 고칠지 알 수 없음).\n"
         "  - 마지막 줄은 반드시 `Final Answer:` 로 시작하는 한 줄 종합 "
         "    판정(APPROVED / NEEDS_REVISION)이어야 합니다."
     )
@@ -882,7 +887,9 @@ def _build_qa_task(
         description=base_description + directive,
         expected_output=(
             "5단 구조의 한국어 리뷰 보고서. 마지막 줄에 `Final Answer:`로 시작하는 "
-            "종합 판정(APPROVED 또는 NEEDS_REVISION) 포함."
+            "종합 판정(APPROVED 또는 NEEDS_REVISION) 포함. NEEDS_REVISION 이면 §3 발견된 이슈·"
+            "§4 권장 보정에 최소 1개 구체 수정 항목(파일:라인 — 증상 — 원인 — 조치)을 반드시 포함 "
+            "(빈/플레이스홀더 본문 금지)."
         ),
         agent=reviewer,
         context=[code_task],
@@ -1182,6 +1189,116 @@ def _maybe_regenerate_on_degenerate(
         if not _is_degenerate_codegen(new_paths, platform_intent):
             break  # 회복 — 채택
     return gui_code_output, code_paths
+
+
+def _build_qa_empty_body_directive() -> str:
+    """v13 P24 — NEEDS_REVISION 빈 본문 재생성 교정 지시 (구체 수정 항목 강제)."""
+    return (
+        "\n\n## 🚨 재생성 directive (P24) — 빈 본문 NEEDS_REVISION 차단\n"
+        "이전 응답은 `NEEDS_REVISION` 판정만 있고 *실행가능한 수정 지침이 없었습니다* "
+        "(§3 발견된 이슈·§4 권장 보정이 비었거나 플레이스홀더). 후속 오케스트레이션이 *무엇을* "
+        "고쳐야 할지 알 수 없습니다. 다음을 *반드시* 채우세요:\n"
+        "  - **§3 발견된 이슈**: 최소 1개 — `**[BLOCKER|MAJOR|MINOR]** \\`파일:라인\\` — 인용 + "
+        "왜 문제(원칙) + 어떻게 고칠지(조치)` 형식의 *구체* 항목.\n"
+        "  - **§4 권장 보정**: §3 의 각 이슈에 대응하는 *실행가능* 보정(우선순위 번호, 가능하면 "
+        "코드 스니펫).\n"
+        "'<본문>'·'...'·'해당 없음' 같은 플레이스홀더는 금지. APPROVED 라면 그대로 APPROVED 로 내세요."
+    )
+
+
+def _synthesize_qa_fallback_body(original: str) -> str:
+    """v13 P24 — 재시도 소진 후에도 빈 본문이면 *비어있지 않은 실행가능* 보강 본문 합성.
+
+    빈 verdict-only 를 다음 iteration(Gap Analyst) 에 *절대 전파하지 않기* 위함. 구체 결함은
+    미상이지만 '스펙·킥오프 합의 대비 전면 대조 + 직전 빌드 신호 우선 must-fix' 라는 실행가능
+    방향을 제공한다.
+    """
+    return (
+        "NEEDS_REVISION\n\n"
+        "## 코드 리뷰 보고서 (⚠️ 자동 보강 — QA 본문 누락 안전망 P24)\n\n"
+        "### 1. 종합 판정\n\n"
+        "QA 리뷰어가 `NEEDS_REVISION` 을 냈으나 구체 수정 항목 생성에 반복 실패(재시도 소진). "
+        "빈 본문을 다음 iteration 에 전파하지 않기 위해 실행가능 지침으로 자동 보강함.\n\n"
+        "### 3. 발견된 이슈\n\n"
+        "- **[MAJOR]** `(파일 미상)` — QA 가 결함 위치를 특정하지 못함. 코드를 스펙·킥오프 합의"
+        "(기술스택/데이터 저장/외부 API 가정)와 *전면 대조*해 불일치를 직접 식별할 것.\n\n"
+        "### 4. 권장 보정\n\n"
+        "1. 스펙·킥오프 합의 대비 코드의 표현/데이터/통신 계층을 재검토하고 불일치를 수정.\n"
+        "2. 직전 빌드의 알려진 신호(빌드 실패·스모크 FAIL·gap 미충족)를 우선 must-fix 로 처리.\n"
+        "3. 전체 코드를 fenced 블록으로 빠짐없이 재산출.\n\n"
+        "### 5. 미검토 영역\n\n원본 QA 산출(verdict-only) 보존: "
+        f"{(original or '').strip()[:200] or '(빈 산출)'}\n"
+    )
+
+
+def _maybe_regenerate_on_qa_empty_body(
+    qa_review_task: Any,
+    qa_review: str,
+    *,
+    workflow_dir: Path,
+    verbose: bool,
+    max_retries: int = 1,
+    _regen_fn: Optional[Callable[[Any], str]] = None,
+) -> str:
+    """v13 P24 — QA verdict=NEEDS_REVISION 인데 *본문이 빈* 경우 안전망.
+
+    진단(ERP 런 151255 = 14B "NEEDS_REVISION" 단독): LLM 이 비결정적으로 본문을 비움(layer ①).
+    구조적 차단: ① 빈 본문 감지 → ② reviewer 를 *구체 항목 강제* 지시로 max_retries 회 재호출 →
+    ③ 그래도 비면 *비어있지 않은* 보강 본문 합성 + fail-loud 아티팩트. **빈 본문을 다음 iteration
+    에 절대 전파하지 않는다.** NEEDS_REVISION 아니면 즉시 입력 반환(회귀 0).
+
+    pytest 는 실 Crew 미호출(degenerate 재생성과 동일 관례). 단위 테스트는 ``_regen_fn``
+    (task→새 리뷰 텍스트) 을 주입해 재시도/폴백 루프를 결정론적으로 검증한다(retry_task_if_short
+    의 kickoff_fn 주입과 동일 패턴).
+
+    Returns:
+        보강/회복된 qa_review (NEEDS_REVISION 인 경우 항상 비어있지 않은 본문 보장).
+    """
+    import sys
+
+    if not qa_review_body_is_empty(qa_review):
+        return qa_review  # APPROVED/정상 본문 — no-op (회귀 0)
+    if _regen_fn is None and "pytest" in sys.modules:
+        return qa_review  # 프로덕션 전용 (실 Crew). 테스트는 _regen_fn 주입으로 우회.
+
+    for _attempt in range(max_retries):
+        try:
+            if _regen_fn is not None:
+                new_review = _regen_fn(qa_review_task)
+            else:
+                reviewer = getattr(qa_review_task, "agent", None)
+                if reviewer is None:
+                    break
+                regen_task = Task(
+                    description=qa_review_task.description + _build_qa_empty_body_directive(),
+                    expected_output=qa_review_task.expected_output,
+                    agent=reviewer,
+                    context=qa_review_task.context,
+                    # 원본과 동일하게 layer ② validator 를 재시도에도 적용 (R6 #4 — output_pydantic 전파)
+                    output_pydantic=getattr(qa_review_task, "output_pydantic", None),
+                )
+                Crew(
+                    agents=[reviewer], tasks=[regen_task],
+                    process=Process.sequential, verbose=verbose,
+                ).kickoff()
+                new_review = _task_output_text(regen_task)
+        except Exception:  # noqa: BLE001 — 재생성 실패가 메인 흐름 차단 X
+            continue
+        if new_review and not qa_review_body_is_empty(new_review):
+            return new_review  # 회복 — 채택
+        if new_review:
+            qa_review = new_review  # 여전히 비어도 마지막 시도 보존
+
+    # 소진 — 여전히 빈 본문이면 fail-loud + 비어있지 않은 보강 본문 (전파 차단의 최후 보루).
+    try:
+        (workflow_dir / "04b_qa_empty_body.txt").write_text(
+            "⚠️ P24 — QA NEEDS_REVISION 빈 본문 (재시도 소진). 자동 보강 본문으로 대체.\n\n"
+            f"--- 원본 QA 산출 ---\n{qa_review}\n",
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return _synthesize_qa_fallback_body(qa_review)
 
 
 def _build_product_anchor(user_request: str) -> str:
@@ -1732,6 +1849,11 @@ def _run_classic_chain(
     qa_review = _task_output_text(qa_review_task) or (
         getattr(crew_result, "raw", None) or str(crew_result)
     )
+    # v13 P24 — NEEDS_REVISION 빈 본문 안전망: 빈 본문이면 재생성 1회 → 그래도 비면 보강 본문.
+    # 빈 verdict-only 를 04_qa_review.md / 다음 iteration 에 절대 전파하지 않음 (회귀 0: 정상 본문 no-op).
+    qa_review = _maybe_regenerate_on_qa_empty_body(
+        qa_review_task, qa_review, workflow_dir=workflow_dir, verbose=verbose
+    )
 
     code_paths = _save_classic_artifacts(
         workflow_dir,
@@ -1820,6 +1942,11 @@ def _run_cli_branch_chain_with_ui_context(
     pytest_suite = _task_output_text(pytest_author_task)
     qa_review = _task_output_text(qa_review_task) or (
         getattr(crew_result, "raw", None) or str(crew_result)
+    )
+    # v13 P24 — NEEDS_REVISION 빈 본문 안전망: 빈 본문이면 재생성 1회 → 그래도 비면 보강 본문.
+    # 빈 verdict-only 를 04_qa_review.md / 다음 iteration 에 절대 전파하지 않음 (회귀 0: 정상 본문 no-op).
+    qa_review = _maybe_regenerate_on_qa_empty_body(
+        qa_review_task, qa_review, workflow_dir=workflow_dir, verbose=verbose
     )
 
     code_paths = _save_classic_artifacts(
@@ -1958,6 +2085,11 @@ def _run_gui_branch_chain(
     pytest_suite = _task_output_text(pytest_author_task)
     qa_review = _task_output_text(qa_review_task) or (
         getattr(crew_result, "raw", None) or str(crew_result)
+    )
+    # v13 P24 — NEEDS_REVISION 빈 본문 안전망: 빈 본문이면 재생성 1회 → 그래도 비면 보강 본문.
+    # 빈 verdict-only 를 04_qa_review.md / 다음 iteration 에 절대 전파하지 않음 (회귀 0: 정상 본문 no-op).
+    qa_review = _maybe_regenerate_on_qa_empty_body(
+        qa_review_task, qa_review, workflow_dir=workflow_dir, verbose=verbose
     )
 
     # 산출 저장 — 기존 00~02·04 유지 (engineer_output 자리는 빈 문자열)
