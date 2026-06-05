@@ -16,16 +16,18 @@ SKIPPED (COMPLETE 차단 안 함):
   - .exe 미존재 / 비-win32(헤드리스·CI) / 실행 예외 / 알 수 없는 verdict.
 PASS = 타임아웃 동안 생존 + 위 FAIL 신호 없음.
 
-설계 원칙 & 한계(정직 표기):
-  - 기존 ``run_exe_runtime_test`` (launch + capture + timeout + 프로세스 *트리* kill) *재사용* —
-    spawn 로직 신설 X. 트리 kill 은 PyInstaller onefile 부트로더의 실 앱 자식 orphan(좀비)을
-    psutil 로 best-effort 정리(미설치 시 직접 자식만).
-  - 창 제목 감지는 ``pygetwindow`` best-effort. **PID 귀속 불가 → 데스크탑 전역 창을 본다**:
-    실행 전 스냅샷 대비 *새 창* 만 신호화하나, 8s 윈도우 동안 다른 앱이 띄운 오류성 제목 창도
-    잡힐 수 있어 false FAIL 여지가 있다(단어경계 + benign 화이트리스트로 완화). 미설치/비-win32
-    면 빈 신호(FAIL 아님).
+설계 원칙 (v13 P23 live fix 반영):
+  - 기존 ``run_exe_runtime_test`` *재사용* — spawn 로직 신설 X. **프로세스 트리 종료는 spawn 전
+    생성한 Win32 Job Object(CREATE_SUSPENDED 로 실행 전 할당 → race 0) + ``taskkill /T /F`` 로
+    커널 차원 보장** → onefile 부트로더의 detached 실 앱 자식까지 확실히 정리(스모크 후 생존 0).
+    psutil 은 비-win32 / 최종 best-effort (이 환경엔 psutil 미설치 → Job/taskkill 가 주경로).
+  - 창 감지는 **Job 멤버 PID(우리 프로세스 트리)가 소유한 창만** 본다(``_scoped_error_window`` =
+    win32gui+win32process 로 창→PID 귀속). owned PID 는 ``run_exe_runtime_test`` 가 넘기는 **Job
+    프로세스 리스트**(kernel-authoritative — stale ppid/PID 재사용 무관, reparented 자식 포함). 무관
+    한 다른 앱 창은 절대 보지 않아 stray-창 false FAIL 근절. 단어경계 + benign 화이트리스트로 제목
+    오탐도 완화. pywin32 미가용/비-win32 면 빈 신호(FAIL 아님 — 보수적).
   - 검증 실패가 메인 cycle 을 막지 않는다 (예외 → SKIPPED). SKIPPED 는 FAIL 아님(재빌드 미발동).
-  - ``_runtime_test`` / ``_enum_titles`` 주입으로 실 subprocess/창 없이 결정론 단위 검증.
+  - ``_runtime_test`` / ``_error_window_probe`` 주입으로 실 subprocess/창 없이 결정론 단위 검증.
 """
 
 from __future__ import annotations
@@ -86,29 +88,54 @@ class DesktopSmokeResult:
         return self.verdict == VERDICT_FAIL
 
 
-def enumerate_window_titles() -> list[str]:
-    """현재 데스크탑 최상위 창 제목 best-effort 열거. pygetwindow 미설치/실패 시 []."""
-    try:
-        import pygetwindow as gw  # type: ignore  # noqa: PLC0415
-
-        return [t for t in (gw.getAllTitles() or []) if t and t.strip()]
-    except Exception:  # noqa: BLE001 — best-effort, 창 열거 실패가 FAIL 을 만들지 않음
-        return []
-
-
 def _match_error_window(titles: list[str]) -> str:
     """창 제목 목록에서 오류 다이얼로그로 보이는 첫 제목 반환 (없으면 "").
 
-    한계(정직 표기): pygetwindow 는 PID 귀속을 못 하므로 *데스크탑 전역* 창을 본다 — 실행 전
-    스냅샷 대비 *새 창* 만 신호로 삼아 오탐을 줄이나, 8s 윈도우 동안 다른 앱이 띄운 오류성
-    제목 창까지 잡힐 수 있다(best-effort). 단어경계 + benign 화이트리스트로 추가 완화.
+    단어경계 정규식 + benign 화이트리스트('Error Console/List/Log' 등 정상 도구 창 제외)로
+    제목 오탐을 줄인다. (호출 측은 *우리 PID 트리가 소유한* 창만 넘겨야 한다 — _scoped_error_window.)
     """
     for t in titles:
         if _WINDOW_BENIGN_RE.search(t):
-            continue  # 'Error Console/List/Log' 등 정상 도구 창 제외
+            continue
         if any(p.search(t) for p in _WINDOW_ERROR_PATTERNS):
             return t
     return ""
+
+
+def _scoped_error_window(pid_set: set) -> str:
+    """우리 프로세스 트리(``pid_set``)가 *소유한* 최상위 창 중 오류 다이얼로그 제목 (없으면 "").
+
+    v13 P23 (live fix): win32gui+win32process 로 **창→PID 귀속** → 무관한 *다른 앱* 창은 절대
+    보지 않는다(전역 열거의 stray-창 오탐 근절). pywin32 미가용/비-win32/빈 pid_set 면 ""(신호
+    없음 — 보수적, false FAIL 금지).
+    """
+    if sys.platform != "win32" or not pid_set:
+        return ""
+    try:
+        import win32gui  # type: ignore  # noqa: PLC0415
+        import win32process  # type: ignore  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — pywin32 미설치 → 신호 없음
+        return ""
+
+    hits: list[str] = []
+
+    def _cb(hwnd, _ctx):
+        try:
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+            _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if pid in pid_set:
+                title = win32gui.GetWindowText(hwnd) or ""
+                if title.strip() and _match_error_window([title]):
+                    hits.append(title)
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except Exception:  # noqa: BLE001
+        return ""
+    return hits[0] if hits else ""
 
 
 def _combine_smoke_verdict(rt: Any, window_title_hit: str, *, timeout_sec: float) -> DesktopSmokeResult:
@@ -200,14 +227,19 @@ def run_desktop_smoke_gate(
     timeout_sec: float = 8.0,
     settle_sec: float = 1.5,
     _runtime_test: Optional[Callable[..., Any]] = None,
-    _enum_titles: Optional[Callable[[], list[str]]] = None,
+    _error_window_probe: Optional[Callable[[set], str]] = None,
 ) -> DesktopSmokeResult:
     """데스크탑 .exe 를 잠깐 띄워 크래시/치명 에러 검출 → DesktopSmokeResult.
 
-    비-win32(헤드리스/CI) 또는 .exe 미존재면 graceful SKIPPED (FAIL 아님). ``_runtime_test``
-    주입 시 플랫폼 게이트 우회(web QA 의 capture_fn 주입과 동일 관례 — 단위 테스트용).
+    비-win32(헤드리스/CI) 또는 .exe 미존재면 graceful SKIPPED (FAIL 아님). ``_runtime_test`` 주입
+    시 플랫폼 게이트 우회(단위 테스트용). 창 감지는 **런치된 .exe 의 PID 트리가 소유한 창만**
+    본다(``_scoped_error_window``) — 무관한 다른 앱의 오류성 창에 false FAIL 하지 않는다.
+    owned PID 집합은 ``run_exe_runtime_test`` 가 ``on_spawn(pid, owned_pids_fn)`` 으로 넘기는 **Job
+    멤버 리스트**(kernel-authoritative — stale ppid/PID 재사용 무관). 프로세스 트리 종료(좀비 0)도
+    그쪽 Job/taskkill 가 담당. 검출 누락 방지를 위해 스캔 스레드(실행 중 일시 다이얼로그 포착) +
+    **종료 직후 최종 1회 probe**(정상상태 보장, 테스트 결정론)를 함께 쓴다.
     """
-    enum_titles = _enum_titles or enumerate_window_titles
+    probe = _error_window_probe or _scoped_error_window
 
     if _runtime_test is None and sys.platform != "win32":
         return DesktopSmokeResult(
@@ -218,21 +250,24 @@ def run_desktop_smoke_gate(
     if not p.exists():
         return DesktopSmokeResult(VERDICT_SKIPPED, reason=f".exe 미존재: {p}", signal="skipped")
 
-    # (d) 실행 전 창 스냅샷 → 실행 중 *새로* 나타난 오류창만 신호 (오탐 감소).
-    before = set(enum_titles())
+    # run_exe_runtime_test 가 on_spawn(pid, owned_pids_fn) 으로 통지. 기본 owned 는 빈 집합.
+    spawned = {"pid": None, "owned": (lambda: set())}
     window_hit = {"title": ""}
     stop = threading.Event()
 
     def _scan() -> None:
         deadline = time.monotonic() + max(0.0, float(timeout_sec)) + 1.0
-        time.sleep(min(max(0.0, float(settle_sec)), max(0.0, float(timeout_sec))))
+        settle_done_at = time.monotonic() + min(max(0.0, float(settle_sec)), max(0.0, float(timeout_sec)))
         while time.monotonic() < deadline and not stop.is_set():
-            new_titles = [t for t in enum_titles() if t not in before]
-            hit = _match_error_window(new_titles)
-            if hit:
-                window_hit["title"] = hit
-                return
-            time.sleep(0.4)
+            if spawned["pid"] is None:
+                time.sleep(0.05)  # pid 도착 능동 대기
+                continue
+            if time.monotonic() >= settle_done_at:
+                hit = probe(spawned["owned"]())  # Job 멤버(우리 트리) 소유 창만
+                if hit:
+                    window_hit["title"] = hit
+                    return
+            time.sleep(0.2)
 
     scanner = threading.Thread(target=_scan, daemon=True)
     scanner.start()
@@ -243,8 +278,13 @@ def run_desktop_smoke_gate(
 
         runtime_test = run_exe_runtime_test
 
+    def _on_spawn(pid: int, owned_pids_fn=None) -> None:
+        spawned["pid"] = pid
+        if owned_pids_fn is not None:
+            spawned["owned"] = owned_pids_fn
+
     try:
-        rt = runtime_test(p, timeout_sec=timeout_sec)
+        rt = runtime_test(p, timeout_sec=timeout_sec, on_spawn=_on_spawn)
     except Exception as exc:  # noqa: BLE001 — 스모크 실행 실패가 메인 cycle 차단 X
         stop.set()
         return DesktopSmokeResult(
@@ -253,5 +293,11 @@ def run_desktop_smoke_gate(
     finally:
         stop.set()
     scanner.join(timeout=1.0)
+    # 최종 1회 probe 보장 — 짧은 윈도우/스레드 타이밍에도 최소 한 번 검사(결정론).
+    if not window_hit["title"] and spawned["pid"] is not None:
+        try:
+            window_hit["title"] = probe(spawned["owned"]())
+        except Exception:  # noqa: BLE001
+            pass
 
     return _combine_smoke_verdict(rt, window_hit["title"], timeout_sec=timeout_sec)
