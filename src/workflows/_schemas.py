@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -29,6 +29,239 @@ from pydantic import BaseModel, Field
 
 _LEADING_HEADER_RE = re.compile(r"^#{2,4}\s+\d+\.\s+[^\n]+\n+", re.MULTILINE)
 _PYTHON_FENCE_RE = re.compile(r"```python\b", re.IGNORECASE)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v13 P24 — QA NEEDS_REVISION *빈 본문* 판정 (진단: ERP 런 151255 = 14바이트 "NEEDS_REVISION"
+# 단독). 본문 측정은 *길이*가 아니라 verdict 선언·헤더·플레이스홀더·§2 점검표를 뺀 *실 내용 줄
+# 수* 기준(P16 교훈: 헤더 스캐폴드는 길어서 길이 가드 무력 / R2 교훈: 길이 임계는 짧은 실 리뷰를
+# 파괴). 모든 정규식은 *경계 한정* — ReDoS 무관(R3). 안전망(analyze_and_implement)·validator 공유.
+# ══════════════════════════════════════════════════════════════════════════
+
+# verdict 토큰(구두점·강조·공백/하이픈 변형 관용): NEEDS_REVISION / NEEDS-REVISION /
+# NEEDS REVISION / **NEEDS_REVISION** / NEEDS_REVISION: 등. *단어경계 lookaround* 로 'unapproved'·
+# 'disapproved'·'pre-approved' 같은 산문 영단어가 APPROVED 토큰으로 오인되지 않게 한다(R5 #7).
+_QA_VERDICT_RE = re.compile(
+    # 단어경계: 앞은 식별자/구두점-식별자(_·.·-·영숫자), 뒤는 식별자 문자 *또는 .뒤 영숫자*(속성/확장자)
+    # 를 차단하되 'APPROVED.'(문장 종결: .뒤 공백/끝)는 보존 → 'is_approved'·'approved_at'·'approved-flag'·
+    # 'user.approved'·'approved.status'·'approved.py'·'pre-approved' 등을 verdict 토큰으로 오인 안 함(R6#1/R7).
+    r"(?<![A-Za-z0-9_.\-])NEEDS[ \t_\-]{0,3}REVISION(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])"
+    r"|(?<![A-Za-z0-9_.\-])APPROVED(?![A-Za-z0-9_\-]|\.[A-Za-z0-9])",
+    re.IGNORECASE,
+)
+# 심각도 카운트 괄호(KEY=NUM 쌍, {1,12} 경계) — verdict 줄 꼬리에서만 흡수. 'PySide6/Qt5' 처럼
+# *숫자 포함 산문 괄호* 는 KEY=NUM 문법이 아니라 흡수 안 됨 → 실 사유 보존(R3 #4/#5). 경계 한정.
+_QA_COUNT_PAREN_RE = re.compile(r"\(\s*(?:[A-Za-z]+\s*=\s*\d+\s*,?\s*){1,12}\)")
+# verdict 줄 꼬리의 한국어 종결/판정 표현('NEEDS_REVISION 으로 판정합니다' → verdict-only, R3 #2).
+# *꼬리($)만* 흡수(R4 #8). 공백은 literal ' ?'(호출부에서 _QA_WS_RUN_RE 로 선정규화 — R5 #1/#2/#4
+# 의 인접 \s* ReDoS 를 원천 차단): 인접 가변 \s* 런이 없어 백트래킹 폭발이 불가능하다.
+_QA_KO_TAIL_RE = re.compile(r"(?:으로 ?)?(?:판정|승인)? ?(?:합니다|입니다|이다|임|함|다) ?$")
+_QA_BULLET_RE = re.compile(r"^(?:[-*•]\s+|\d+[.)]\s+)")  # 줄머리 리스트/번호 마커
+# 실 내용 = 라틴/CJK *글자* 1자 이상(숫자/언더스코어/기호만으로는 substantive 아님 — R3 #3).
+_QA_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+_QA_WS_RUN_RE = re.compile(r"\s+")  # 공백 런 정규화(placeholder 매칭 전 — R4 #1 ReDoS 차단)
+# 순수 구분선/기호 줄(표 구분선·대시 divider). set 연산 → ReDoS 무관, placeholder 정규식보다 먼저(R3 #8).
+_QA_SEP_CHARS = set("|-:=. \t*_~·•—–+>")
+# 플레이스홀더/공허 *단일 줄* + 흔한 한국어 no-issue 단문. **공백 정규화된 줄에만 적용** — 모든
+# 공백 매처를 *literal-space 0/1*(` ?`)로 두어 인접 \s* 의 catastrophic backtracking 을 원천 차단
+# (R4 #1: 정규화 전 3중 \s* 가 한글 prefix + 공백런에서 O(n²)). 줄 *전체*가 no-issue 선언일 때만 매치.
+_QA_PLACEHOLDER_RE = re.compile(
+    r"^[ >*]{0,16}(?:"
+    r"<[^>]*>|\.{2,}|…|n/?a|tbd|todo|"
+    r"해당 ?없음|수정 ?(?:사항 ?)?(?:없음|불필요)|특이 ?없음|"
+    r"(?:발견된? ?)?(?:이슈|특이사항|문제점?|위반(?:사항)?|취약점|결함)? ?"
+    r"(?:은|는|이|가)? ?없(?:음|습니다|다)"
+    r")[ .>*]*$",
+    re.IGNORECASE,
+)
+# §N 섹션 헤더(번호) — 게이트는 actionable §3/§4 만 보도록 §2 점검 상태표를 건너뛴다(R3 #12).
+# 숫자 {1,3} 경계(R4 #2: \d+ 큰 수 int() ValueError 크래시 차단) + 구분자/공백/끝 lookahead
+# (R4 #3: '### 3가지...' 처럼 숫자에 한글이 붙으면 섹션 헤더로 오인하지 않음).
+_QA_SECTION_HEADER_RE = re.compile(r"^#{1,4}\s*(\d{1,3})(?=[.):]|\s|$)")
+# 번호 없는 헤더의 *제목* 으로 섹션 종류를 식별(R5 #3: 'LLM 이 번호를 안 붙여도' 상태표를 건너뛰게).
+# status 는 *점검표 고유 어구* 로 좁힌다(R7: bare '점검' 은 '취약점 점검' 같은 actionable 헤더와 충돌해
+# 양방향 오분류를 냈음). 3개 QA 에이전트 §2 헤더('항목별 점검 결과'/'OWASP ... 점검 표'/'... 점검 표')를 커버.
+_QA_STATUS_TITLE_RE = re.compile(r"항목별\s*점검|점검\s*표|점검\s*결과\s*표")
+_QA_ACTIONABLE_TITLE_RE = re.compile(r"발견된|권장\s*보정|취약점|위반사항|결함|이슈")  # §3/§4 류
+
+
+def _qa_header_info(s: str):
+    """헤더 줄 분류 → (is_header, kind, inline). kind ∈ {'status','actionable','other'}.
+
+    번호(§2→status, §3/§4→actionable) 우선, 없으면 제목 키워드(R5 #3). inline 은 헤더 줄에
+    *콜론 뒤* 로 붙은 실 텍스트(R5 #5: '### 3. 발견된 이슈: app.py:8 ...' 의 실 finding 보존).
+    """
+    if not s.startswith("#"):
+        return (False, None, "")
+    m = _QA_SECTION_HEADER_RE.match(s)
+    num = int(m.group(1)) if m else None
+    inline = s.split(":", 1)[1].strip() if ":" in s else ""
+    if num == 2:
+        kind = "status"
+    elif num in (3, 4):
+        kind = "actionable"
+    elif num is None and _QA_STATUS_TITLE_RE.search(s):
+        kind = "status"  # 좁힌 점검표 어구 — '취약점 점검' 등 actionable 과 충돌하지 않음(R7)
+    elif num is None and _QA_ACTIONABLE_TITLE_RE.search(s):
+        kind = "actionable"  # '취약점 점검'·'정적 점검에서 발견된 취약점' → actionable(R6 #2/#3)
+    else:
+        kind = "other"
+    return (True, kind, inline)
+
+
+def _canon_verdict(token: str) -> str:
+    """verdict 토큰을 정규형(NEEDS_REVISION / APPROVED)으로. 변형/구두점/카운트 관용.
+
+    두 토큰이 *함께* 등장하면(예: 'NEEDS_REVISION 해소됨 → APPROVED') 모호 → '' 반환:
+    정상 승인을 NEEDS_REVISION 으로 오인해 거짓 거부/거짓 게이팅하지 않기 위함(적대 리뷰 verdict-norm).
+    """
+    if not token:
+        return ""
+    found = set()
+    for m in _QA_VERDICT_RE.finditer(token):
+        t = re.sub(r"[ \t_\-]+", "_", m.group(0).strip().upper())
+        found.add("NEEDS_REVISION" if t.startswith("NEEDS") else "APPROVED")
+    return found.pop() if len(found) == 1 else ""
+
+
+def _qa_verdict_only_token(line: str) -> str:
+    """줄이 verdict *선언만* 담으면 정규 verdict, 아니면 ''. **절차적 → ReDoS 무관**.
+
+    라벨(결과:)·리스트마커·강조(**)·표 셀 파이프·심각도카운트(HIGH=1)·한국어 종결어미를 벗긴
+    잔여에 실 글자가 없으면 verdict-only. 'NEEDS_REVISION 으로 판정합니다.', '| NEEDS_REVISION |',
+    'NEEDS_REVISION (HIGH=1)' → verdict-only. 'NEEDS_REVISION (PySide6 위반)', '... — 타입 누락' → 실 내용.
+    """
+    if not line:
+        return ""
+    t = _QA_WS_RUN_RE.sub(" ", line).strip().strip("|").strip()  # 공백런 선정규화 → 후속 정규식 ReDoS 무관(R5 #1/#2/#4)
+    t = _QA_BULLET_RE.sub("", t, count=1)
+    t = re.sub(r"^(?:결과|판정|verdict) ?[:\-]? ?", "", t, flags=re.IGNORECASE)
+    t = t.replace("*", "").strip()
+    m = _QA_VERDICT_RE.match(t)  # verdict 가 줄을 *선도* 해야 verdict-only 후보
+    if not m:
+        return ""
+    v = _canon_verdict(m.group(0))
+    if not v:
+        return ""
+    rest = t[m.end():].strip()
+    if not rest:
+        return v
+    rest = _QA_COUNT_PAREN_RE.sub("", rest).strip(" .,:;!?()[]<>-—–")  # 심각도 카운트 괄호 흡수 + 구두점
+    rest = _QA_KO_TAIL_RE.sub("", rest).strip()  # *꼬리* 종결어미/판정 표현만 흡수(R4 #8)
+    return v if not _QA_LETTER_RE.search(rest) else ""
+
+
+def _qa_verdict_of(text: str) -> str:
+    """QA 리뷰의 verdict 추출. *줄머리* Final Answer: 우선(산문 중간 인용 제외 — R4 #6),
+    없으면 verdict-only 줄을 수집. 여러 Final Answer/verdict-only 줄이 충돌하면 모호('').
+    """
+    if not text:
+        return ""
+    fas = re.findall(r"(?m)^\s*Final\s+Answer:\s*(.+)", text)  # 줄머리만 — 인용 배제
+    if fas:
+        cans = {c for c in (_canon_verdict(f) for f in fas) if c}
+        if len(cans) == 1:
+            return cans.pop()
+        if len(cans) > 1:
+            return ""  # 충돌하는 Final Answer → 모호
+    found = set()
+    for ln in text.splitlines():
+        tok = _qa_verdict_only_token(ln)
+        if tok:
+            found.add(tok)
+    return found.pop() if len(found) == 1 else ""
+
+
+def _qa_text_has_needs_revision(text: str) -> bool:
+    """텍스트 어디에든 NEEDS_REVISION 토큰이 있는지(모호 verdict + 빈 본문 게이팅용 — R3 #6)."""
+    return any(
+        re.sub(r"[ \t_\-]+", "_", m.group(0).upper()).startswith("NEEDS")
+        for m in _QA_VERDICT_RE.finditer(text or "")
+    )
+
+
+def _qa_text_has_approved(text: str) -> bool:
+    """텍스트 어디에든 APPROVED 토큰이 있는지(모호 verdict 시 승인 흔적 보호용 — R4 #5/#7)."""
+    return any(
+        not re.sub(r"[ \t_\-]+", "_", m.group(0).upper()).startswith("NEEDS")
+        for m in _QA_VERDICT_RE.finditer(text or "")
+    )
+
+
+def _qa_line_is_substantive(s: str) -> bool:
+    """한 줄이 *실 내용*(actionable finding 후보)인지.
+
+    제외: 공백·순수기호/구분선·헤더·메타·verdict 선언만·플레이스홀더/단문 no-issue·글자 없는 줄.
+    """
+    if not s:
+        return False
+    t = s.strip()
+    if not t:
+        return False
+    if set(t) <= _QA_SEP_CHARS:  # 순수 구분선/기호 (set 연산, ReDoS 무관, placeholder 보다 먼저)
+        return False
+    if t.startswith("#") or t.startswith(("Final Answer:", "Thought:")):
+        return False
+    core = _QA_BULLET_RE.sub("", t, count=1).strip()
+    if _qa_verdict_only_token(core):  # verdict 선언만 (R3 #1/#2/#14)
+        return False
+    if _QA_PLACEHOLDER_RE.match(_QA_WS_RUN_RE.sub(" ", core)):  # 플레이스홀더/단문 no-issue (공백 정규화)
+        return False
+    return _QA_LETTER_RE.search(core) is not None  # 실 글자(letter) 보유 (R3 #3)
+
+
+def qa_field_is_empty(text: str) -> bool:
+    """단일 본문 필드가 비었는지 — 실 내용 줄이 하나도 없으면 True(짧은 실 finding 은 보존)."""
+    if not text or not text.strip():
+        return True
+    return not any(_qa_line_is_substantive(ln) for ln in text.splitlines())
+
+
+def qa_review_body_is_empty(text: str) -> bool:
+    """QA 리뷰가 **NEEDS_REVISION 인데 실행가능 본문이 비었는지** (런타임 게이트).
+
+    깨끗한 APPROVED 는 항상 False(회귀 0). NEEDS_REVISION(또는 *모호한데 NEEDS_REVISION 만 있고
+    APPROVED 흔적이 없을* 때 — R3 #6/R4 #5) 이면, §2 항목별 점검(상태표)을 제외한 *실 내용 줄 수* 로
+    판정 — 0이면 빈 본문. §3/§4(발견된 이슈·권장 보정) 섹션 헤더가 있으면 그 두 섹션만 계수해
+    generation validator 와 동일 의미를 공유한다(R3 #12). verdict 선언만·헤더·메타·플레이스홀더·
+    순수기호는 실 내용이 아니다. **길이 임계를 쓰지 않는다**(R2). 모든 정규식 경계 한정 → ReDoS 무관(R3/R4).
+
+    (알려진 잔여: ① actionable 신호 없는 '이슈 없습니다' 류 *산문 한 문장* 위장, ② verdict 필드에
+    두 토큰 공존(NEEDS_REVISION + APPROVED)인 빈 본문, ③ 영문 토큰이 아닌 승인(승인·합격·OK 등 —
+    프롬프트가 영문 Final Answer 를 강제하므로 off-spec) — 모두 정상 승인을 NEEDS_REVISION 으로
+    *뒤집지 않기* 위해 게이트 비대상으로 두는 의도된 트레이드오프. validator·convergence judge 가 보조.
+    ④ degraded(번호 없는 헤더) 경로의 미세 경계: markdown underscore-italic verdict(`_NEEDS_REVISION_`)
+    미인식, status 표 제목에 인라인으로 적은 실 finding 누락 — 프로덕션은 번호 헤더라 비해당, 안전망 쪽 fail.)
+    """
+    if not text or not text.strip():
+        return False  # 빈 산출은 별도(단축 가드) — verdict 미상이라 QA 게이트 비대상
+    v = _qa_verdict_of(text)
+    if v == "APPROVED":
+        return False  # 깨끗한 승인 — 게이트 비대상
+    if v != "NEEDS_REVISION":
+        # 모호/미상 — NEEDS_REVISION 토큰이 있고 APPROVED 흔적이 *없을* 때만 게이트(승인 거짓 게이팅·verdict 플립 방지)
+        if not (_qa_text_has_needs_revision(text) and not _qa_text_has_approved(text)):
+            return False
+    lines = [ln.strip() for ln in text.splitlines()]
+    infos = [_qa_header_info(s) for s in lines]
+    # actionable(§3/§4 류) 헤더가 하나라도 있으면 그 섹션만, 없으면 status(§2 점검표) 제외 전체 계수.
+    has_actionable = any(h[0] and h[1] == "actionable" for h in infos)
+
+    def _counts(kind: str) -> bool:
+        return (kind == "actionable") if has_actionable else (kind != "status")
+
+    section_kind = "other"
+    for s, (is_h, kind, inline) in zip(lines, infos):
+        if not s:
+            continue
+        if is_h:
+            section_kind = kind
+            if _counts(kind) and inline and _qa_line_is_substantive(inline):
+                return False  # 헤더 줄에 인라인으로 붙은 실 finding (R5 #5)
+            continue
+        if _counts(section_kind) and _qa_line_is_substantive(s):
+            return False  # actionable 실 내용 줄 존재 — 빈 본문 아님
+    return True
 
 
 def _strip_leading_section_header(text: str) -> str:
@@ -324,6 +557,22 @@ class CodeReviewOutput(BaseModel):
             "없으면 '없음'. 섹션 헤더 없이 본문만"
         ),
     )
+
+    @model_validator(mode="after")
+    def _require_actionable_body_when_needs_revision(self) -> "CodeReviewOutput":
+        """v13 P24 (②) — NEEDS_REVISION 인데 §3 발견된 이슈·§4 권장 보정이 *모두* 비면 거부.
+
+        CrewAI output_pydantic 은 validation 실패 시 LLM 에 재요청한다 → 빈 본문 NEEDS_REVISION
+        을 생성 단계에서 차단. (APPROVED 는 비대상 — recommended_fixes='해당 없음' 정상.)
+        """
+        if _canon_verdict(self.verdict or "") == "NEEDS_REVISION" and (
+            qa_field_is_empty(self.issues_found) and qa_field_is_empty(self.recommended_fixes)
+        ):
+            raise ValueError(
+                "NEEDS_REVISION 인데 §3 발견된 이슈·§4 권장 보정이 모두 비었습니다 — "
+                "최소 1개 구체 수정 항목(파일:라인 — 증상 — 원인 — 조치)을 반드시 채우세요."
+            )
+        return self
 
     def to_markdown(self) -> str:
         return (
