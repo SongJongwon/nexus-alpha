@@ -49,6 +49,14 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      # v13 P25 — Node 보장: 배포성 게이트의 실 런타임 probe 통합 테스트
+      # (test_p25 TestRealProbeIntegration, skipif node 부재)가 *결정적으로* 실행되도록.
+      # 없으면 ubuntu 이미지에 node 가 우연히 있을 때만 돌아 핵심 spawn 경로 커버리지가 환경 의존.
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Show Python / pip versions
         run: |
           python --version

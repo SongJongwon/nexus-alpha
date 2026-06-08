@@ -1004,6 +1004,19 @@ def _build_web_platform_directive() -> str:
         "요청에서 결정론적으로 분류됐고, 산출 schema 의 code_blocks 는 *자유 형식* 이라 "
         "TypeScript/HTML/CSS 를 그대로 담을 수 있습니다. web 타겟에서 데스크탑 선택의 "
         "정당한 근거는 존재하지 않습니다."
+        "\n\n## 📦 배포성 계약 (P25, 필수 — 비개발자 원클릭 실행)\n"
+        "산출물은 **문서화된 *단일* 프로덕션 명령으로 비개발자가 그대로 실행**할 수 있어야 합니다 "
+        "(빌드 후 배포성 게이트가 *프로덕션 경로* 로 검증 — dev 서버 아님):\n"
+        "  - **서버가 빌드된 프론트(`dist/`)를 *정적 서빙* + SPA fallback** 으로 루트 `/` 에서 앱을 "
+        "응답해야 합니다. 예(express): `app.use(express.static(path.join(dir,'dist')))` + (API 라우트 *뒤*) "
+        "`app.use((q,r)=>r.sendFile(path.join(dir,'dist','index.html')))`. (Express 5 는 `app.get('*', …)` 가 "
+        "에러이므로 *미들웨어형 fallback* 사용.) **서버가 `/api` 만 제공하고 dist 를 서빙하지 않으면 "
+        "`node server.js` 후 루트가 'Cannot GET /' 가 되어 FAIL.**\n"
+        "  - **단일 명령**: `package.json` 의 `\"start\"`(예: `\"start\": \"node server.js\"`) *하나* 로 "
+        "프론트+API 가 **한 포트**에서 떠야 합니다. `npm run dev` / `concurrently` / `vite dev` 등 "
+        "**dev 전용 도구 의존 금지** (dev 서버는 배포 산출물이 아님).\n"
+        "  - **`README.md`** 에 그 *단일 실행 명령 1줄*(`npm start`)을 명시하세요.\n"
+        "  - 빌드는 `npm run build → dist/` 그대로 두고, *프로덕션 서버가 그 dist 를 서빙* 하게 만드세요."
     )
 
 

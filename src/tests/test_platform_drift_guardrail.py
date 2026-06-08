@@ -88,8 +88,14 @@ class TestT2PlatformConstraintInjection:
         assert "금지" in constraint
         assert "우선" in constraint
 
-    def test_desktop_no_constraint(self) -> None:
-        assert _build_platform_constraint("desktop") == ""
+    def test_desktop_no_web_constraint(self) -> None:
+        """desktop 은 web 드리프트 제약(Three.js/PyQt 금지)을 받지 않는다 (회귀 0).
+
+        단, v13 P25 로 desktop *단일 폼팩터* 계약(콘솔/GUI 혼재 금지)은 가산됨 — 별도 검증.
+        """
+        c = _build_platform_constraint("desktop")
+        assert "Three.js" not in c and "PyQt" not in c  # web 드리프트 제약 아님
+        assert "단일 폼팩터" in c and "혼재 금지" in c  # v13 P25 데스크탑 폼팩터 계약
 
     def test_unspecified_no_constraint(self) -> None:
         assert _build_platform_constraint("unspecified") == ""

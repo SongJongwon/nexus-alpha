@@ -35,6 +35,11 @@ from src.agents.runtime_verification.desktop_smoke_gate import (
     DesktopSmokeResult,
     run_desktop_smoke_gate,
 )
+from src.agents.runtime_verification.packageability_gate import (
+    PackageabilityResult,
+    analyze_web_packageability,
+    run_packageability_gate,
+)
 
 RV_DEPARTMENT: str = "rv"
 """Telemetry 부서 식별자 — 본부 9 의 모든 agent 가 emit 시 사용."""
@@ -57,6 +62,10 @@ __all__ = [
     # v13 P23 — Desktop .exe runtime smoke gate
     "DesktopSmokeResult",
     "run_desktop_smoke_gate",
+    # v13 P25 — 산출물 배포성(packageability) 게이트
+    "PackageabilityResult",
+    "analyze_web_packageability",
+    "run_packageability_gate",
     # Department identifier
     "RV_DEPARTMENT",
 ]
