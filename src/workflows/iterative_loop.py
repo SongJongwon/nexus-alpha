@@ -314,6 +314,10 @@ class _LoopState(TypedDict, total=False):
     enable_smoke: bool
     smoke_timeout: int
     smoke_result: Any  # DesktopSmokeResult | None — judge 의 _apply_smoke_failure_override 가 소비
+    # v13 P25 — 산출물 배포성 게이트 (기본 ON; web 빌드 한정, desktop/none 자동 SKIP).
+    # deployability_result: PackageabilityResult | None — judge 의 _apply_deployability_failure_override 가 소비.
+    enable_packageability: bool
+    deployability_result: Any
 
     # 누적 이력 (stagnation 감지·결과 요약용)
     satisfied_history: list[int]  # iteration 별 satisfied_count
@@ -874,6 +878,15 @@ def _build_platform_constraint(platform_intent: str) -> str:
         crash analysis 2026-05-29 — "Three.js BIM 뷰어"(web) 요청에 엔지니어가
         7/7 PyQt 데스크탑으로 드리프트. 명시 플랫폼(web)이 Track 기본값을 이기게 함.
     """
+    if platform_intent == "desktop":
+        # v13 P25 — desktop 단일 폼팩터 계약(콘솔/GUI 혼재 금지). 콘솔+Tk 혼재 산출 방지.
+        return (
+            "\n\n## 🖥️ 폼팩터 계약 (P25, 데스크탑 — 단일 폼팩터)\n"
+            "타겟 = **데스크탑 단일 `.exe`**. **하나의 폼팩터만** 선택하세요 — *콘솔(argparse/"
+            "print/input) 과 GUI(Tkinter/PySide) 를 혼재 금지*. 엔트리는 선택한 폼팩터로 일관되게 "
+            "(GUI면 창이 뜨고, 콘솔이면 콘솔로) 동작해야 하며, 빌드 후 스모크 게이트가 *실행되는 "
+            "단일 산출물* 을 검증합니다."
+        )
     if platform_intent != "web":
         return ""
     return (
@@ -883,6 +896,11 @@ def _build_platform_constraint(platform_intent: str) -> str:
         "**PyQt / PySide / Tkinter 등 데스크탑 GUI 프레임워크는 절대 금지** "
         "(.exe 데스크탑 셸 포함).\n"
         "Track A/B 의 데스크탑 산출 기본값보다 *이 플랫폼 제약이 우선* 합니다."
+        "\n\n## 📦 배포성 (P25, web — 단일 명령 실행)\n"
+        "프로덕션 서버가 빌드된 `dist/` 를 *정적 서빙*(express.static + SPA fallback) 하고, "
+        "`package.json` 의 단일 `start`(예: `node server.js`) 로 프론트+API 가 한 포트에서 떠야 "
+        "합니다. `npm run dev`/`vite dev`/`concurrently` 등 **dev 전용 의존 금지**. `README` 에 "
+        "단일 실행 명령 명시. (server 가 dist 미서빙 → 루트 'Cannot GET /' → 배포성 게이트 FAIL.)"
     )
 
 
@@ -1361,6 +1379,83 @@ def _run_desktop_smoke_gate(state: _LoopState) -> dict[str, Any]:
     return {"smoke_result": result}
 
 
+def _write_deployability_artifact(saved_dir: Path, result: Any) -> None:
+    """v13 P25 — `28_deployability_<verdict>.md` 작성 (27_desktop_smoke 옆, 가시 배포성 증거)."""
+    verdict_lower = str(getattr(result, "verdict", "unknown")).lower()
+    artifact_path = saved_dir / f"28_deployability_{verdict_lower}.md"
+    body_lines = [
+        "# 산출물 배포성 게이트 (v13 P25)",
+        "",
+        f"- **verdict**: `{getattr(result, 'verdict', '?')}`",
+        f"- **signal**: `{getattr(result, 'signal', '')}`",
+        f"- **command**: `{getattr(result, 'command', '') or '(없음)'}`",
+        f"- **serves_dist**: {getattr(result, 'serves_dist', None)}",
+        f"- **dev_only**: {getattr(result, 'dev_only', None)}",
+        f"- **root_status**: `{getattr(result, 'root_status', '')}`",
+        f"- **reason**: {getattr(result, 'reason', '')}",
+        "",
+        "## error_excerpt (must-fix)",
+        "",
+        "```",
+        (getattr(result, "error_excerpt", "") or getattr(result, "reason", "") or "(없음)").strip()[:2000],
+        "```",
+    ]
+    artifact_path.write_text("\n".join(body_lines), encoding="utf-8")
+
+
+def _run_packageability_gate(state: _LoopState) -> dict[str, Any]:
+    """v13 P25 — 빌드된 *web* 산출물이 문서화된 단일 프로덕션 명령으로 동작하는지 검증(기본 ON).
+
+    P23 desktop smoke 의 형제 게이트. P17 시각 QA 가 dist 를 *자체* 정적 서버로 띄워 통과하던
+    사각지대(배포 산출물 미검증)를 메운다 — 본 게이트는 *프로덕션 단일 명령*(npm start / node
+    server.js) 으로 프로덕션 서버를 띄워 루트 `/` 가 앱으로 로드되는지 확인(dev 서버 아님). 결과를
+    ``state["deployability_result"]`` 에 보존 → judge 의 ``_apply_deployability_failure_override`` 가
+    FAIL 시 COMPLETE 를 차단하고 배포성 must-fix 를 다음 iteration 에 주입한다.
+
+    no-op (기존 동작 보존, stale 방지 — smoke 와 동일 2단 분기):
+        - ``enable_packageability`` False → 순수 no-op({}).
+        - executor_result 없음 / 빌드 실패 → build override 에 위임.
+        - desktop(web 아님) → P23 smoke + 단일 폼팩터 계약이 담당 → clear.
+        - web 코드 디렉터리(dist/index.html → dist → code) 미탐 → clear.
+        - 게이트 예외 → silent (검증 실패가 cycle 차단 X).
+    """
+    if not state.get("enable_packageability", True):
+        return {}  # OFF → 이 런에서 한 번도 안 돎 → stale 없음 → 순수 no-op
+    cleared = {"deployability_result": None}  # 비대상 iteration: 직전 FAIL 의 stale 을 명시 클리어
+    if (state.get("platform_intent", "unspecified") or "").lower() != "web":
+        return cleared  # web 의도 아님 → 비대상 (desktop/none 은 smoke/계약 담당)
+    chain = state.get("chain_result")
+    exec_res = getattr(chain, "executor_result", None) if chain is not None else None
+    if exec_res is None or not getattr(exec_res, "success", False):
+        return cleared  # 빌드 실패 → _apply_build_failure_override 가 처리
+    if not _is_web_build_result(exec_res):
+        return cleared  # web 빌드 산출 아님
+    # web 빌드: exe_path = code_dir/dist/index.html → code_dir = exe_path.parent.parent.
+    exe = getattr(exec_res, "exe_path", None)
+    if not exe:
+        return cleared
+    index = Path(str(exe))
+    code_dir = index.parent.parent if index.parent.name == "dist" else index.parent
+    if not code_dir.is_dir():
+        return cleared
+
+    try:
+        from src.agents.runtime_verification import run_packageability_gate  # noqa: PLC0415
+
+        result = run_packageability_gate(code_dir, "web")
+    except Exception:  # noqa: BLE001 — 게이트 실패가 메인 cycle 차단 X
+        return cleared
+
+    saved_dir = getattr(chain, "saved_dir", None)
+    if isinstance(saved_dir, Path) and saved_dir.exists():
+        try:
+            _write_deployability_artifact(saved_dir, result)
+        except Exception:  # noqa: BLE001
+            pass  # artifact 실패가 메인 cycle 차단 X
+
+    return {"deployability_result": result}
+
+
 def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
     """v13 Phase 1 2단계 — 본부 9 Runtime Verification opt-in 노드.
 
@@ -1383,9 +1478,12 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
     """
     # v13 P23 — desktop 런타임 스모크 게이트 (기본 ON, enable_rv 와 독립).
     smoke_update = _run_desktop_smoke_gate(state)
+    # v13 P25 — web 배포성 게이트 (기본 ON, smoke 와 형제). web 빌드만 평가, desktop/none SKIP.
+    pkg_update = _run_packageability_gate(state)
+    gate_update = {**smoke_update, **pkg_update}
 
     if not state.get("enable_rv", False):
-        return smoke_update
+        return gate_update
 
     # 빌드된 .exe 경로 추출 — chain_result 의 executor_result 또는 saved_dir 기반.
     chain: WorkflowResult = state.get("chain_result")  # type: ignore
@@ -1399,7 +1497,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
 
     if exe_path is None:
         # 빌드 산출물 없음 — RV 실행 불가, no-op (회귀 0)
-        return smoke_update
+        return gate_update
 
     try:
         from src.agents.runtime_verification import run_exe_runtime_test
@@ -1407,7 +1505,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
         rv_result = run_exe_runtime_test(exe_path, timeout_sec=3.0)
     except Exception:  # noqa: BLE001
         # RV 실패가 메인 cycle 차단 X — silent + no-op
-        return smoke_update
+        return gate_update
 
     failure_detected = rv_result.verdict in ("SILENT_FAIL", "CRASH")
 
@@ -1456,7 +1554,7 @@ def _node_runtime_verify(state: _LoopState) -> dict[str, Any]:
             pass  # Strategist 실패가 메인 cycle 차단 X
 
     return {
-        **smoke_update,  # v13 P23 — desktop 스모크 결과 보존 (enable_rv 경로에서도)
+        **gate_update,  # v13 P23 desktop 스모크 + P25 web 배포성 결과 보존 (enable_rv 경로에서도)
         "rv_result": rv_result,
         "rv_failure_detected": failure_detected,
         "consecutive_rv_failures": consecutive,
@@ -1971,6 +2069,73 @@ def _apply_smoke_failure_override(
         return decision
 
 
+def _apply_deployability_failure_override(
+    decision: JudgmentDecision,
+    deployability_result: Any,
+    *,
+    gap: Optional[GapReport] = None,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
+) -> JudgmentDecision:
+    """v13 P25 — web 배포성 게이트 FAIL 시 COMPLETE 를 차단하고 배포성 must-fix 를 주입.
+
+    ``_apply_smoke_failure_override`` 의 정확한 형제(desktop smoke → web 배포성). 빌드(dist/)는
+    성공했지만 *문서화된 단일 프로덕션 명령으로 루트가 안 뜨는*(server 가 dist 미서빙 / 단일 명령
+    부재 / dev 전용) 경우 — Gap Analyst 가 COMPLETE 라 해도 비개발자가 원클릭으로 못 돌리므로 거짓.
+
+    적용 조건 (모두 충족 — smoke 와 동일 불변식):
+        - ``decision.verdict == Verdict.COMPLETE`` (COMPLETE 만 차단; IMPROVE/BLOCKED 는 그대로).
+        - ``deployability_result.verdict == "FAIL"`` (PASS/SKIPPED/미실행 → 원본 유지, 회귀 0).
+
+    동작: 예산 남음(iter < max) → IMPROVE_NEEDED (배포성 에러를 next_action 에 실어 P12 conduit 로
+    다음 iteration codegen must-fix 주입). 예산 소진 → BLOCKED(BUILD_FAILED). 예외는 원본 반환.
+    """
+    try:
+        if decision is None or decision.verdict != Verdict.COMPLETE:
+            return decision
+        if (
+            deployability_result is None
+            or getattr(deployability_result, "verdict", None) != "FAIL"
+        ):
+            return decision  # PASS / SKIPPED / 미실행 → COMPLETE 유지 (회귀 0)
+
+        err = (
+            getattr(deployability_result, "error_excerpt", "")
+            or getattr(deployability_result, "reason", "")
+            or "(배포성 에러 상세 없음)"
+        )[:1800]
+        signal = getattr(deployability_result, "signal", "")
+        command = getattr(deployability_result, "command", "") or "(단일 명령 부재)"
+        cur_iter = getattr(gap, "iteration", 0) if gap is not None else 0
+        head = (
+            f"📦 배포성 게이트 FAIL (signal={signal}, command=`{command}`) — 빌드는 성공했으나 "
+            "*문서화된 단일 프로덕션 명령* 으로 루트 앱이 뜨지 않습니다(server 가 dist 미서빙 / 단일 "
+            "명령 부재 / dev 전용 의존). Gap Analyst 는 COMPLETE 였으나 비개발자가 원클릭으로 못 돌림."
+        )
+        if cur_iter < max_iterations:
+            return JudgmentDecision(
+                verdict=Verdict.IMPROVE_NEEDED,
+                blocked_cause=BlockedCause.NONE,
+                reason=f"{head} 자가수정 루프 계속 (iter {cur_iter}/{max_iterations}).",
+                next_action=(
+                    "아래 배포성 계약을 *최우선 must-fix* 로 충족한 뒤 재빌드하세요 (프로덕션 서버가 "
+                    "빌드된 dist 를 정적 서빙 + 단일 명령 + dev-only 금지). 기존 충족 요구는 회귀 금지:\n"
+                    + err
+                ),
+                must_fix_count=max(decision.must_fix_count, 1),
+            )
+        return JudgmentDecision(
+            verdict=Verdict.BLOCKED,
+            blocked_cause=BlockedCause.BUILD_FAILED,
+            reason=f"{head} iteration 예산 소진(iter {cur_iter}/{max_iterations}) — 종료.",
+            next_action=(
+                "마지막 배포성 에러 (예산 소진 — --max-iterations 증액 시 자가수정 계속):\n" + err
+            ),
+            must_fix_count=max(decision.must_fix_count, 1),
+        )
+    except Exception:  # noqa: BLE001 — override 실패가 cycle 차단 X
+        return decision
+
+
 def _maybe_salvage_web_build(
     decision: JudgmentDecision,
     chain_result: Any,
@@ -2039,6 +2204,8 @@ def _iteration_quality(
     gap: Optional[GapReport],
     decision: Optional[JudgmentDecision],
     platform_intent: str,
+    *,
+    deployability_result: Any = None,
 ) -> dict:
     """v13 Phase 6.E P15 — iteration 품질 메타 산출 (best-iteration 선택 점수).
 
@@ -2066,6 +2233,10 @@ def _iteration_quality(
     must_fix = (getattr(gap, "unsatisfied_blockers", 0) or 0) + (
         getattr(gap, "unsatisfied_majors", 0) or 0
     )
+    # v13 P25 — 배포성 게이트 FAIL 신호. best-iteration 이 빌드 성공·도메인 충족만으로 COMPLETE 를
+    # 강제(_resolve_best_output:2130)해 배포 불가 산출을 surface 하지 않도록, FAIL 을 점수에 반영 +
+    # COMPLETE 강제 게이트에 사용한다. (deployability_result None → False → 기존 동작 byte-불변, 회귀 0.)
+    deployability_fail = getattr(deployability_result, "verdict", None) == "FAIL"
     iteration = getattr(gap, "iteration", 0) or 0
     score = 0.0
     if degenerate:
@@ -2074,6 +2245,8 @@ def _iteration_quality(
         score += 100.0
     if domain_ok:
         score += 50.0
+    if deployability_fail:
+        score -= 80.0  # 배포 가능한 iteration 을 선호(단, degenerate 보다는 높게 유지)
     score -= float(must_fix)
     score += iteration * 0.01  # 동점 시 후기(더 정제된) iteration 선호
     return {
@@ -2085,6 +2258,7 @@ def _iteration_quality(
         "build_ok": build_ok,
         "domain_ok": domain_ok,
         "degenerate": degenerate,
+        "deployability_fail": deployability_fail,
         "must_fix": must_fix,
         "score": score,
     }
@@ -2127,7 +2301,9 @@ def _resolve_best_output(
     sel_gap = best.get("gap") or gap
     best_dec = best.get("decision") or decision
     last_iter = final_state.get("iteration", best["iteration"])
-    if best["build_ok"] and best["domain_ok"]:
+    # v13 P25 — 배포성 FAIL iteration 은 빌드/도메인 충족이어도 COMPLETE 로 강제하지 않는다
+    # (override 가 IMPROVE/BLOCKED 로 강등한 decision 을 best_dec 로 그대로 surface). 비-web/None → False.
+    if best["build_ok"] and best["domain_ok"] and not best.get("deployability_fail"):
         note = (
             f" (후속 iteration(들)이 회귀/degenerate — iter {best['iteration']} 산출을 최종 채택)"
             if best["iteration"] < last_iter
@@ -2332,10 +2508,19 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         gap=gap,
         max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
     )
+    # v13 P25 — web 배포성 게이트 FAIL 시 COMPLETE 차단 + 배포성 must-fix 주입.
+    # smoke *이후*(마지막) 적용 — 실 실행 가능 산출이 확정된 뒤 배포 가능성(단일 명령·dist 서빙) 검사.
+    decision = _apply_deployability_failure_override(
+        decision,
+        state.get("deployability_result"),
+        gap=gap,
+        max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
+    )
     # v13 Phase 6.E P15 — iteration 품질 기록 (best-iteration 선택용). 깨진 마지막
     # iteration 으로 종단하지 않고 빌드 성공+도메인 충족한 최고 iteration 을 채택하기 위함.
     record = _iteration_quality(
-        state.get("chain_result"), gap, decision, state.get("platform_intent", "unspecified")
+        state.get("chain_result"), gap, decision, state.get("platform_intent", "unspecified"),
+        deployability_result=state.get("deployability_result"),
     )
     record["execution_result"] = state.get("execution_result")
     records = list(state.get("iteration_records", []))
@@ -2571,6 +2756,8 @@ def run_iterative_loop(
     # v13 P23 — desktop .exe 런타임 스모크 게이트 (기본 ON — desktop 빌드만; web/none/헤드리스 자동 SKIP)
     enable_smoke: bool = True,
     smoke_timeout: int = 8,
+    # v13 P25 — web 산출물 배포성 게이트 (기본 ON — web 빌드만; desktop/none 자동 SKIP)
+    enable_packageability: bool = True,
 ) -> LoopOutcome:
     """자율 반복 루프 실행. 사용자 요청 → COMPLETE 또는 BLOCKED 도달까지.
 
@@ -2715,6 +2902,8 @@ def run_iterative_loop(
             # v13 P23 — desktop 런타임 스모크 게이트 (기본 ON)
             "enable_smoke": enable_smoke,
             "smoke_timeout": smoke_timeout,
+            # v13 P25 — web 배포성 게이트 (기본 ON)
+            "enable_packageability": enable_packageability,
         }
         # recursion_limit: iteration 한 번이 7 노드 (Phase 3 에서 sandbox 추가) →
         # max_iter*7 + 안전 여유 10.

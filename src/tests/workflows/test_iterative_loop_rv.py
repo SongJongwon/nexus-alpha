@@ -42,13 +42,13 @@ class TestEnableRvDefaultOff:
 
     def test_node_returns_empty_when_enable_rv_false(self) -> None:
         """``enable_rv=False`` (default) → ``{}`` 반환 (state 변경 0). v13 P23: 스모크 격리."""
-        state = {"enable_rv": False, "enable_smoke": False, "chain_result": None}
+        state = {"enable_rv": False, "enable_smoke": False, "enable_packageability": False, "chain_result": None}
         result = _node_runtime_verify(state)
         assert result == {}
 
     def test_node_returns_empty_when_enable_rv_missing(self) -> None:
         """``enable_rv`` key 미존재 → 안전하게 pass-through (default False). v13 P23: 스모크 격리."""
-        state = {"enable_smoke": False, "chain_result": None}
+        state = {"enable_smoke": False, "enable_packageability": False, "chain_result": None}
         result = _node_runtime_verify(state)
         assert result == {}
 
@@ -96,7 +96,7 @@ class TestSilentFailDetection:
 
         # v13 P23 — RV 노드 단위 테스트는 desktop 스모크 게이트와 격리(enable_smoke=False).
         # 스모크는 별도 test_p23_desktop_smoke.py 가 검증.
-        state = {"enable_rv": True, "enable_smoke": False, "chain_result": chain_result}
+        state = {"enable_rv": True, "enable_smoke": False, "enable_packageability": False, "chain_result": chain_result}
         result = _node_runtime_verify(state)
 
         assert result["rv_failure_detected"] is True
@@ -137,7 +137,7 @@ class TestPassContinuation:
 
         # v13 P23 — RV 노드 단위 테스트는 desktop 스모크 게이트와 격리(enable_smoke=False).
         # 스모크는 별도 test_p23_desktop_smoke.py 가 검증.
-        state = {"enable_rv": True, "enable_smoke": False, "chain_result": chain_result}
+        state = {"enable_rv": True, "enable_smoke": False, "enable_packageability": False, "chain_result": chain_result}
         result = _node_runtime_verify(state)
 
         assert result["rv_failure_detected"] is False
@@ -149,7 +149,7 @@ class TestPassContinuation:
         chain_result.executor_result = None
         # v13 P23 — RV 노드 단위 테스트는 desktop 스모크 게이트와 격리(enable_smoke=False).
         # 스모크는 별도 test_p23_desktop_smoke.py 가 검증.
-        state = {"enable_rv": True, "enable_smoke": False, "chain_result": chain_result}
+        state = {"enable_rv": True, "enable_smoke": False, "enable_packageability": False, "chain_result": chain_result}
         result = _node_runtime_verify(state)
         assert result == {}
 
@@ -169,7 +169,7 @@ class TestPassContinuation:
 
         # v13 P23 — RV 노드 단위 테스트는 desktop 스모크 게이트와 격리(enable_smoke=False).
         # 스모크는 별도 test_p23_desktop_smoke.py 가 검증.
-        state = {"enable_rv": True, "enable_smoke": False, "chain_result": chain_result}
+        state = {"enable_rv": True, "enable_smoke": False, "enable_packageability": False, "chain_result": chain_result}
         result = _node_runtime_verify(state)
         assert result == {}
 
@@ -375,7 +375,7 @@ class TestEndToEndTelemetryEmission:
             return_value=rv_pass,
         ):
             # v13 P23 — RV 노드 단위 테스트는 desktop 스모크 게이트와 격리(enable_smoke=False).
-            state = {"enable_rv": True, "enable_smoke": False, "chain_result": chain_result}
+            state = {"enable_rv": True, "enable_smoke": False, "enable_packageability": False, "chain_result": chain_result}
             _node_runtime_verify(state)
 
         # 26_runtime_verify_pass.md artifact 생성 확인

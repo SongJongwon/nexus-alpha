@@ -470,5 +470,5 @@ class TestRunDesktopSmokeGateNode:
         state = {"enable_smoke": True, "chain_result": chain, "enable_rv": False}
         with self._patch_smoke(_smoke_fail()):
             out = IL._node_runtime_verify(state)
-        # web → 스모크 no-op(smoke_result=None, stale 클리어) + RV off
-        assert out == {"smoke_result": None}
+        # web → 스모크 no-op(smoke_result=None) + P25 배포성 게이트 stale 클리어(platform_intent 미지정→비대상) + RV off
+        assert out == {"smoke_result": None, "deployability_result": None}
