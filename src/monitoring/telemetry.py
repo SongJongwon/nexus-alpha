@@ -80,6 +80,8 @@ _NODE_DEPARTMENT: dict[str, str] = {
     "retrospective_blocked": LEARNING,
     "curate_knowledge": LEARNING,
     "curate_knowledge_blocked": LEARNING,
+    # v13 P27 — Documentation Lead (본부5 지식관리)
+    "documentation_lead": LEARNING,
     # 종결 노드
     "finalize": SYSTEM,
     "escalate": SYSTEM,

@@ -111,7 +111,10 @@ def test_graph_contains_retrospective_nodes() -> None:
 
 
 def test_graph_routes_retrospective_before_curate() -> None:
-    """retrospective → curate_knowledge → finalize 순서 (정상 종결 경로)."""
+    """retrospective → curate_knowledge → (documentation_lead) → finalize 순서 (정상 종결 경로).
+
+    v13 P27: curate_knowledge 와 finalize 사이에 documentation_lead 가 가산됨(비차단 문서 생성).
+    """
     graph = IL.build_iterative_loop_graph()
     edge_pairs = set()
     for edge in graph.get_graph().edges:
@@ -121,7 +124,9 @@ def test_graph_routes_retrospective_before_curate() -> None:
             edge_pairs.add((src, tgt))
 
     assert ("retrospective", "curate_knowledge") in edge_pairs
-    assert ("curate_knowledge", "finalize") in edge_pairs
+    # v13 P27 — curate_knowledge → finalize 사이에 documentation_lead 가산(curate→…→finalize 불변).
+    assert ("curate_knowledge", "documentation_lead") in edge_pairs
+    assert ("documentation_lead", "finalize") in edge_pairs
 
 
 def test_graph_routes_retrospective_blocked_before_curate_blocked() -> None:
