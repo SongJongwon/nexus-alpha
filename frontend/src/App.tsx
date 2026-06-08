@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
@@ -658,6 +658,8 @@ interface TelemetryEvent {
   // P22 — iter 간 개입: 패널 분기(iteration>=2) + '빌드 열어보기' 대상(직전 빌드 경로).
   iteration?: number
   prev_build_path?: string
+  // P26 — 카운트다운 통제(pause/resume/＋연장)를 기록할 제어 파일 절대경로.
+  control_file?: string
   [k: string]: unknown
 }
 
@@ -783,6 +785,15 @@ function clampMaxIterations(raw: string): number {
   return Math.min(10, Math.max(1, n))
 }
 
+// P26 — 체크포인트 대기 시간(초). 빈/비정상은 기본 90, 그 외 10~3600 클램프.
+// (하네스 --intervene-timeout 와 GUI 카운트다운 초기값을 동시에 결정.)
+const DEFAULT_INTERVENE_TIMEOUT = 90
+function clampInterveneTimeout(raw: string): number {
+  const n = Math.round(Number(raw))
+  if (!Number.isFinite(n) || raw.trim() === '') return DEFAULT_INTERVENE_TIMEOUT
+  return Math.min(3600, Math.max(10, n))
+}
+
 // P19 — 산출물이 web(.html) 인지 (▶실행 분기용 — Rust open_exe 와 동일 신호).
 function isWebArtifact(path?: string | null): boolean {
   return !!path && /\.html?$/i.test(path)
@@ -835,6 +846,25 @@ function App() {
   const [checkpoint, setCheckpoint] = useState<TelemetryEvent | null>(null)
   const [checkpointFeedback, setCheckpointFeedback] = useState<string>('')
   const [checkpointRemaining, setCheckpointRemaining] = useState<number>(0)
+  // P26 — 사람이 카운트다운을 통제: 일시정지(동결)/＋연장(누적). 미리보기 열면 자동 일시정지.
+  // 표시용 state + *동기적 진실*용 ref 를 분리: 빠른 연타(＋연장/pause 토글) 시 React 배칭으로 stale
+  // state 를 읽어 제어 값이 유실되는 레이스를 ref(동기 갱신)로 제거한다. 제어 파일 기록은 항상 ref 값 기준.
+  const [checkpointPaused, setCheckpointPaused] = useState<boolean>(false)
+  const [checkpointAddedSec, setCheckpointAddedSec] = useState<number>(0)
+  const checkpointPausedRef = useRef<boolean>(false) // 동기 진실(연타 stale-read 방지)
+  const checkpointAddedRef = useRef<number>(0) // 동기 진실(누적 ＋연장 유실 방지)
+  const checkpointSeqRef = useRef<number>(0) // 제어 파일 갱신 순번(관측/디버깅용)
+  // 제어 파일 기록 직렬화 큐 — 연타로 invoke 가 순서 뒤바뀌어 *작은 값이 마지막에* 기록되는
+  // out-of-order rename 을 방지(최종 파일 = 마지막 발행 = 최신 누적). 하네스 단조 가드와 이중 안전.
+  const controlWriteChain = useRef<Promise<void>>(Promise.resolve())
+  // P26 — 체크포인트 대기 시간(초) 설정 필드. localStorage 지속. 개입 ON 일 때만 의미.
+  const [interveneTimeoutStr, setInterveneTimeoutStr] = useState<string>(() => {
+    try {
+      return localStorage.getItem('nexus.interveneTimeout') ?? String(DEFAULT_INTERVENE_TIMEOUT)
+    } catch {
+      return String(DEFAULT_INTERVENE_TIMEOUT)
+    }
+  })
   const [resultEvent, setResultEvent] = useState<TelemetryEvent | null>(null)
   const [exeRunMessage, setExeRunMessage] = useState<string | null>(null)
 
@@ -925,7 +955,13 @@ function App() {
         setCheckpointFeedback('')
         // P22 — 순차 체크포인트(iter1→2→3) 간 직전 '빌드 열어보기' 메시지 잔존 방지.
         setExeRunMessage(null)
-        setCheckpointRemaining(Number(parsed.timeout_sec) || 90)
+        // P26 — 새 체크포인트마다 통제 상태 초기화(직전 iter 의 일시정지/연장 누수 방지). ref 도 함께.
+        setCheckpointPaused(false)
+        setCheckpointAddedSec(0)
+        checkpointPausedRef.current = false
+        checkpointAddedRef.current = 0
+        checkpointSeqRef.current = 0
+        setCheckpointRemaining(Number(parsed.timeout_sec) || DEFAULT_INTERVENE_TIMEOUT)
       }
       if (
         parsed?.type === 'result' ||
@@ -952,8 +988,9 @@ function App() {
 
   // P20 — 체크포인트 카운트다운. 패널이 열려 있으면 1초마다 남은 시간 감소, 0 이면 자동 닫힘
   // (하네스도 동일 타임아웃으로 자동 진행). 패널이 바뀌거나 닫히면 타이머 정리.
+  // P26 — 일시정지 중엔 인터벌을 *아예 만들지 않음* → 카운트다운 동결(하네스도 제어 파일로 동결).
   useEffect(() => {
-    if (!checkpoint) return
+    if (!checkpoint || checkpointPaused) return
     const id = setInterval(() => {
       setCheckpointRemaining((prev) => {
         if (prev <= 1) {
@@ -964,7 +1001,16 @@ function App() {
       })
     }, 1000)
     return () => clearInterval(id)
-  }, [checkpoint])
+  }, [checkpoint, checkpointPaused])
+
+  // P26 — 체크포인트 대기 시간 설정을 localStorage 에 지속(다음 런에서도 유지).
+  useEffect(() => {
+    try {
+      localStorage.setItem('nexus.interveneTimeout', String(clampInterveneTimeout(interveneTimeoutStr)))
+    } catch {
+      /* localStorage 비가용 환경 — 무시 */
+    }
+  }, [interveneTimeoutStr])
 
   const counts = useMemo(() => {
     const acc: Record<string, number> = {
@@ -1032,6 +1078,8 @@ function App() {
         enableTechScout,
         autoIterate,
         intervene: interveneEnabled,
+        // P26 — 개입 ON 일 때만 대기 시간 전달(OFF 면 0 → Rust 가 미부착, 회귀 0).
+        interveneTimeout: interveneEnabled ? clampInterveneTimeout(interveneTimeoutStr) : 0,
       })
       setEventsPath(path)
     } catch (e) {
@@ -1041,7 +1089,60 @@ function App() {
     }
   }
 
+  // P26 — 카운트다운 통제(pause/resume/＋연장)를 intervention_control.json 에 원자적 기록.
+  // 하네스가 매 폴링 읽어 카운트다운을 동결/연장한다. added_sec 는 *누적값* — 하네스가 delta 만
+  // 가산(idempotent). control_file 이 없으면(구버전 이벤트) no-op (안전 — 기존 타임아웃대로 진행).
+  // 직렬화 큐(controlWriteChain)로 연타 시 invoke 순서를 보장 → 최종 파일이 항상 최신 누적값.
+  const writeControl = useCallback(
+    (paused: boolean, addedSec: number, file?: string): Promise<void> => {
+      const target = file ?? checkpoint?.control_file
+      if (!target) return Promise.resolve()
+      checkpointSeqRef.current += 1
+      const seq = checkpointSeqRef.current
+      const next = controlWriteChain.current.then(() =>
+        invoke<void>('write_intervention_control', {
+          path: String(target),
+          paused,
+          addedSec,
+          seq,
+        }).catch((e) => {
+          // eslint-disable-next-line no-console
+          console.error('[Checkpoint] control 기록 실패', e)
+        }),
+      )
+      controlWriteChain.current = next
+      return next
+    },
+    [checkpoint],
+  )
+
+  // P26 — 일시정지/재개 토글. 하네스도 제어 파일을 읽어 동결(GUI 표시만 멈추면 하네스가 타임아웃할 수 있음).
+  // ref(동기 진실)로 토글해 연타/동시 ＋연장과의 stale-read 레이스를 제거.
+  const handleTogglePause = () => {
+    const next = !checkpointPausedRef.current
+    checkpointPausedRef.current = next
+    setCheckpointPaused(next)
+    void writeControl(next, checkpointAddedRef.current)
+  }
+
+  // P26 — ＋연장: 누적 added_sec 증가 + 즉시 표시 카운트다운에도 가산(체감 반영).
+  // ref 기준으로 누적해 빠른 연타에도 매번 정확한 누적값을 기록(stale state 유실 방지).
+  const handleExtend = (sec: number) => {
+    const nextAdded = checkpointAddedRef.current + sec
+    checkpointAddedRef.current = nextAdded
+    setCheckpointAddedSec(nextAdded)
+    setCheckpointRemaining((prev) => prev + sec)
+    void writeControl(checkpointPausedRef.current, nextAdded)
+  }
+
   const handleOpenExe = async (path: string) => {
+    // P26 — 빌드/미리보기를 열면 카운트다운 자동 일시정지(검토하는 동안 만료 방지).
+    // 체크포인트 패널 컨텍스트일 때만(런 종료 후 결과 배너의 ▶실행엔 영향 없음). 재개는 사용자가.
+    if (checkpoint && !checkpointPausedRef.current) {
+      checkpointPausedRef.current = true
+      setCheckpointPaused(true)
+      void writeControl(true, checkpointAddedRef.current)
+    }
     setExeRunMessage(null)
     try {
       // P19 — open_exe 가 타깃 인지형: web(.html) → vite preview + 브라우저, desktop(.exe) → 실행.
@@ -1129,15 +1230,77 @@ function App() {
               </div>
               <span
                 className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${
-                  checkpointRemaining <= 10
-                    ? 'bg-red-600/40 text-red-200'
-                    : 'bg-slate-700/60 text-slate-200'
+                  checkpointPaused
+                    ? 'bg-amber-600/40 text-amber-200'
+                    : checkpointRemaining <= 10
+                      ? 'bg-red-600/40 text-red-200'
+                      : 'bg-slate-700/60 text-slate-200'
                 }`}
-                title="남은 시간 — 0 이 되면 자동 진행"
+                title={
+                  checkpointPaused
+                    ? '일시정지됨 — 카운트다운 동결(재개 전까지 자동 진행 안 함)'
+                    : '남은 시간 — 0 이 되면 자동 진행'
+                }
               >
-                ⏳ {checkpointRemaining}s
+                {checkpointPaused ? '⏸' : '⏳'} {checkpointRemaining}s
               </span>
             </div>
+
+            {/* P26 — 카운트다운 통제 바: 일시정지/재개 + ＋연장. (하네스도 제어 파일을 읽어 동결/연장.)
+                control_file 이 없는 구버전 이벤트면 통제 불가 → 버튼 비활성 + 안내(무음 no-op 방지). */}
+            {(() => {
+              const controlReady = !!String(checkpoint.control_file ?? '').trim()
+              return (
+                <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-800 bg-slate-900/40">
+                  <button
+                    type="button"
+                    onClick={handleTogglePause}
+                    disabled={!controlReady}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold disabled:bg-slate-800 disabled:text-slate-600 ${
+                      checkpointPaused
+                        ? 'bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white'
+                        : 'bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-100'
+                    }`}
+                    title={
+                      !controlReady
+                        ? '이 체크포인트는 카운트다운 통제를 지원하지 않습니다(구버전 이벤트).'
+                        : checkpointPaused
+                          ? '카운트다운 재개'
+                          : '카운트다운 일시정지(동결)'
+                    }
+                  >
+                    {checkpointPaused ? '▶ 재개' : '⏸ 일시정지'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExtend(30)}
+                    disabled={!controlReady}
+                    className="px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-100 disabled:bg-slate-800 disabled:text-slate-600"
+                    title="대기 시간 30초 연장"
+                  >
+                    ＋30초
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExtend(60)}
+                    disabled={!controlReady}
+                    className="px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-100 disabled:bg-slate-800 disabled:text-slate-600"
+                    title="대기 시간 60초 연장"
+                  >
+                    ＋60초
+                  </button>
+                  {!controlReady && (
+                    <span className="text-[10px] text-slate-500">통제 미지원(구버전 이벤트)</span>
+                  )}
+                  {controlReady && checkpointPaused && (
+                    <span className="text-[10px] text-amber-300">일시정지됨 — 카운트다운 동결</span>
+                  )}
+                  {checkpointAddedSec > 0 && (
+                    <span className="ml-auto text-[10px] text-slate-400">＋{checkpointAddedSec}s 연장됨</span>
+                  )}
+                </div>
+              )
+            })()}
             <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-3">
               {/* P22 — iter 2+ 전용: 직전 iteration 빌드 검토 (web=vite preview / desktop=.exe). */}
               {Number(checkpoint.iteration ?? 0) >= 2 && (
@@ -1152,9 +1315,13 @@ function App() {
                     }
                     disabled={!String(checkpoint.prev_build_path ?? '').trim()}
                     className="px-3 py-1.5 rounded bg-sky-700 hover:bg-sky-600 active:bg-sky-800 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-semibold"
+                    title="열면 카운트다운이 자동 일시정지됩니다(검토 중 만료 방지). 검토 후 [재개]를 누르세요."
                   >
                     ▶ 빌드 열어보기
                   </button>
+                  <span className="ml-2 text-[10px] text-amber-300/80">
+                    (열면 카운트다운 자동 일시정지)
+                  </span>
                   {!String(checkpoint.prev_build_path ?? '').trim() && (
                     <div className="text-[10px] text-slate-400">
                       직전 빌드 없음/실패 — 아래 gap 요약·피드백은 그대로 가능합니다.
@@ -1572,6 +1739,26 @@ function App() {
               />
               <span>런 중 개입 (codegen 직전)</span>
             </label>
+
+            {/* P26 — 체크포인트 대기 시간(초). 개입 ON 일 때만 노출. 패널에서 일시정지/＋연장으로 실시간 통제 가능. */}
+            {interveneEnabled && (
+              <label
+                className="flex items-center gap-1.5 text-[10px] text-slate-400 pl-5 select-none"
+                title="체크포인트 대기 시간(초). 무입력 시 이 시간 후 자동 진행. 패널에서 일시정지(동결)/＋연장으로 실시간 조정. (10~3600초, 설정은 다음 런에도 유지)"
+              >
+                <span>대기(초)</span>
+                <input
+                  type="number"
+                  min={10}
+                  max={3600}
+                  value={interveneTimeoutStr}
+                  onChange={(e) => setInterveneTimeoutStr(e.target.value)}
+                  onBlur={() => setInterveneTimeoutStr(String(clampInterveneTimeout(interveneTimeoutStr)))}
+                  disabled={running}
+                  className="w-16 px-1.5 py-0.5 bg-slate-900 border border-slate-700 rounded text-[10px] text-slate-100 focus:outline-none focus:border-sky-500 disabled:opacity-50"
+                />
+              </label>
+            )}
             <button
               type="button"
               onClick={() => void handleStart()}

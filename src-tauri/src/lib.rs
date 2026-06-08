@@ -366,6 +366,39 @@ async fn write_intervention_file(
     Ok(())
 }
 
+/// v13 P26 — intervention_control.json payload(JSON) 구성 (순수 함수, 단위 테스트 대상).
+///
+/// `paused`(카운트다운 동결) · `added_sec`(누적 ＋연장/타임아웃 조정, *누적값* — 하네스가 delta 만
+/// 가산) · `seq`(GUI 갱신 순번, 디버깅·관측용). 하네스(`_read_control_file`)는 이 dict 를 매 폴링 읽어
+/// 카운트다운을 통제하되 파일을 *삭제하지 않음*(지속 상태).
+fn intervention_control_json(paused: bool, added_sec: f64, seq: u64) -> String {
+    serde_json::json!({ "paused": paused, "added_sec": added_sec, "seq": seq }).to_string()
+}
+
+/// v13 P26 — 체크포인트 카운트다운 제어를 intervention_control.json 에 *원자적* 기록.
+///
+/// GUI 패널의 일시정지/재개·＋연장·미리보기 자동 일시정지 → 본 command 경유로 제어 파일 갱신.
+/// `write_intervention_file` 과 동일한 temp→rename 원자성(하네스가 부분 JSON 읽는 레이스 방지).
+/// `added_sec` 는 *누적값*(매 ＋연장마다 증가) — 하네스가 직전 적용분과의 delta 만 잔여에 가산하므로
+/// 중복 가산 없음(idempotent). 제어 파일은 한 번 만들면 *삭제하지 않고* 갱신만 한다(지속 상태).
+/// checkpoint 이벤트의 `control_file` 절대경로를 그대로 path 로 받는다.
+#[tauri::command]
+async fn write_intervention_control(
+    path: String,
+    paused: bool,
+    added_sec: f64,
+    seq: u64,
+) -> Result<(), String> {
+    let target = std::path::PathBuf::from(&path);
+    let json = intervention_control_json(paused, added_sec, seq);
+    let tmp = target.with_extension("tmp");
+    std::fs::write(&tmp, json.as_bytes())
+        .map_err(|e| format!("intervention_control temp 기록 실패 ({}): {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &target)
+        .map_err(|e| format!("intervention_control rename 실패 ({}): {e}", target.display()))?;
+    Ok(())
+}
+
 /// `claude auth logout` 실행. 성공 시 token 삭제.
 #[tauri::command]
 async fn claude_auth_logout() -> Result<(), String> {
@@ -411,6 +444,7 @@ fn build_run_args(
     enable_tech_scout: bool,
     auto_iterate: bool,
     intervene: bool,
+    intervene_timeout: u32,
     events_path: &Path,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
@@ -445,6 +479,12 @@ fn build_run_args(
     // 파일(intervention_in.json) 모드로 codegen 직전 1회 멈춘다. OFF 면 미부착(기존 런 동일).
     if intervene {
         args.push("--intervene".into());
+        // v13 P26 — 체크포인트 대기 시간(GUI 타임아웃 필드) → 하네스 wait + checkpoint 카운트다운 초기값.
+        // ON 일 때만 부착 → OFF 런 args 바이트 동일(회귀 0). 0/미설정이면 미부착(run.py 기본 90).
+        if intervene_timeout > 0 {
+            args.push("--intervene-timeout".into());
+            args.push(intervene_timeout.to_string());
+        }
     }
     args
 }
@@ -459,6 +499,8 @@ fn build_run_args(
 /// P18 — `build` (bool) → `build_target` ("web"/"desktop"/"none") 로 교체 + run 옵션
 /// (`enable_tech_scout` / `auto_iterate`) 노출. 플래그 매핑은 `build_run_args` 참조.
 /// P20 — `intervene` (런 중 사람 개입 체크포인트 토글) 추가 → `--intervene` 매핑.
+/// P26 — `intervene_timeout` (체크포인트 대기 시간, GUI 타임아웃 필드) → `--intervene-timeout` 매핑
+///       (intervene ON 일 때만 부착, 0 이면 미부착 → run.py 기본 90 사용).
 #[tauri::command]
 async fn start_run(
     app: AppHandle,
@@ -469,6 +511,7 @@ async fn start_run(
     enable_tech_scout: bool,
     auto_iterate: bool,
     intervene: bool,
+    intervene_timeout: u32,
 ) -> Result<String, String> {
     let project_root = resolve_project_root()?;
     let events_path = project_root.join("outputs").join("events.jsonl");
@@ -486,6 +529,9 @@ async fn start_run(
     if let Some(out_dir) = events_path.parent() {
         let _ = std::fs::remove_file(out_dir.join("intervention_in.json"));
         let _ = std::fs::remove_file(out_dir.join("intervention_in.tmp"));
+        // v13 P26 — 이전 런의 카운트다운 제어(pause/added_sec) 상태도 정리.
+        let _ = std::fs::remove_file(out_dir.join("intervention_control.json"));
+        let _ = std::fs::remove_file(out_dir.join("intervention_control.tmp"));
     }
 
     let python = project_root
@@ -518,6 +564,7 @@ async fn start_run(
         enable_tech_scout,
         auto_iterate,
         intervene,
+        intervene_timeout,
         &events_path,
     );
 
@@ -1444,6 +1491,7 @@ pub fn run() {
             claude_auth_logout,
             open_exe,
             write_intervention_file,
+            write_intervention_control,
             list_board_decisions,
             read_board_decision,
             list_boardroom_sessions,
@@ -1543,6 +1591,7 @@ final_decision:
             enable_tech_scout,
             auto_iterate,
             false, // intervene — 기존 테스트는 OFF (P20 토글은 별도 테스트)
+            0,     // intervene_timeout — OFF 일 땐 무관(미부착)
             Path::new("outputs/events.jsonl"),
         )
     }
@@ -1612,7 +1661,7 @@ final_decision:
     // -----------------------------------------------------------------------
     // P20 — 런 중 개입 토글 → --intervene 매핑 + intervention payload
     // -----------------------------------------------------------------------
-    fn args_with_intervene(intervene: bool) -> Vec<String> {
+    fn args_with_intervene_t(intervene: bool, intervene_timeout: u32) -> Vec<String> {
         build_run_args(
             Path::new("scripts/run.py"),
             "칸반 보드 웹앱",
@@ -1622,8 +1671,13 @@ final_decision:
             true,
             true,
             intervene,
+            intervene_timeout,
             Path::new("outputs/events.jsonl"),
         )
+    }
+
+    fn args_with_intervene(intervene: bool) -> Vec<String> {
+        args_with_intervene_t(intervene, 0)
     }
 
     #[test]
@@ -1639,6 +1693,48 @@ final_decision:
         for t in ["web", "desktop", "none"] {
             assert!(!args_for(t, 3, true, true).contains(&"--intervene".to_string()));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // P26 — 체크포인트 대기 시간(GUI 타임아웃 필드) → --intervene-timeout 매핑
+    // -----------------------------------------------------------------------
+    #[test]
+    fn build_args_intervene_timeout_passthrough() {
+        // ON + timeout>0 → --intervene-timeout N 부착 (값 그대로).
+        let a = args_with_intervene_t(true, 180);
+        let idx = a
+            .iter()
+            .position(|x| x == "--intervene-timeout")
+            .expect("--intervene-timeout 누락");
+        assert_eq!(a[idx + 1], "180");
+    }
+
+    #[test]
+    fn build_args_intervene_timeout_zero_omitted() {
+        // ON + timeout==0 → 미부착 (run.py 기본 90 사용).
+        assert!(!args_with_intervene_t(true, 0).contains(&"--intervene-timeout".to_string()));
+    }
+
+    #[test]
+    fn build_args_off_never_has_timeout() {
+        // OFF 면 timeout 값과 무관하게 --intervene/--intervene-timeout 둘 다 미부착 (회귀 0).
+        let a = args_with_intervene_t(false, 240);
+        assert!(!a.contains(&"--intervene".to_string()));
+        assert!(!a.contains(&"--intervene-timeout".to_string()));
+    }
+
+    #[test]
+    fn intervention_control_json_shape() {
+        let json = intervention_control_json(true, 45.0, 3);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["paused"], true);
+        assert_eq!(v["added_sec"], 45.0);
+        assert_eq!(v["seq"], 3);
+        // resume(paused=false) + added 0 도 유효 JSON.
+        let r: serde_json::Value =
+            serde_json::from_str(&intervention_control_json(false, 0.0, 0)).unwrap();
+        assert_eq!(r["paused"], false);
+        assert_eq!(r["added_sec"], 0.0);
     }
 
     #[test]
