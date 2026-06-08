@@ -190,6 +190,9 @@ class CheckpointEvent:
     # web=.../dist/index.html, desktop=.../*.exe. 빌드 미존재/실패 시 "" → GUI '빌드 열어보기' 비활성.
     # iter 1(빌드 전) 및 OFF 경로는 기본값 "" → 회귀 0.
     prev_build_path: str = ""
+    # v13 P26 — GUI 가 카운트다운 통제(pause/resume/＋연장)를 기록할 제어 파일 절대경로.
+    # 하네스가 매 폴링 읽어 동결/가산. 기본값 "" → 통제 미지원(구 GUI 와 호환, 회귀 0).
+    control_file: str = ""
     ts: str = field(default_factory=_now_ts)
     type: str = "checkpoint"
 
