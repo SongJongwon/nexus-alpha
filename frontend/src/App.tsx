@@ -411,8 +411,10 @@ const HEADQUARTERS: HeadquartersDef[] = [
       },
       {
         name: 'Documentation Lead',
-        role: '문서 관리 (미구현)',
-        implemented: false,
+        role: '산출물 문서화',
+        goalDetailed:
+          'documentation_lead 노드. COMPLETE 종결 시 1회(비차단). 안정 산출물(생성 코드 + P25 단일 실행 계약)을 읽어 셋업·실행·사용·구조 문서를 산출물(code_dir)에 묶어 생성. 코드/계약에 실재하는 것만 기술(환각 0), P25 README 중복 시 검증·보강.',
+        implemented: true,
         hq: 'hq-5',
       },
     ],
@@ -631,6 +633,7 @@ const NODE_TO_HQS: Record<string, HQKey[]> = {
   retrospective_blocked: ['hq-10'],
   curate_knowledge: ['hq-5'],
   curate_knowledge_blocked: ['hq-5'],
+  documentation_lead: ['hq-5'], // v13 P27 — Documentation Lead (COMPLETE 경로, 문서 생성)
   finalize: [],
   escalate: [],
 }

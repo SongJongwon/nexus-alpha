@@ -192,7 +192,11 @@ def test_graph_routes_expand_to_recall_then_kickoff() -> None:
 
 
 def test_graph_routes_curate_before_finalize() -> None:
-    """curate_knowledge → finalize 엣지 존재 — 종결 전 색인."""
+    """curate_knowledge 가 종결(finalize) 전에 색인됨 — 종결 전 색인.
+
+    v13 P27: curate_knowledge → finalize 직결이 documentation_lead 경유로 바뀜
+    (curate_knowledge → documentation_lead → finalize). curate 가 finalize 전에 도는 불변은 유지.
+    """
     graph = IL.build_iterative_loop_graph()
     edge_pairs = set()
     for edge in graph.get_graph().edges:
@@ -201,7 +205,9 @@ def test_graph_routes_curate_before_finalize() -> None:
         if src is not None and tgt is not None:
             edge_pairs.add((src, tgt))
 
-    assert ("curate_knowledge", "finalize") in edge_pairs
+    # P27 — curate 직후 documentation_lead, 그 다음 finalize (curate→…→finalize 불변).
+    assert ("curate_knowledge", "documentation_lead") in edge_pairs
+    assert ("documentation_lead", "finalize") in edge_pairs
 
 
 def test_graph_preserves_iteration_reentry_no_recall_recall() -> None:

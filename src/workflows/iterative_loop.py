@@ -166,6 +166,9 @@ class LoopOutcome:
     # PR #149 — Retrospective Lead (Phase 3 cycle 완성, 본부 10 두 번째 멤버)
     retrospective_report: Optional[RetrospectiveReport] = None
     retrospective_md_path: Optional[Path] = None
+    # v13 P27 — Documentation Lead (본부5) 산출(COMPLETE 종결 1회, 비차단). 호출 측 introspection 용
+    # (success/status/generated_files/warnings/facts). 형제 종단 산출(retrospective/curated)과 동일 패턴.
+    documentation_result: Any = None  # DocumentationResult | None
     # v13 P16 (수정2) — 그래프 실행 예외(GraphRecursionError 등)로 종단 시 예외 repr 보존.
     # None 이면 정상 종단 (회귀 0). blocked_cause=INTERNAL_ERROR 와 함께 채워짐.
     crash_reason: Optional[str] = None
@@ -299,6 +302,9 @@ class _LoopState(TypedDict, total=False):
     # PR #149 — Retrospective Lead (Phase 3 cycle 완성, 종결 시 1회만)
     retrospective_report: Any  # RetrospectiveReport | None
     retrospective_md_path: str  # workflow_dir/retrospective.md 경로, "" 가능
+
+    # v13 P27 — Documentation Lead (본부5, COMPLETE 종결 시 1회만, 비차단)
+    documentation_result: Any  # DocumentationResult | None — 문서 생성 결과(verdict 불관여)
 
     # 매 iteration 마다 갱신
     iteration: int
@@ -690,6 +696,101 @@ def _node_curate_knowledge(state: _LoopState) -> dict[str, Any]:
         "curated_entry_path": dist_path.as_posix() if dist_path else "",
         "curated_index_path": idx_path.as_posix() if idx_path else "",
     }
+
+
+def _doc_code_dir(exec_res: Any, build_target: str, chain: Any) -> Optional[Path]:
+    """문서를 배치할 *실 산출물 디렉터리*(code_dir) 해석. 안정 산출물 없으면 None.
+
+    - web: exe_path = code_dir/dist/index.html → code_dir = parent.parent (P25 와 동일 해석).
+    - desktop: exe_path = code_dir/<App>.exe → code_dir = parent.
+    - none/unspecified: 생성 .py 들이 있는 디렉터리(saved_code_files[0].parent) 또는 saved_dir.
+    """
+    bt = (build_target or "").strip().lower()
+
+    def _abs_existing(value: Any) -> Optional[Path]:
+        # 망가진/유령/상대 경로(예: 정수 12345 → '.', 'README.md' → '.')가 *CWD(레포 루트)* 로 해석돼
+        # 거기에 문서를 쓰는 사고 방지(적대 리뷰 P27). 산출 경로는 항상 *절대 + 실재* — 그것만 신뢰.
+        try:
+            p = Path(str(value))
+        except (TypeError, ValueError):
+            return None
+        return p if (p.is_absolute() and p.exists()) else None
+
+    exe = getattr(exec_res, "exe_path", None) if exec_res is not None else None
+    p = _abs_existing(exe) if exe else None
+    if p is not None:
+        if bt == "web":
+            cd = p.parent.parent if p.parent.name == "dist" else p.parent
+        else:  # desktop — .exe 가 있는 폴더
+            cd = p.parent
+        if cd.is_dir():
+            return cd
+    # none/unspecified 또는 exe 부재 — *절대+실재* 생성 코드 파일 위치 또는 workflow_dir.
+    files = getattr(chain, "saved_code_files", None) if chain is not None else None
+    if isinstance(files, (list, tuple)):
+        for f in files:
+            fp = _abs_existing(f)
+            if fp is not None and fp.parent.is_dir():
+                return fp.parent
+    saved = getattr(chain, "saved_dir", None) if chain is not None else None
+    if isinstance(saved, Path) and saved.is_absolute() and saved.is_dir():
+        return saved
+    return None
+
+
+def _node_documentation_lead(state: _LoopState) -> dict[str, Any]:
+    """v13 P27 — Documentation Lead (본부5). COMPLETE 종결 직전 1회, **비차단**.
+
+    코드/빌드가 안정된 실 산출물(생성 코드 + P25 단일 실행 계약)을 읽어 셋업·실행·사용·구조 문서를
+    *산출물에 묶어* 생성한다. 진짜 가치 한정: 안정 산출물(성공 빌드)이 없으면 정직히 skip. 문서는
+    가치-부가물 — verdict/COMPLETE 판정을 **만지지 않는다**(이 노드는 finalize 직전 경로에만 위치).
+
+    보존: 예외/실패는 silent — 워크플로 차단 0. desktop/web/none 별로 정확히 분기.
+    """
+    chain: Optional[WorkflowResult] = state.get("chain_result")
+    exec_res = getattr(chain, "executor_result", None) if chain is not None else None
+    build_target = (state.get("platform_intent", "unspecified") or "unspecified")
+
+    # 안정 산출물 게이트: 성공 빌드가 아니면 문서 가치 없음 → 정직 skip(비차단).
+    if exec_res is None or not getattr(exec_res, "success", False):
+        from src.agents.knowledge import DocumentationResult  # noqa: PLC0415
+
+        return {"documentation_result": DocumentationResult(
+            success=False, status="skipped", reason="성공 빌드 산출물 부재 — 문서 가치 없음(정직 skip).",
+            build_target=str(build_target).lower(),
+        )}
+
+    code_dir = _doc_code_dir(exec_res, build_target, chain)
+    if code_dir is None:
+        from src.agents.knowledge import DocumentationResult  # noqa: PLC0415
+
+        return {"documentation_result": DocumentationResult(
+            success=False, status="skipped", reason="산출물 디렉터리 미해석 — skip(비차단).",
+            build_target=str(build_target).lower(),
+        )}
+
+    exe = getattr(exec_res, "exe_path", None)
+    exe_name = Path(str(exe)).name if (exe and str(build_target).lower() == "desktop") else ""
+
+    try:
+        from src.agents.knowledge import generate_documentation  # noqa: PLC0415
+
+        result = generate_documentation(
+            code_dir,
+            build_target=str(build_target),
+            run_contract=state.get("deployability_result"),
+            user_request=state.get("user_request", ""),
+            exe_name=exe_name,
+        )
+    except Exception:  # noqa: BLE001 — 문서 생성 실패가 워크플로 차단 X
+        from src.agents.knowledge import DocumentationResult  # noqa: PLC0415
+
+        return {"documentation_result": DocumentationResult(
+            success=False, status="skipped", reason="문서 생성 예외(무시, 비차단).",
+            build_target=str(build_target).lower(),
+        )}
+
+    return {"documentation_result": result}
 
 
 def _node_kickoff_meeting(state: _LoopState) -> dict[str, Any]:
@@ -2648,9 +2749,13 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     구조:
         expand_requirements → recall_past_knowledge → kickoff_meeting → run_chain →
             run_sandbox → analyze_gap → judge_convergence
-                ├── COMPLETE → retrospective → curate_knowledge → finalize → END
+                ├── COMPLETE → retrospective → curate_knowledge → documentation_lead → finalize → END
                 ├── IMPROVE_NEEDED → prepare_feedback → run_chain (loop)
                 └── BLOCKED → retrospective_blocked → curate_knowledge_blocked → escalate → END
+
+    v13 P27 (2026-06-08): Documentation Lead (본부5) 신설 — COMPLETE 경로 curate_knowledge 직후,
+        finalize 직전에 비차단 배치. 안정 산출물(성공 빌드)을 읽어 셋업·실행·사용·구조 문서를 산출물에
+        묶어 생성(verdict 불관여). BLOCKED 경로엔 미배치(안정 산출물 없음 → 문서 가치 없음).
 
     PR #138 Phase 1 full (2026-05-15): kickoff_meeting 신설.
     PR #140 Phase 3 (2026-05-15): recall_past_knowledge + curate_knowledge 신설.
@@ -2677,6 +2782,9 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     g.add_node("curate_knowledge", _telemetry_wrap("curate_knowledge", _node_curate_knowledge))                 # PR #140
     g.add_node("retrospective_blocked", _telemetry_wrap("retrospective_blocked", _node_retrospective))          # PR #149 alias
     g.add_node("curate_knowledge_blocked", _telemetry_wrap("curate_knowledge_blocked", _node_curate_knowledge)) # PR #140 alias
+    # v13 P27 — Documentation Lead (본부5). COMPLETE 경로에만 위치(curate_knowledge → 여기 → finalize).
+    # BLOCKED 경로(escalate)엔 미배치 — 안정 산출물이 없으니 문서 가치 없음(정직). 비차단(verdict 불관여).
+    g.add_node("documentation_lead", _telemetry_wrap("documentation_lead", _node_documentation_lead))
     g.add_node("finalize", _telemetry_wrap("finalize", _node_finalize))
     g.add_node("escalate", _telemetry_wrap("escalate", _node_escalate))
 
@@ -2704,7 +2812,9 @@ def build_iterative_loop_graph():  # type: ignore[no-untyped-def]
     )
     g.add_edge("retrospective", "curate_knowledge")
     g.add_edge("retrospective_blocked", "curate_knowledge_blocked")
-    g.add_edge("curate_knowledge", "finalize")
+    # v13 P27 — COMPLETE 경로: curate_knowledge → documentation_lead → finalize (문서는 verdict 확정 후).
+    g.add_edge("curate_knowledge", "documentation_lead")
+    g.add_edge("documentation_lead", "finalize")
     g.add_edge("curate_knowledge_blocked", "escalate")
     g.add_edge("prepare_feedback", "run_chain")
     g.add_edge("finalize", END)
@@ -2989,6 +3099,8 @@ def run_iterative_loop(
             curated_index_path=Path(curated_index_path_str) if curated_index_path_str else None,
             retrospective_report=final_state.get("retrospective_report"),
             retrospective_md_path=Path(retro_md_path_str) if retro_md_path_str else None,
+            # v13 P27 — Documentation Lead 산출 surface (형제 종단 산출과 동일 패턴, 호출 측 introspection).
+            documentation_result=final_state.get("documentation_result"),
         )
 
         # PR #187 Sprint 4 — ResultEvent emit (결과 패널). exe path 추출은 best-effort:
