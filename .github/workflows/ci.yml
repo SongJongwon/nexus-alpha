@@ -53,7 +53,7 @@ jobs:
       # (test_p25 TestRealProbeIntegration, skipif node 부재)가 *결정적으로* 실행되도록.
       # 없으면 ubuntu 이미지에 node 가 우연히 있을 때만 돌아 핵심 spawn 경로 커버리지가 환경 의존.
       - name: Set up Node 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
