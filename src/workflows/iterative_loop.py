@@ -57,6 +57,7 @@ Phase 3 (Sandbox 통합) 추가 메모:
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 import time
@@ -332,7 +333,10 @@ class _LoopState(TypedDict, total=False):
     # v13 Phase 6.E P15 — iteration 별 품질 기록 (best-iteration 선택용).
     # 루프가 깨진 마지막 iteration 으로 종단하지 않고, 빌드 성공+도메인 충족한 *최고*
     # iteration 산출을 최종으로 채택하기 위함. judge 노드가 매 iter 1건씩 append.
+    # v13 P29 — 각 record 에 ``public_surface``(정렬 list) 보존 → 다음 iter 구조 보존 게이트 비교 기준.
     iteration_records: list[Any]
+    # v13 P29 — 구조 보존 게이트가 *이미 플래그한* 드롭 식별자 누적(진동 방지: 지속 드롭=정당화로 강등).
+    structural_flagged: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -2237,6 +2241,84 @@ def _apply_deployability_failure_override(
         return decision
 
 
+def _apply_structural_regression_override(
+    decision: JudgmentDecision,
+    prev_surface: Optional[set],
+    new_surface: Optional[set],
+    flagged_history: Any,
+    *,
+    gap: Optional[GapReport] = None,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
+) -> tuple[JudgmentDecision, list[str]]:
+    """v13 P29 — iter 간 *공개표면*(파일·클래스·함수·DB 컬럼) 드롭 시 COMPLETE 차단 + 복원 must-fix.
+
+    진단(C1): "기존 식별자 유지·백지 재작성 금지" 지시가 요청·CTO 설계서까지 주입·수용됐으나 codegen
+    이 무시해 데이터모델/API 재작성 + 기능(node_type·sort_order·멀티프로젝트) 드롭, *출력을 보존 약속과
+    대조하는 검사 부재* 로 통과함. 본 게이트가 출력 공개표면을 직전 iter 과 대조해 정당사유 없는 드롭을
+    must-fix 로 강제한다(보존 OR 정당화). 입력(프롬프트)은 손대지 않음 — 출력만 검사.
+
+    적용 조건(다른 *_override 와 동일 불변식):
+        - ``decision.verdict == COMPLETE`` (그 외 그대로 — 회귀 0).
+        - ``prev_surface`` / ``new_surface`` 둘 다 비어있지 않음 (iter1·추출 불가 → skip, 회귀 0).
+
+    판정:
+        ``dropped = prev_surface − new_surface``. 빈 → 통과(내부 구현·private·함수 본문 변경 무시).
+        ``fresh = dropped − flagged_history`` (직전 iter 들에서 이미 플래그된 것 제외 = 진동 방지).
+        - fresh 있고 예산 남음(iter < max) → IMPROVE_NEEDED + 드롭 목록 must-fix.
+        - fresh 없음(모든 드롭이 *지속* = Engineer 가 보고도 복원 안 함 → 정당화 의사) → WARNING 강등.
+        - 예산 소진(cap 도달) → WARNING 강등 (동작하는 산출을 *구조 사유로 BLOCKED 하지 않음* — 라우터
+          하드가드가 IMPROVE@cap 을 escalate→BLOCKED 로 만드는 것을 회피; 구조 보존은 권고지 정확성 아님).
+
+    Returns:
+        ``(decision, 갱신된 flagged 목록[누적])`` — 호출부가 ``structural_flagged`` 로 state 에 보존.
+    """
+    flagged = sorted(set(str(x) for x in (flagged_history or [])))
+    try:
+        if decision is None or decision.verdict != Verdict.COMPLETE:
+            return decision, flagged
+        prev = set(prev_surface or set())
+        new = set(new_surface or set())
+        if not prev or not new:
+            return decision, flagged  # iter1 / 추출 불가 → skip (회귀 0)
+        dropped = prev - new
+        if not dropped:
+            return decision, flagged  # 공개표면 보존 → 통과
+        already = set(flagged)
+        fresh = dropped - already
+        updated = sorted(already | dropped)  # 누적(지속 추적)
+        cur_iter = getattr(gap, "iteration", 0) if gap is not None else 0
+        if not fresh or cur_iter >= max_iterations:
+            logging.getLogger(__name__).warning(
+                "[P29 구조보존] 드롭 %d건 — %s (정당화/예산소진으로 COMPLETE 유지, 재트리거 안 함): %s",
+                len(dropped),
+                "지속 드롭" if not fresh else f"예산 소진 iter {cur_iter}/{max_iterations}",
+                ", ".join(sorted(dropped)[:20]),
+            )
+            return decision, updated
+        listing = "\n".join(f"  - {item}" for item in sorted(fresh)[:40])
+        head = (
+            f"🧬 구조 보존 회귀 — 직전 iteration 에 있던 공개 식별자/컬럼 {len(fresh)}건이 제거됐습니다. "
+            "보존 지시(기존 파일명·클래스·함수 시그니처·DB 컬럼 유지)를 어긴 *백지 재작성* 신호입니다 "
+            "(사용자가 이전 결과를 잃는 퇴행)."
+        )
+        return (
+            JudgmentDecision(
+                verdict=Verdict.IMPROVE_NEEDED,
+                blocked_cause=BlockedCause.NONE,
+                reason=f"{head} 자가수정 루프 계속 (iter {cur_iter}/{max_iterations}).",
+                next_action=(
+                    "아래 *제거된 공개 식별자/컬럼* 을 **복원** 하세요(기존 파일명·클래스·함수·DB 컬럼 유지). "
+                    "특정 must-fix 가 *진짜로* 제거를 요구한 항목만 유지하고 그 사유를 명시하세요 — "
+                    "그 외는 전부 복원(백지 재작성 금지). 기존 충족 요구는 회귀 금지:\n" + listing
+                ),
+                must_fix_count=max(decision.must_fix_count, len(fresh)),
+            ),
+            updated,
+        )
+    except Exception:  # noqa: BLE001 — override 실패가 cycle 차단 X
+        return decision, flagged
+
+
 def _maybe_salvage_web_build(
     decision: JudgmentDecision,
     chain_result: Any,
@@ -2617,6 +2699,29 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         gap=gap,
         max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
     )
+    # v13 P29 — 구조 보존 회귀 게이트(마지막 적용): 직전 iter 대비 공개표면(파일·클래스·함수·DB컬럼)
+    # 드롭 시 COMPLETE 차단 + 복원 must-fix. 비교 기준(prev_surface)은 직전 iteration_record 에 보존된
+    # 표면 — _build_prev_code_context 와 동일 chain_result 계보(게이트 계약 == Engineer 보존 계약).
+    # 추출 불가/iter1 → skip(회귀 0). 출력만 검사하므로 프롬프트 미기록 불확실성에 강건.
+    from src.agents.runtime_verification.structural_preservation_gate import (  # noqa: PLC0415
+        surface_from_chain,
+    )
+
+    current_surface = surface_from_chain(state.get("chain_result"))
+    _prev_records = state.get("iteration_records") or []
+    prev_surface = (
+        set(_prev_records[-1].get("public_surface", []))
+        if _prev_records and isinstance(_prev_records[-1], dict)
+        else None
+    )
+    decision, structural_flagged = _apply_structural_regression_override(
+        decision,
+        prev_surface,
+        current_surface,
+        state.get("structural_flagged", []),
+        gap=gap,
+        max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
+    )
     # v13 Phase 6.E P15 — iteration 품질 기록 (best-iteration 선택용). 깨진 마지막
     # iteration 으로 종단하지 않고 빌드 성공+도메인 충족한 최고 iteration 을 채택하기 위함.
     record = _iteration_quality(
@@ -2624,12 +2729,14 @@ def _node_judge_convergence(state: _LoopState) -> dict[str, Any]:
         deployability_result=state.get("deployability_result"),
     )
     record["execution_result"] = state.get("execution_result")
+    record["public_surface"] = sorted(current_surface)  # v13 P29 — 다음 iter 비교 기준
     records = list(state.get("iteration_records", []))
     records.append(record)
     return {
         "decision": decision,
         "budget_tokens_remaining": budget,
         "iteration_records": records,
+        "structural_flagged": structural_flagged,  # v13 P29 — 진동 방지 누적 플래그
     }
 
 
