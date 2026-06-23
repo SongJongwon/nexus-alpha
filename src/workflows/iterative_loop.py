@@ -907,8 +907,16 @@ def _adapt_automate_to_chain_result(automate_result: Any) -> Any:
     )
 
 
+# v13 P30 — 이전 iter 코드 발췌 한도(문자). 진단(P30): 기존 15_000 하드코딩이 직전 코드를 알파벳·
+# 크기순으로 잘라(예: WBS 런 10파일 63,618자 중 7파일/~76% 누락 — pms_models.Node·pms_rollup·
+# pms_ui 등을 Engineer 가 *못 봐서* 보존 불가 → 전면 재작성 유발). 15_000 은 근거 없는 임의값이었다.
+# 120_000 chars ≈ ~30k 토큰 ≈ 모델 컨텍스트(≥200k 토큰)의 ~15% — 관측된 최대 앱(64k)을 여유 커버.
+# (초대형 앱용 순서 공정성·스마트 포함은 미입증이라 후속 후보. P29 게이트가 잔여 드롭을 backstop.)
+PREV_CODE_MAX_CHARS = 120_000
+
+
 def _build_prev_code_context(
-    prev_chain_result: Any, *, max_chars: int = 15_000, platform_intent: str = "unspecified"
+    prev_chain_result: Any, *, max_chars: int = PREV_CODE_MAX_CHARS, platform_intent: str = "unspecified"
 ) -> str:
     """v13 Phase 6.E (PR #232) — 이전 iter 코드 발췌 prompt 텍스트.
 
